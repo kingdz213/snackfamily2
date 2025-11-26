@@ -4,39 +4,81 @@ export interface CheckoutItem {
   quantity: number;
 }
 
-export async function startCheckout(items: CheckoutItem[]) {
-  try {
-    console.log("Initiating Stripe Checkout...");
-    
-    // Determine a safe origin for success/cancel redirects
-    // Use fallback if window.location.origin is null/about:blank (sandboxes)
-    const origin = window.location.origin && window.location.origin !== 'null' && window.location.origin !== 'about:blank'
-      ? window.location.origin 
-      : 'https://snackfamily2.com'; 
+const DEFAULT_WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
 
-    const WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
+function resolveWorkerUrl(): string {
+  const envUrl = import.meta.env?.VITE_STRIPE_WORKER_URL?.trim();
+  return envUrl || DEFAULT_WORKER_URL;
+}
 
-    const payload = {
-      items,
-      successUrl: `${origin}/success`,
-      cancelUrl: `${origin}/cancel`
+function normalizeItems(items: CheckoutItem[]): CheckoutItem[] {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("No checkout items provided");
+  }
+
+  return items.map((item) => {
+    const quantity = Math.max(1, Math.trunc(item.quantity || 0));
+    const price = Math.max(0, Math.trunc(item.price || 0));
+
+    if (!item.name) {
+      throw new Error("Chaque article doit avoir un nom");
+    }
+    if (price <= 0) {
+      throw new Error("Les prix doivent être supérieurs à zéro (en centimes)");
+    }
+
+    return {
+      ...item,
+      price,
+      quantity,
     };
+  });
+}
 
-    console.log("Sending payload to Worker:", payload);
+export async function startCheckout(items: CheckoutItem[]) {
+  console.log("Initiating Stripe Checkout...");
 
+  // Determine a safe origin for success/cancel redirects
+  // Use fallback if window.location.origin is null/about:blank (sandboxes)
+  const origin = window.location.origin && window.location.origin !== 'null' && window.location.origin !== 'about:blank'
+    ? window.location.origin
+    : 'https://snackfamily2.com';
+
+  const WORKER_URL = resolveWorkerUrl();
+
+  const normalizedItems = normalizeItems(items);
+
+  const payload = {
+    items: normalizedItems,
+    successUrl: `${origin}/success`,
+    cancelUrl: `${origin}/cancel`
+  };
+
+  console.log("Sending payload to Worker:", payload);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+
+  try {
     const response = await fetch(WORKER_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      }
-    );
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
 
     if (!response.ok) {
         console.error("Worker response error:", response.status);
-        const text = await response.text();
-        throw new Error(`Erreur HTTP: ${response.status} - ${text}`);
+        let errorBody: string | undefined;
+        try {
+          errorBody = await response.text();
+        } catch (readErr) {
+          console.error("Unable to read error body", readErr);
+        }
+
+        throw new Error(`Erreur HTTP ${response.status}${errorBody ? ` - ${errorBody}` : ''}`);
     }
 
     const data = await response.json();
@@ -47,12 +89,16 @@ export async function startCheckout(items: CheckoutItem[]) {
       window.location.href = data.url;
     } else {
       console.error("No URL in response:", data);
-      alert("Erreur: Le service de paiement n'a pas renvoyé d'URL de redirection.");
+      throw new Error("Le service de paiement n'a pas renvoyé d'URL de redirection.");
     }
   } catch (e) {
     console.error("Checkout Exception:", e);
-    alert("Impossible de contacter le serveur de paiement. Veuillez réessayer.");
-    throw e;
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error("La demande de paiement a expiré. Veuillez réessayer.");
+    }
+    throw e instanceof Error ? e : new Error("Impossible de contacter le serveur de paiement.");
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -60,10 +106,10 @@ export async function startCheckout(items: CheckoutItem[]) {
  * DEV ONLY: Test function to verify Worker connectivity
  */
 export async function runDevTest() {
-  const WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
-  
-  const origin = window.location.origin && window.location.origin !== 'null' 
-      ? window.location.origin 
+  const WORKER_URL = resolveWorkerUrl() || DEFAULT_WORKER_URL;
+
+  const origin = window.location.origin && window.location.origin !== 'null'
+      ? window.location.origin
       : 'http://localhost:3000';
 
   const payload = {

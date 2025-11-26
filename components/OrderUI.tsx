@@ -102,29 +102,33 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-        const checkoutItems = cartItems.map(item => {
-            // Build a descriptive name including options for Stripe Line Items
-            let description = item.name;
-            if (item.variant) description += ` (${item.variant})`;
-            if (item.selectedSauce) description += ` - ${item.selectedSauce}`;
-            if (item.selectedSupplements && item.selectedSupplements.length > 0) {
-                description += ` + ${item.selectedSupplements.join(', ')}`;
-            }
+      const checkoutItems = cartItems.map(item => {
+        // Build a descriptive name including options for Stripe Line Items
+        let description = item.name;
+        if (item.variant) description += ` (${item.variant})`;
+        if (item.selectedSauce) description += ` - ${item.selectedSauce}`;
+        if (item.selectedSupplements && item.selectedSupplements.length > 0) {
+          description += ` + ${item.selectedSupplements.join(', ')}`;
+        }
 
-            return {
-                name: description,
-                // IMPORTANT: Stripe expects integer cents. 
-                // We round to avoid floating point errors
-                price: Math.round(item.price * 100), 
-                quantity: item.quantity
-            };
-        });
+        return {
+          name: description,
+          // IMPORTANT: Stripe expects integer cents.
+          // We round to avoid floating point errors
+          price: Math.round(item.price * 100),
+          quantity: item.quantity
+        };
+      });
 
-        await startCheckout(checkoutItems);
-        // Page redirects on success
+      await startCheckout(checkoutItems);
+      // Page redirects on success
     } catch (error) {
-        console.error("Checkout failed", error);
-        setIsCheckingOut(false);
+      console.error("Checkout failed", error);
+      alert(
+        `Le paiement n'a pas pu démarrer. ${error instanceof Error ? error.message : 'Veuillez vérifier la configuration Stripe et réessayer.'}`,
+      );
+    } finally {
+      setIsCheckingOut(false);
     }
   };
 
@@ -252,15 +256,15 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       <AnimatePresence>
         {isCartOpen && (
           <>
-            <motion.div 
+            <motion.div
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-[70] ${isCommanderPage ? 'md:hidden' : ''}`}
+                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70]"
                 onClick={closeCart}
             />
-            <motion.div 
+            <motion.div
                 initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
                 transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                className={`fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl z-[80] flex flex-col relative ${isCommanderPage ? 'md:hidden' : ''}`}
+                className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl z-[80] flex flex-col relative"
             >
                 <AnimatePresence>
                 {isClearConfirmOpen && (

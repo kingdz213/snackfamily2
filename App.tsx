@@ -18,9 +18,30 @@ function App() {
     try {
       const path = window.location.pathname;
       const search = window.location.search;
-      
+
       if (path.includes('/success') || search.includes('success=true')) return 'success';
       if (path.includes('/cancel') || search.includes('canceled=true')) return 'cancel';
+
+      const normalizedPath = path.endsWith('/') && path !== '/' ? path.slice(0, -1) : path;
+      switch (normalizedPath) {
+        case '/':
+        case '/home':
+          return 'home';
+        case '/menu':
+          return 'menu';
+        case '/infos':
+          return 'infos';
+        case '/contact':
+          return 'contact';
+        case '/commander':
+          return 'commander';
+        case '/cancel':
+          return 'cancel';
+        case '/success':
+          return 'success';
+        default:
+          return 'home';
+      }
     } catch (e) {
       console.warn("Navigation warning: could not determine initial page", e);
     }
@@ -40,12 +61,37 @@ function App() {
   }, [currentPage]);
 
   const navigateTo = (page: Page) => {
+    const pathMap: Record<Page, string> = {
+      home: '/',
+      menu: '/menu',
+      infos: '/infos',
+      contact: '/contact',
+      commander: '/commander',
+      success: '/success',
+      cancel: '/cancel'
+    };
+
+    const targetPath = pathMap[page] ?? '/';
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState({}, '', targetPath);
+    }
+
     setCurrentPage(page);
     // Si on va sur la page Commander, on s'assure que le panier est fermé initialement
     if (page === 'commander') {
       setIsCartOpen(false);
     }
   };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setCurrentPage(getInitialPage());
+      setIsCartOpen(false);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const addToCart = (item: CartItem) => {
     setCartItems(prev => [...prev, item]);
