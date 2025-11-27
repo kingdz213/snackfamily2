@@ -98,6 +98,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   };
 
   const handleStripeCheckout = async () => {
+    if (isCheckingOut) return;
     if (cartItems.length === 0) return;
     setIsCheckingOut(true);
 

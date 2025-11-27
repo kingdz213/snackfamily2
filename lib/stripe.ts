@@ -11,6 +11,19 @@ function resolveWorkerUrl(): string {
   return envUrl || DEFAULT_WORKER_URL;
 }
 
+function ensureValidWorkerUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    if (parsed.protocol !== 'https:' && !(isLocalhost && parsed.protocol === 'http:')) {
+      throw new Error('Le worker Stripe doit utiliser HTTPS (ou HTTP localhost en dev).');
+    }
+    return parsed.toString();
+  } catch (e) {
+    throw new Error('URL du worker Stripe invalide. Vérifiez VITE_STRIPE_WORKER_URL.');
+  }
+}
+
 function normalizeItems(items: CheckoutItem[]): CheckoutItem[] {
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error("No checkout items provided");
@@ -44,7 +57,7 @@ export async function startCheckout(items: CheckoutItem[]): Promise<string> {
     ? window.location.origin
     : 'https://snackfamily2.com';
 
-  const WORKER_URL = resolveWorkerUrl();
+  const WORKER_URL = ensureValidWorkerUrl(resolveWorkerUrl());
 
   const normalizedItems = normalizeItems(items);
 
@@ -91,9 +104,21 @@ export async function startCheckout(items: CheckoutItem[]): Promise<string> {
       throw new Error("Le service de paiement n'a pas renvoyé d'URL de redirection.");
     }
 
+    let safeRedirect: string;
+    try {
+      const parsed = new URL(redirectUrl);
+      if (parsed.protocol !== 'https:' && !(parsed.hostname === 'localhost' && parsed.protocol === 'http:')) {
+        throw new Error('URL de redirection non sécurisée.');
+      }
+      safeRedirect = parsed.toString();
+    } catch (urlError) {
+      console.error('Invalid redirect URL returned by worker', urlError);
+      throw new Error("URL de redirection invalide renvoyée par le service de paiement.");
+    }
+
     // Redirect to Stripe Checkout and expose URL for callers/tests
-    window.location.href = redirectUrl;
-    return redirectUrl;
+    window.location.href = safeRedirect;
+    return safeRedirect;
   } catch (e) {
     console.error("Checkout Exception:", e);
     if (e instanceof DOMException && e.name === 'AbortError') {
