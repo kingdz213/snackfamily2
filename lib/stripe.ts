@@ -44,17 +44,21 @@ function normalizeItems(items: CheckoutItem[]): CheckoutItem[] {
 
   return items.map((item) => {
     const quantity = Math.max(1, Math.trunc(item.quantity || 0));
-    const price = Math.max(0, Math.trunc(item.price || 0));
+    const rawPrice = Number.isFinite(item.price) ? item.price : Number(item.price ?? 0);
+    const price = Math.max(0, Math.trunc(rawPrice || 0));
 
-    if (!item.name) {
+    const normalizedName = (item.name ?? '').trim().replace(/[\r\n\t]+/g, ' ');
+    if (!normalizedName) {
       throw new Error("Chaque article doit avoir un nom");
     }
+    const safeName = normalizedName.slice(0, 200);
     if (price <= 0) {
       throw new Error("Les prix doivent être supérieurs à zéro (en centimes)");
     }
 
     return {
       ...item,
+      name: safeName,
       price,
       quantity,
     };
@@ -141,7 +145,12 @@ export async function startCheckout(items: CheckoutItem[], options?: CheckoutOpt
         throw new Error(`Erreur HTTP ${response.status}${errorBody ? ` - ${errorBody}` : ''}`);
     }
 
-    const data = await response.json();
+    let data: any;
+    try {
+      data = await response.json();
+    } catch (parseErr) {
+      throw new Error("Réponse du service de paiement invalide (JSON)");
+    }
     console.log("Session created:", data);
 
     const redirectUrl = typeof data?.url === 'string' ? data.url.trim() : '';
