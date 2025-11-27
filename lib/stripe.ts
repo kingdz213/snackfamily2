@@ -5,11 +5,13 @@ export interface CheckoutItem {
 }
 
 export interface CheckoutCustomerInfo {
-  fullName?: string;
+  firstName?: string;
+  lastName?: string;
   address?: string;
   postalCode?: string;
   city?: string;
   phone?: string;
+  email?: string;
   instructions?: string;
 }
 
@@ -118,9 +120,19 @@ function sanitizeCustomer(customer?: CheckoutCustomerInfo): CheckoutCustomerInfo
     return cleaned;
   };
 
+  const sanitizeEmail = (value?: string) => {
+    if (!value) return undefined;
+    const trimmed = sanitizeText(value, 200);
+    const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+    if (!emailPattern.test(trimmed)) return undefined;
+    return trimmed.slice(0, 160);
+  };
+
   const sanitized: CheckoutCustomerInfo = {};
-  const fullName = sanitizeField(customer.fullName, 120);
-  if (fullName) sanitized.fullName = fullName;
+  const firstName = sanitizeField(customer.firstName, 80);
+  const lastName = sanitizeField(customer.lastName, 80);
+  if (firstName) sanitized.firstName = firstName;
+  if (lastName) sanitized.lastName = lastName;
 
   const address = sanitizeField(customer.address, 200);
   if (address) sanitized.address = address;
@@ -133,6 +145,9 @@ function sanitizeCustomer(customer?: CheckoutCustomerInfo): CheckoutCustomerInfo
 
   const phone = sanitizeField(customer.phone, 40);
   if (phone) sanitized.phone = phone;
+
+  const email = sanitizeEmail(customer.email);
+  if (email) sanitized.email = email;
 
   const instructions = sanitizeField(customer.instructions, 300);
   if (instructions) sanitized.instructions = instructions;

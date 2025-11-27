@@ -81,6 +81,54 @@ function App() {
     setIsCartOpen(false);
   };
 
+  // Persist cart items locally to survive refresh/navigation (without exposing sensitive data)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('snackfamily_cart');
+      if (raw) {
+        const parsed = JSON.parse(raw) as CartItem[];
+        if (Array.isArray(parsed)) {
+          const sanitized = parsed
+            .map((item) => {
+              const price = Number(item.price);
+              const quantity = Number.isFinite(item.quantity) ? Math.max(1, Math.trunc(item.quantity)) : 1;
+              if (!item.id || !item.name || !Number.isFinite(price)) return null;
+              return {
+                ...item,
+                price,
+                quantity,
+                selectedSupplements: Array.isArray(item.selectedSupplements)
+                  ? item.selectedSupplements.filter(Boolean)
+                  : undefined,
+                selectedVeggies: Array.isArray(item.selectedVeggies)
+                  ? item.selectedVeggies.filter(Boolean)
+                  : undefined,
+              } as CartItem;
+            })
+            .filter(Boolean) as CartItem[];
+
+          if (sanitized.length) {
+            setCartItems(sanitized);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Unable to restore cart from storage', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (cartItems.length) {
+        localStorage.setItem('snackfamily_cart', JSON.stringify(cartItems));
+      } else {
+        localStorage.removeItem('snackfamily_cart');
+      }
+    } catch (e) {
+      console.warn('Unable to persist cart locally', e);
+    }
+  }, [cartItems]);
+
   useEffect(() => {
     const handlePopState = () => {
       setCurrentPage(getInitialPage());

@@ -42,6 +42,33 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [deliveryInfo, setDeliveryInfo] = useState<CheckoutCustomerInfo>({});
 
+  // Restore persisted delivery info to ease repeat orders
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('snackfamily_delivery');
+      if (raw) {
+        const parsed = JSON.parse(raw) as CheckoutCustomerInfo;
+        if (parsed && typeof parsed === 'object') {
+          setDeliveryInfo(parsed);
+        }
+      }
+    } catch (e) {
+      console.warn('Unable to restore delivery info', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (Object.keys(deliveryInfo).length > 0) {
+        localStorage.setItem('snackfamily_delivery', JSON.stringify(deliveryInfo));
+      } else {
+        localStorage.removeItem('snackfamily_delivery');
+      }
+    } catch (e) {
+      console.warn('Unable to persist delivery info', e);
+    }
+  }, [deliveryInfo]);
+
   useEffect(() => {
     if (isOrderModalOpen) {
       setQuantity(1);
@@ -358,11 +385,27 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
                             <h3 className="font-display font-bold text-lg uppercase text-snack-black mb-3">Informations de livraison</h3>
                             <div className="space-y-3">
+                              <div className="grid grid-cols-2 gap-3">
+                                <input
+                                  type="text"
+                                  placeholder="Prénom"
+                                  value={deliveryInfo.firstName || ''}
+                                  onChange={(e) => handleDeliveryChange('firstName', e.target.value, 80)}
+                                  className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="Nom"
+                                  value={deliveryInfo.lastName || ''}
+                                  onChange={(e) => handleDeliveryChange('lastName', e.target.value, 80)}
+                                  className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
+                                />
+                              </div>
                               <input
-                                type="text"
-                                placeholder="Nom et prénom"
-                                value={deliveryInfo.fullName || ''}
-                                onChange={(e) => handleDeliveryChange('fullName', e.target.value, 120)}
+                                type="email"
+                                placeholder="Email"
+                                value={deliveryInfo.email || ''}
+                                onChange={(e) => handleDeliveryChange('email', e.target.value, 120)}
                                 className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
                               />
                               <input
