@@ -64,13 +64,31 @@ function normalizeItems(items: CheckoutItem[]): CheckoutItem[] {
 function sanitizeCustomer(customer?: CheckoutCustomerInfo): CheckoutCustomerInfo | undefined {
   if (!customer) return undefined;
 
+  const sanitizeField = (value?: string, max = 200) => {
+    if (!value) return undefined;
+    const trimmed = value.trim().replace(/[\r\n\t]+/g, ' ');
+    if (!trimmed) return undefined;
+    return trimmed.slice(0, max);
+  };
+
   const sanitized: CheckoutCustomerInfo = {};
-  if (customer.fullName?.trim()) sanitized.fullName = customer.fullName.trim();
-  if (customer.address?.trim()) sanitized.address = customer.address.trim();
-  if (customer.postalCode?.trim()) sanitized.postalCode = customer.postalCode.trim();
-  if (customer.city?.trim()) sanitized.city = customer.city.trim();
-  if (customer.phone?.trim()) sanitized.phone = customer.phone.trim();
-  if (customer.instructions?.trim()) sanitized.instructions = customer.instructions.trim();
+  const fullName = sanitizeField(customer.fullName, 120);
+  if (fullName) sanitized.fullName = fullName;
+
+  const address = sanitizeField(customer.address, 200);
+  if (address) sanitized.address = address;
+
+  const postalCode = sanitizeField(customer.postalCode, 20);
+  if (postalCode) sanitized.postalCode = postalCode;
+
+  const city = sanitizeField(customer.city, 120);
+  if (city) sanitized.city = city;
+
+  const phone = sanitizeField(customer.phone, 40);
+  if (phone) sanitized.phone = phone;
+
+  const instructions = sanitizeField(customer.instructions, 300);
+  if (instructions) sanitized.instructions = instructions;
 
   return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
@@ -163,7 +181,7 @@ export async function startCheckout(items: CheckoutItem[], options?: CheckoutOpt
  * DEV ONLY: Test function to verify Worker connectivity
  */
 export async function runDevTest() {
-  const WORKER_URL = resolveWorkerUrl() || DEFAULT_WORKER_URL;
+  const WORKER_URL = ensureValidWorkerUrl(resolveWorkerUrl() || DEFAULT_WORKER_URL);
 
   const origin = window.location.origin && window.location.origin !== 'null'
       ? window.location.origin

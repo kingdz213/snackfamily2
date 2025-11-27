@@ -57,6 +57,12 @@ function App() {
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<MenuCategory | null>(null);
 
+  const closeOrderModal = () => {
+    setIsOrderModalOpen(false);
+    setSelectedItem(null);
+    setSelectedCategory(null);
+  };
+
   // Scroll en haut à chaque changement de page
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -69,6 +75,8 @@ function App() {
     }
 
     setCurrentPage(page);
+    // Always reset modal-related state when navigating to avoid stale overlays
+    closeOrderModal();
     // Si on va sur la page Commander, on s'assure que le panier est fermé initialement
     if (page === 'commander') {
       setIsCartOpen(false);
@@ -79,6 +87,7 @@ function App() {
     const handlePopState = () => {
       setCurrentPage(getInitialPage());
       setIsCartOpen(false);
+      closeOrderModal();
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -102,12 +111,6 @@ function App() {
     setSelectedItem(item);
     setSelectedCategory(category);
     setIsOrderModalOpen(true);
-  };
-
-  const closeOrderModal = () => {
-    setIsOrderModalOpen(false);
-    setSelectedItem(null);
-    setSelectedCategory(null);
   };
 
   // Rendu conditionnel des pages
