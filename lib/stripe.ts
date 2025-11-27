@@ -18,6 +18,7 @@ interface CheckoutOptions {
 }
 
 const DEFAULT_WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
+const STRIPE_REDIRECT_HOST_SUFFIXES = ['stripe.com'];
 
 function resolveWorkerUrl(): string {
   const envUrl = import.meta.env?.VITE_STRIPE_WORKER_URL?.trim();
@@ -97,6 +98,35 @@ function sanitizeCustomer(customer?: CheckoutCustomerInfo): CheckoutCustomerInfo
   return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 
+function validateRedirectUrl(redirectUrl: string): string {
+  const trimmed = redirectUrl.trim();
+  if (!trimmed) {
+    throw new Error("Le service de paiement n'a pas renvoyé d'URL de redirection.");
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+
+    if (parsed.protocol !== 'https:' && !(isLocalhost && parsed.protocol === 'http:')) {
+      throw new Error('URL de redirection non sécurisée.');
+    }
+
+    const isStripeHost = STRIPE_REDIRECT_HOST_SUFFIXES.some((suffix) =>
+      parsed.hostname === suffix || parsed.hostname.endsWith(`.${suffix}`)
+    );
+
+    if (!isStripeHost && !isLocalhost) {
+      throw new Error("URL de redirection inattendue renvoyée par le service de paiement.");
+    }
+
+    return parsed.toString();
+  } catch (urlError) {
+    console.error('Invalid redirect URL returned by worker', urlError);
+    throw new Error("URL de redirection invalide renvoyée par le service de paiement.");
+  }
+}
+
 export async function startCheckout(items: CheckoutItem[], options?: CheckoutOptions): Promise<string> {
   console.log("Initiating Stripe Checkout...");
 
@@ -153,24 +183,8 @@ export async function startCheckout(items: CheckoutItem[], options?: CheckoutOpt
     }
     console.log("Session created:", data);
 
-    const redirectUrl = typeof data?.url === 'string' ? data.url.trim() : '';
-
-    if (!redirectUrl) {
-      console.error("No URL in response:", data);
-      throw new Error("Le service de paiement n'a pas renvoyé d'URL de redirection.");
-    }
-
-    let safeRedirect: string;
-    try {
-      const parsed = new URL(redirectUrl);
-      if (parsed.protocol !== 'https:' && !(parsed.hostname === 'localhost' && parsed.protocol === 'http:')) {
-        throw new Error('URL de redirection non sécurisée.');
-      }
-      safeRedirect = parsed.toString();
-    } catch (urlError) {
-      console.error('Invalid redirect URL returned by worker', urlError);
-      throw new Error("URL de redirection invalide renvoyée par le service de paiement.");
-    }
+    const redirectUrl = typeof data?.url === 'string' ? data.url : '';
+    const safeRedirect = validateRedirectUrl(redirectUrl);
 
     // Redirect to Stripe Checkout and expose URL for callers/tests
     window.location.href = safeRedirect;
@@ -208,11 +222,15 @@ export async function runDevTest() {
   console.log("Target URL:", WORKER_URL);
   console.log("Payload:", payload);
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
   try {
     const response = await fetch(WORKER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
 
     console.log("HTTP Status:", response.status);
@@ -242,7 +260,12 @@ export async function runDevTest() {
 
   } catch (error) {
     console.error("Test Error:", error);
-    alert(`Échec du test: ${error instanceof Error ? error.message : String(error)}`);
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      alert("Test Stripe interrompu: délai dépassé.");
+    } else {
+      alert(`Échec du test: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
+  clearTimeout(timeout);
   console.groupEnd();
 }

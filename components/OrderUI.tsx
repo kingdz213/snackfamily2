@@ -99,7 +99,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   };
 
   const sanitizeInput = (value: string, max = 200) => {
-    const trimmed = value.trim().replace(/[\r\n\t]+/g, ' ');
+    const cleaned = value.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ');
+    const trimmed = cleaned.trim();
     return trimmed.slice(0, max);
   };
 
