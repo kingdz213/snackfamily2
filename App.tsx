@@ -13,6 +13,20 @@ import { OrderUI } from './components/OrderUI';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
 
 function App() {
+  const pageToPath: Record<Page, string> = {
+    home: '/',
+    menu: '/menu',
+    infos: '/infos',
+    contact: '/contact',
+    commander: '/commander',
+    success: '/success',
+    cancel: '/cancel'
+  };
+  const pathToPage: Record<string, Page> = Object.entries(pageToPath).reduce((acc, [page, path]) => {
+    acc[path] = page as Page;
+    return acc;
+  }, {} as Record<string, Page>);
+
   // Détection robuste de la page initiale (Success/Cancel) compatible sandbox
   const getInitialPage = (): Page => {
     try {
@@ -23,25 +37,11 @@ function App() {
       if (path.includes('/cancel') || search.includes('canceled=true')) return 'cancel';
 
       const normalizedPath = path.endsWith('/') && path !== '/' ? path.slice(0, -1) : path;
-      switch (normalizedPath) {
-        case '/':
-        case '/home':
-          return 'home';
-        case '/menu':
-          return 'menu';
-        case '/infos':
-          return 'infos';
-        case '/contact':
-          return 'contact';
-        case '/commander':
-          return 'commander';
-        case '/cancel':
-          return 'cancel';
-        case '/success':
-          return 'success';
-        default:
-          return 'home';
+      if (normalizedPath === '/home') {
+        return 'home';
       }
+
+      return pathToPage[normalizedPath] ?? 'home';
     } catch (e) {
       console.warn("Navigation warning: could not determine initial page", e);
     }
@@ -61,17 +61,7 @@ function App() {
   }, [currentPage]);
 
   const navigateTo = (page: Page) => {
-    const pathMap: Record<Page, string> = {
-      home: '/',
-      menu: '/menu',
-      infos: '/infos',
-      contact: '/contact',
-      commander: '/commander',
-      success: '/success',
-      cancel: '/cancel'
-    };
-
-    const targetPath = pathMap[page] ?? '/';
+    const targetPath = pageToPath[page] ?? '/';
     if (window.location.pathname !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }

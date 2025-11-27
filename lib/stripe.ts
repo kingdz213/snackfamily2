@@ -110,7 +110,7 @@ export async function runDevTest() {
 
   const origin = window.location.origin && window.location.origin !== 'null'
       ? window.location.origin
-      : 'http://localhost:3000';
+      : 'http://localhost:5173';
 
   const payload = {
     items: [
