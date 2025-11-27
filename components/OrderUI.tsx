@@ -99,7 +99,12 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   };
 
   const sanitizeInput = (value: string, max = 200) => {
-    const withoutControls = value.replace(/[\r\n\t]+/g, ' ').replace(/[<>]/g, ' ');
+    const withoutControls = value
+      // strip ASCII control characters
+      .replace(/[\u0000-\u001F\u007F-\u009F]+/g, ' ')
+      // neutralize angle brackets
+      .replace(/[<>]/g, ' ');
+
     const cleaned = withoutControls.replace(/\s{2,}/g, ' ').trim();
     return cleaned.slice(0, max);
   };

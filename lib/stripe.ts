@@ -21,8 +21,10 @@ const DEFAULT_WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squ
 const STRIPE_REDIRECT_HOST_SUFFIXES = ['stripe.com'];
 
 function sanitizeText(value: string, max = 200) {
-  // Remove control characters and angle brackets to reduce injection vectors
-  const withoutControls = value.replace(/[\r\n\t]+/g, ' ').replace(/[<>]/g, ' ');
+  // Remove control characters (ASCII), angle brackets, and normalize whitespace
+  const withoutControls = value
+    .replace(/[\u0000-\u001F\u007F-\u009F]+/g, ' ')
+    .replace(/[<>]/g, ' ');
   // Collapse repeated whitespace and trim
   const collapsed = withoutControls.replace(/\s{2,}/g, ' ').trim();
   // Limit length to protect metadata and logs

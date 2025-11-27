@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Menu, X, ShoppingBag } from 'lucide-react';
 import { Page } from '../types';
 
@@ -23,6 +23,13 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
     navigateTo(page);
     setIsMenuOpen(false);
   };
+
+  // Close the mobile menu whenever the current page changes (including popstate/navigation)
+  useEffect(() => {
+    if (isMenuOpen) {
+      setIsMenuOpen(false);
+    }
+  }, [currentPage, isMenuOpen]);
 
   return (
     <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg h-24">
