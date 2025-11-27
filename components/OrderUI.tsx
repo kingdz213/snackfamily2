@@ -98,6 +98,18 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     closeOrderModal();
   };
 
+  const sanitizeInput = (value: string, max = 200) => {
+    const trimmed = value.trim().replace(/[\r\n\t]+/g, ' ');
+    return trimmed.slice(0, max);
+  };
+
+  const handleDeliveryChange = (key: keyof CheckoutCustomerInfo, value: string, max = 200) => {
+    setDeliveryInfo((prev) => ({
+      ...prev,
+      [key]: sanitizeInput(value, max)
+    }));
+  };
+
   const handleStripeCheckout = async () => {
     if (isCheckingOut) return;
     if (cartItems.length === 0) return;
@@ -344,14 +356,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                                 type="text"
                                 placeholder="Nom et prénom"
                                 value={deliveryInfo.fullName || ''}
-                                onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, fullName: e.target.value }))}
+                                onChange={(e) => handleDeliveryChange('fullName', e.target.value, 120)}
                                 className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
                               />
                               <input
                                 type="text"
                                 placeholder="Adresse"
                                 value={deliveryInfo.address || ''}
-                                onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, address: e.target.value }))}
+                                onChange={(e) => handleDeliveryChange('address', e.target.value, 200)}
                                 className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
                               />
                               <div className="grid grid-cols-2 gap-3">
@@ -359,14 +371,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                                   type="text"
                                   placeholder="Code postal"
                                   value={deliveryInfo.postalCode || ''}
-                                  onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, postalCode: e.target.value }))}
+                                  onChange={(e) => handleDeliveryChange('postalCode', e.target.value, 20)}
                                   className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
                                 />
                                 <input
                                   type="text"
                                   placeholder="Ville"
                                   value={deliveryInfo.city || ''}
-                                  onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, city: e.target.value }))}
+                                  onChange={(e) => handleDeliveryChange('city', e.target.value, 120)}
                                   className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
                                 />
                               </div>
@@ -374,13 +386,13 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                                 type="tel"
                                 placeholder="Téléphone"
                                 value={deliveryInfo.phone || ''}
-                                onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, phone: e.target.value }))}
+                                onChange={(e) => handleDeliveryChange('phone', e.target.value, 40)}
                                 className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
                               />
                               <textarea
                                 placeholder="Instructions de livraison (étage, digicode, etc.)"
                                 value={deliveryInfo.instructions || ''}
-                                onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, instructions: e.target.value }))}
+                                onChange={(e) => handleDeliveryChange('instructions', e.target.value, 300)}
                                 className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none min-h-[80px]"
                               />
                             </div>
