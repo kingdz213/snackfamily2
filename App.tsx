@@ -26,6 +26,10 @@ function App() {
     acc[path] = page as Page;
     return acc;
   }, {} as Record<string, Page>);
+  const aliasPathToPage: Record<string, Page> = {
+    '/home': 'home',
+    '/index.html': 'home',
+  };
 
   // Détection robuste de la page initiale (Success/Cancel) compatible sandbox
   const getInitialPage = (): Page => {
@@ -37,11 +41,9 @@ function App() {
       if (path.includes('/cancel') || search.includes('canceled=true')) return 'cancel';
 
       const normalizedPath = path.endsWith('/') && path !== '/' ? path.slice(0, -1) : path;
-      if (normalizedPath === '/home') {
-        return 'home';
-      }
+      const mappedPage = pathToPage[normalizedPath] ?? aliasPathToPage[normalizedPath];
 
-      return pathToPage[normalizedPath] ?? 'home';
+      return mappedPage ?? 'home';
     } catch (e) {
       console.warn("Navigation warning: could not determine initial page", e);
     }
@@ -128,7 +130,7 @@ function App() {
         currentPage={currentPage}
         navigateTo={navigateTo}
         cartCount={cartItems.reduce((acc, item) => acc + item.quantity, 0)}
-        toggleCart={() => setIsCartOpen(!isCartOpen)}
+        toggleCart={() => setIsCartOpen((open) => !open)}
       />
 
       <main className="flex-grow pt-24">

@@ -35,7 +35,7 @@ function normalizeItems(items: CheckoutItem[]): CheckoutItem[] {
   });
 }
 
-export async function startCheckout(items: CheckoutItem[]) {
+export async function startCheckout(items: CheckoutItem[]): Promise<string> {
   console.log("Initiating Stripe Checkout...");
 
   // Determine a safe origin for success/cancel redirects
@@ -84,13 +84,16 @@ export async function startCheckout(items: CheckoutItem[]) {
     const data = await response.json();
     console.log("Session created:", data);
 
-    if (data.url) {
-      // Redirect to Stripe Checkout
-      window.location.href = data.url;
-    } else {
+    const redirectUrl = typeof data?.url === 'string' ? data.url.trim() : '';
+
+    if (!redirectUrl) {
       console.error("No URL in response:", data);
       throw new Error("Le service de paiement n'a pas renvoyé d'URL de redirection.");
     }
+
+    // Redirect to Stripe Checkout and expose URL for callers/tests
+    window.location.href = redirectUrl;
+    return redirectUrl;
   } catch (e) {
     console.error("Checkout Exception:", e);
     if (e instanceof DOMException && e.name === 'AbortError') {
