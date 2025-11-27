@@ -128,8 +128,6 @@ function validateRedirectUrl(redirectUrl: string): string {
 }
 
 export async function startCheckout(items: CheckoutItem[], options?: CheckoutOptions): Promise<string> {
-  console.log("Initiating Stripe Checkout...");
-
   // Determine a safe origin for success/cancel redirects
   // Use fallback if window.location.origin is null/about:blank (sandboxes)
   const origin = window.location.origin && window.location.origin !== 'null' && window.location.origin !== 'about:blank'
@@ -147,8 +145,6 @@ export async function startCheckout(items: CheckoutItem[], options?: CheckoutOpt
     cancelUrl: `${origin}/cancel`,
     ...(customer ? { metadata: customer } : {})
   };
-
-  console.log("Sending payload to Worker:", payload);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
@@ -181,8 +177,6 @@ export async function startCheckout(items: CheckoutItem[], options?: CheckoutOpt
     } catch (parseErr) {
       throw new Error("Réponse du service de paiement invalide (JSON)");
     }
-    console.log("Session created:", data);
-
     const redirectUrl = typeof data?.url === 'string' ? data.url : '';
     const safeRedirect = validateRedirectUrl(redirectUrl);
 
