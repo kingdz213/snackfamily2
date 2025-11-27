@@ -4,6 +4,19 @@ export interface CheckoutItem {
   quantity: number;
 }
 
+export interface CheckoutCustomerInfo {
+  fullName?: string;
+  address?: string;
+  postalCode?: string;
+  city?: string;
+  phone?: string;
+  instructions?: string;
+}
+
+interface CheckoutOptions {
+  customer?: CheckoutCustomerInfo;
+}
+
 const DEFAULT_WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
 
 function resolveWorkerUrl(): string {
@@ -48,7 +61,21 @@ function normalizeItems(items: CheckoutItem[]): CheckoutItem[] {
   });
 }
 
-export async function startCheckout(items: CheckoutItem[]): Promise<string> {
+function sanitizeCustomer(customer?: CheckoutCustomerInfo): CheckoutCustomerInfo | undefined {
+  if (!customer) return undefined;
+
+  const sanitized: CheckoutCustomerInfo = {};
+  if (customer.fullName?.trim()) sanitized.fullName = customer.fullName.trim();
+  if (customer.address?.trim()) sanitized.address = customer.address.trim();
+  if (customer.postalCode?.trim()) sanitized.postalCode = customer.postalCode.trim();
+  if (customer.city?.trim()) sanitized.city = customer.city.trim();
+  if (customer.phone?.trim()) sanitized.phone = customer.phone.trim();
+  if (customer.instructions?.trim()) sanitized.instructions = customer.instructions.trim();
+
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+export async function startCheckout(items: CheckoutItem[], options?: CheckoutOptions): Promise<string> {
   console.log("Initiating Stripe Checkout...");
 
   // Determine a safe origin for success/cancel redirects
@@ -60,11 +87,13 @@ export async function startCheckout(items: CheckoutItem[]): Promise<string> {
   const WORKER_URL = ensureValidWorkerUrl(resolveWorkerUrl());
 
   const normalizedItems = normalizeItems(items);
+  const customer = sanitizeCustomer(options?.customer);
 
   const payload = {
     items: normalizedItems,
     successUrl: `${origin}/success`,
-    cancelUrl: `${origin}/cancel`
+    cancelUrl: `${origin}/cancel`,
+    ...(customer ? { metadata: customer } : {})
   };
 
   console.log("Sending payload to Worker:", payload);

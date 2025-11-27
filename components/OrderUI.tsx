@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { startCheckout, runDevTest } from '../lib/stripe';
+import { startCheckout, runDevTest, CheckoutCustomerInfo } from '../lib/stripe';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -40,6 +40,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [variant, setVariant] = useState<'Menu/Frites' | 'Solo'>('Menu/Frites');
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [deliveryInfo, setDeliveryInfo] = useState<CheckoutCustomerInfo>({});
 
   useEffect(() => {
     if (isOrderModalOpen) {
@@ -121,7 +122,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         };
       });
 
-      await startCheckout(checkoutItems);
+      await startCheckout(checkoutItems, { customer: deliveryInfo });
       // Page redirects on success
     } catch (error) {
       console.error("Checkout failed", error);
@@ -317,21 +318,74 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                             </div>
                         </div>
                     ) : (
-                        cartItems.map((item) => (
-                            <div key={item.id} className="border border-gray-200 rounded-lg p-4 shadow-sm bg-white relative group hover:border-snack-gold transition-colors">
-                                <button onClick={() => removeFromCart(item.id)} className="absolute top-3 right-3 text-gray-300 hover:text-red-500 transition-colors p-1"><Trash2 size={18} /></button>
-                                <div><h4 className="font-bold text-snack-black text-lg">{item.name}</h4>{item.variant && <span className="text-[10px] font-bold text-black uppercase bg-snack-gold px-1.5 py-0.5 rounded mr-2">{item.variant === 'Menu/Frites' ? 'Menu/Frites' : 'Seul'}</span>}</div>
-                                <div className="mt-2 text-sm text-gray-500 space-y-1 border-l-2 border-gray-100 pl-3">
-                                    {item.selectedSauce && <p><span className="font-bold text-xs uppercase">Sauce:</span> {item.selectedSauce}</p>}
-                                    {item.selectedVeggies && <p><span className="font-bold text-xs uppercase">Crudités:</span> {item.selectedVeggies.length === VEGGIES.length ? 'Tout' : item.selectedVeggies.length === 0 ? 'Aucune' : item.selectedVeggies.join(', ')}</p>}
-                                    {item.selectedSupplements && item.selectedSupplements.length > 0 && <p className="text-snack-black font-bold">+ {item.selectedSupplements.join(', ')}</p>}
+                        <>
+                          <div className="space-y-4">
+                            {cartItems.map((item) => (
+                                <div key={item.id} className="border border-gray-200 rounded-lg p-4 shadow-sm bg-white relative group hover:border-snack-gold transition-colors">
+                                    <button onClick={() => removeFromCart(item.id)} className="absolute top-3 right-3 text-gray-300 hover:text-red-500 transition-colors p-1"><Trash2 size={18} /></button>
+                                    <div><h4 className="font-bold text-snack-black text-lg">{item.name}</h4>{item.variant && <span className="text-[10px] font-bold text-black uppercase bg-snack-gold px-1.5 py-0.5 rounded mr-2">{item.variant === 'Menu/Frites' ? 'Menu/Frites' : 'Seul'}</span>}</div>
+                                    <div className="mt-2 text-sm text-gray-500 space-y-1 border-l-2 border-gray-100 pl-3">
+                                        {item.selectedSauce && <p><span className="font-bold text-xs uppercase">Sauce:</span> {item.selectedSauce}</p>}
+                                        {item.selectedVeggies && <p><span className="font-bold text-xs uppercase">Crudités:</span> {item.selectedVeggies.length === VEGGIES.length ? 'Tout' : item.selectedVeggies.length === 0 ? 'Aucune' : item.selectedVeggies.join(', ')}</p>}
+                                        {item.selectedSupplements && item.selectedSupplements.length > 0 && <p className="text-snack-black font-bold">+ {item.selectedSupplements.join(', ')}</p>}
+                                    </div>
+                                    <div className="mt-3 pt-3 border-t border-gray-50 flex justify-between items-center">
+                                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Qté: {item.quantity}</span>
+                                        <span className="font-bold text-lg text-snack-black">{(item.price * item.quantity).toFixed(2)} €</span>
+                                    </div>
                                 </div>
-                                <div className="mt-3 pt-3 border-t border-gray-50 flex justify-between items-center">
-                                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Qté: {item.quantity}</span>
-                                    <span className="font-bold text-lg text-snack-black">{(item.price * item.quantity).toFixed(2)} €</span>
-                                </div>
+                            ))}
+                          </div>
+
+                          <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                            <h3 className="font-display font-bold text-lg uppercase text-snack-black mb-3">Informations de livraison</h3>
+                            <div className="space-y-3">
+                              <input
+                                type="text"
+                                placeholder="Nom et prénom"
+                                value={deliveryInfo.fullName || ''}
+                                onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, fullName: e.target.value }))}
+                                className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
+                              />
+                              <input
+                                type="text"
+                                placeholder="Adresse"
+                                value={deliveryInfo.address || ''}
+                                onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, address: e.target.value }))}
+                                className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
+                              />
+                              <div className="grid grid-cols-2 gap-3">
+                                <input
+                                  type="text"
+                                  placeholder="Code postal"
+                                  value={deliveryInfo.postalCode || ''}
+                                  onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, postalCode: e.target.value }))}
+                                  className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
+                                />
+                                <input
+                                  type="text"
+                                  placeholder="Ville"
+                                  value={deliveryInfo.city || ''}
+                                  onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, city: e.target.value }))}
+                                  className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
+                                />
+                              </div>
+                              <input
+                                type="tel"
+                                placeholder="Téléphone"
+                                value={deliveryInfo.phone || ''}
+                                onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, phone: e.target.value }))}
+                                className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none"
+                              />
+                              <textarea
+                                placeholder="Instructions de livraison (étage, digicode, etc.)"
+                                value={deliveryInfo.instructions || ''}
+                                onChange={(e) => setDeliveryInfo((prev) => ({ ...prev, instructions: e.target.value }))}
+                                className="w-full p-3 border border-gray-200 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none min-h-[80px]"
+                              />
                             </div>
-                        ))
+                          </div>
+                        </>
                     )}
                 </div>
 
