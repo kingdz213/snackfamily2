@@ -20,6 +20,34 @@ interface CheckoutOptions {
 const DEFAULT_WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
 const STRIPE_REDIRECT_HOST_SUFFIXES = ['stripe.com'];
 
+function sanitizeText(value: string, max = 200) {
+  // Remove control characters and angle brackets to reduce injection vectors
+  const withoutControls = value.replace(/[\r\n\t]+/g, ' ').replace(/[<>]/g, ' ');
+  // Collapse repeated whitespace and trim
+  const collapsed = withoutControls.replace(/\s{2,}/g, ' ').trim();
+  // Limit length to protect metadata and logs
+  return collapsed.slice(0, max);
+}
+
+function resolveSafeOrigin() {
+  const fallback = 'https://snackfamily2.com';
+  try {
+    const rawOrigin = window.location.origin;
+    if (!rawOrigin || rawOrigin === 'null' || rawOrigin === 'about:blank') {
+      return fallback;
+    }
+
+    const parsed = new URL(rawOrigin);
+    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    if (parsed.protocol === 'https:' || (isLocalhost && parsed.protocol === 'http:')) {
+      return parsed.origin;
+    }
+  } catch (e) {
+    console.warn('Origin validation failed, using fallback', e);
+  }
+  return fallback;
+}
+
 function resolveWorkerUrl(): string {
   const envUrl = import.meta.env?.VITE_STRIPE_WORKER_URL?.trim();
   return envUrl || DEFAULT_WORKER_URL;
@@ -29,6 +57,9 @@ function ensureValidWorkerUrl(url: string): string {
   try {
     const parsed = new URL(url);
     const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    if (parsed.username || parsed.password) {
+      throw new Error('Les identifiants dans l\'URL du worker sont interdits.');
+    }
     if (parsed.protocol !== 'https:' && !(isLocalhost && parsed.protocol === 'http:')) {
       throw new Error('Le worker Stripe doit utiliser HTTPS (ou HTTP localhost en dev).');
     }
@@ -48,18 +79,17 @@ function normalizeItems(items: CheckoutItem[]): CheckoutItem[] {
     const rawPrice = Number.isFinite(item.price) ? item.price : Number(item.price ?? 0);
     const price = Math.max(0, Math.trunc(rawPrice || 0));
 
-    const normalizedName = (item.name ?? '').trim().replace(/[\r\n\t]+/g, ' ');
+    const normalizedName = sanitizeText(item.name ?? '');
     if (!normalizedName) {
       throw new Error("Chaque article doit avoir un nom");
     }
-    const safeName = normalizedName.slice(0, 200);
     if (price <= 0) {
       throw new Error("Les prix doivent être supérieurs à zéro (en centimes)");
     }
 
     return {
       ...item,
-      name: safeName,
+      name: normalizedName,
       price,
       quantity,
     };
@@ -71,9 +101,9 @@ function sanitizeCustomer(customer?: CheckoutCustomerInfo): CheckoutCustomerInfo
 
   const sanitizeField = (value?: string, max = 200) => {
     if (!value) return undefined;
-    const trimmed = value.trim().replace(/[\r\n\t]+/g, ' ');
-    if (!trimmed) return undefined;
-    return trimmed.slice(0, max);
+    const cleaned = sanitizeText(value, max);
+    if (!cleaned) return undefined;
+    return cleaned;
   };
 
   const sanitized: CheckoutCustomerInfo = {};
@@ -130,9 +160,7 @@ function validateRedirectUrl(redirectUrl: string): string {
 export async function startCheckout(items: CheckoutItem[], options?: CheckoutOptions): Promise<string> {
   // Determine a safe origin for success/cancel redirects
   // Use fallback if window.location.origin is null/about:blank (sandboxes)
-  const origin = window.location.origin && window.location.origin !== 'null' && window.location.origin !== 'about:blank'
-    ? window.location.origin
-    : 'https://snackfamily2.com';
+  const origin = resolveSafeOrigin();
 
   const WORKER_URL = ensureValidWorkerUrl(resolveWorkerUrl());
 

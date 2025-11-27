@@ -99,9 +99,9 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   };
 
   const sanitizeInput = (value: string, max = 200) => {
-    const cleaned = value.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ');
-    const trimmed = cleaned.trim();
-    return trimmed.slice(0, max);
+    const withoutControls = value.replace(/[\r\n\t]+/g, ' ').replace(/[<>]/g, ' ');
+    const cleaned = withoutControls.replace(/\s{2,}/g, ' ').trim();
+    return cleaned.slice(0, max);
   };
 
   const handleDeliveryChange = (key: keyof CheckoutCustomerInfo, value: string, max = 200) => {
