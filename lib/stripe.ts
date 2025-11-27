@@ -19,11 +19,14 @@ interface CheckoutOptions {
 
 const DEFAULT_WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
 const STRIPE_REDIRECT_HOST_SUFFIXES = ['stripe.com'];
+const MAX_ITEMS = 100;
+const MAX_QUANTITY = 99;
+const MAX_PRICE_CENTS = 1_000_000; // 10,000 EUR safeguard
 
 function sanitizeText(value: string, max = 200) {
   // Remove control characters (ASCII), angle brackets, and normalize whitespace
   const withoutControls = value
-    .replace(/[\u0000-\u001F\u007F-\u009F]+/g, ' ')
+    .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u206F]+/g, ' ')
     .replace(/[<>]/g, ' ');
   // Collapse repeated whitespace and trim
   const collapsed = withoutControls.replace(/\s{2,}/g, ' ').trim();
@@ -76,8 +79,12 @@ function normalizeItems(items: CheckoutItem[]): CheckoutItem[] {
     throw new Error("No checkout items provided");
   }
 
+  if (items.length > MAX_ITEMS) {
+    throw new Error(`Trop d'articles dans le panier (max ${MAX_ITEMS}).`);
+  }
+
   return items.map((item) => {
-    const quantity = Math.max(1, Math.trunc(item.quantity || 0));
+    const quantity = Math.min(MAX_QUANTITY, Math.max(1, Math.trunc(item.quantity || 0)));
     const rawPrice = Number.isFinite(item.price) ? item.price : Number(item.price ?? 0);
     const price = Math.max(0, Math.trunc(rawPrice || 0));
 
@@ -87,6 +94,9 @@ function normalizeItems(items: CheckoutItem[]): CheckoutItem[] {
     }
     if (price <= 0) {
       throw new Error("Les prix doivent être supérieurs à zéro (en centimes)");
+    }
+    if (price > MAX_PRICE_CENTS) {
+      throw new Error("Le montant d'un article dépasse la limite autorisée.");
     }
 
     return {
