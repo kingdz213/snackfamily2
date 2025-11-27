@@ -77,10 +77,8 @@ function App() {
     setCurrentPage(page);
     // Always reset modal-related state when navigating to avoid stale overlays
     closeOrderModal();
-    // Si on va sur la page Commander, on s'assure que le panier est fermé initialement
-    if (page === 'commander') {
-      setIsCartOpen(false);
-    }
+    // Ferme systématiquement le panier lors d'un changement de page pour éviter qu'il ne reste ouvert
+    setIsCartOpen(false);
   };
 
   useEffect(() => {

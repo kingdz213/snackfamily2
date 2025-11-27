@@ -228,7 +228,7 @@ export async function runDevTest() {
     });
 
     console.log("HTTP Status:", response.status);
-    
+
     const text = await response.text();
     console.log("Raw Response Body:", text);
 
@@ -245,8 +245,15 @@ export async function runDevTest() {
     }
 
     if (data.url) {
-        if (confirm(`Test réussi ! URL reçue : ${data.url}\n\nVoulez-vous être redirigé vers Stripe ?`)) {
-             window.location.href = data.url;
+        let safeUrl: string;
+        try {
+          safeUrl = validateRedirectUrl(String(data.url));
+        } catch (redirectError) {
+          throw redirectError instanceof Error ? redirectError : new Error(String(redirectError));
+        }
+
+        if (confirm(`Test réussi ! URL reçue : ${safeUrl}\n\nVoulez-vous être redirigé vers Stripe ?`)) {
+             window.location.href = safeUrl;
         }
     } else {
         alert("Réponse reçue mais pas d'URL: " + JSON.stringify(data));
@@ -259,7 +266,8 @@ export async function runDevTest() {
     } else {
       alert(`Échec du test: ${error instanceof Error ? error.message : String(error)}`);
     }
+  } finally {
+    clearTimeout(timeout);
+    console.groupEnd();
   }
-  clearTimeout(timeout);
-  console.groupEnd();
 }
