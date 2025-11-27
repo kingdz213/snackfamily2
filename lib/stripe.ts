@@ -19,7 +19,8 @@ interface CheckoutOptions {
   customer?: CheckoutCustomerInfo;
 }
 
-const DEFAULT_WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
+// Default to a generic Worker endpoint; override with VITE_STRIPE_WORKER_URL in production
+const DEFAULT_WORKER_URL = "https://your-worker-cloudflare.workers.dev/create-checkout-session";
 const STRIPE_REDIRECT_HOST_SUFFIXES = ['stripe.com'];
 const MAX_ITEMS = 100;
 const MAX_QUANTITY = 99;
