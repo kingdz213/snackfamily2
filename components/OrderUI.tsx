@@ -42,14 +42,59 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [deliveryInfo, setDeliveryInfo] = useState<CheckoutCustomerInfo>({});
 
+  const sanitizeInput = (value: string, max = 200) => {
+    const withoutControls = value
+      // strip ASCII control characters
+      .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u206F]+/g, ' ')
+      // neutralize angle brackets
+      .replace(/[<>]/g, ' ');
+
+    const cleaned = withoutControls.replace(/\s{2,}/g, ' ').trim();
+    return cleaned.slice(0, max);
+  };
+
+  const sanitizeEmail = (value: string) => {
+    const cleaned = sanitizeInput(value, 160);
+    const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+    return emailPattern.test(cleaned) ? cleaned : '';
+  };
+
+  const sanitizeDeliveryInfo = (info?: CheckoutCustomerInfo): CheckoutCustomerInfo => {
+    if (!info || typeof info !== 'object') return {};
+
+    const cleaned: CheckoutCustomerInfo = {};
+
+    const setField = (key: keyof CheckoutCustomerInfo, value?: string, max = 200) => {
+      if (!value) return;
+      const safeValue = sanitizeInput(String(value), max);
+      if (safeValue) cleaned[key] = safeValue;
+    };
+
+    setField('firstName', info.firstName, 80);
+    setField('lastName', info.lastName, 80);
+    setField('address', info.address, 200);
+    setField('city', info.city, 120);
+    setField('postalCode', info.postalCode, 20);
+    setField('phone', info.phone, 40);
+    setField('instructions', info.instructions, 300);
+
+    if (info.email) {
+      const validEmail = sanitizeEmail(info.email);
+      if (validEmail) cleaned.email = validEmail;
+    }
+
+    return cleaned;
+  };
+
   // Restore persisted delivery info to ease repeat orders
   useEffect(() => {
     try {
       const raw = localStorage.getItem('snackfamily_delivery');
       if (raw) {
         const parsed = JSON.parse(raw) as CheckoutCustomerInfo;
-        if (parsed && typeof parsed === 'object') {
-          setDeliveryInfo(parsed);
+        const cleaned = sanitizeDeliveryInfo(parsed);
+        if (Object.keys(cleaned).length > 0) {
+          setDeliveryInfo(cleaned);
         }
       }
     } catch (e) {
@@ -59,8 +104,9 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   useEffect(() => {
     try {
-      if (Object.keys(deliveryInfo).length > 0) {
-        localStorage.setItem('snackfamily_delivery', JSON.stringify(deliveryInfo));
+      const cleaned = sanitizeDeliveryInfo(deliveryInfo);
+      if (Object.keys(cleaned).length > 0) {
+        localStorage.setItem('snackfamily_delivery', JSON.stringify(cleaned));
       } else {
         localStorage.removeItem('snackfamily_delivery');
       }
@@ -125,21 +171,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     closeOrderModal();
   };
 
-  const sanitizeInput = (value: string, max = 200) => {
-    const withoutControls = value
-      // strip ASCII control characters
-      .replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u206F]+/g, ' ')
-      // neutralize angle brackets
-      .replace(/[<>]/g, ' ');
-
-    const cleaned = withoutControls.replace(/\s{2,}/g, ' ').trim();
-    return cleaned.slice(0, max);
-  };
-
   const handleDeliveryChange = (key: keyof CheckoutCustomerInfo, value: string, max = 200) => {
+    const sanitizedValue = key === 'email' ? sanitizeEmail(value) : sanitizeInput(value, max);
     setDeliveryInfo((prev) => ({
       ...prev,
-      [key]: sanitizeInput(value, max)
+      [key]: sanitizedValue || undefined,
     }));
   };
 
