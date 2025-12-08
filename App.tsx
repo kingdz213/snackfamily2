@@ -140,6 +140,14 @@ function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  // Clear cart after a successful checkout to avoid stale items when returning to the site
+  useEffect(() => {
+    if (currentPage === 'success') {
+      setCartItems([]);
+      setIsCartOpen(false);
+    }
+  }, [currentPage]);
+
   const addToCart = (item: CartItem) => {
     setCartItems(prev => [...prev, item]);
     setIsCartOpen(true); // Ouvre le panier automatiquement après ajout
