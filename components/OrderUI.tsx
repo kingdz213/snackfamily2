@@ -203,7 +203,12 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         };
       });
 
-      await startCheckout(checkoutItems, { customer: deliveryInfo });
+      await startCheckout(checkoutItems, { customer: deliveryInfo }, {
+        cartItems,
+        totalAmount: cartTotal,
+        customerInfo: deliveryInfo,
+        paymentStatus: 'pending',
+      });
       // Page redirects on success
     } catch (error) {
       console.error("Checkout failed", error);

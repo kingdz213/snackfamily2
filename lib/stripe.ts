@@ -1,3 +1,6 @@
+import type { CartItem } from '../types';
+import { saveOrderInFirestore } from '../src/lib/orders';
+
 export interface CheckoutItem {
   name: string;
   price: number; // in cents
@@ -17,6 +20,13 @@ export interface CheckoutCustomerInfo {
 
 interface CheckoutOptions {
   customer?: CheckoutCustomerInfo;
+}
+
+interface OrderContext {
+  cartItems?: CartItem[];
+  totalAmount?: number;
+  customerInfo?: CheckoutCustomerInfo;
+  paymentStatus?: 'pending' | 'paid' | 'failed';
 }
 
 // Default to the known production Worker endpoint; override with VITE_STRIPE_WORKER_URL if needed
@@ -185,7 +195,11 @@ function validateRedirectUrl(redirectUrl: string): string {
   }
 }
 
-export async function startCheckout(items: CheckoutItem[], options?: CheckoutOptions): Promise<string> {
+export async function startCheckout(
+  items: CheckoutItem[],
+  options?: CheckoutOptions,
+  orderContext?: OrderContext
+): Promise<string> {
   // Determine a safe origin for success/cancel redirects
   // Use fallback if window.location.origin is null/about:blank (sandboxes)
   const origin = resolveSafeOrigin();
@@ -235,6 +249,26 @@ export async function startCheckout(items: CheckoutItem[], options?: CheckoutOpt
     }
     const redirectUrl = typeof data?.url === 'string' ? data.url : '';
     const safeRedirect = validateRedirectUrl(redirectUrl);
+
+    try {
+      const derivedTotal =
+        orderContext?.totalAmount ??
+        normalizedItems.reduce((sum, item) => sum + (item.price * item.quantity) / 100, 0);
+
+      const orderCustomer: CheckoutCustomerInfo =
+        sanitizeCustomer(orderContext?.customerInfo ?? options?.customer) ?? {};
+
+      await saveOrderInFirestore(
+        orderContext?.cartItems ?? [],
+        derivedTotal,
+        orderCustomer,
+        typeof data?.sessionId === 'string' ? data.sessionId : undefined,
+        orderContext?.paymentStatus ?? 'pending'
+      );
+    } catch (firestoreError) {
+      console.error("Impossible d'enregistrer la commande dans Firestore", firestoreError);
+      // Continue to Stripe redirect even if Firestore persistence fails
+    }
 
     // Redirect to Stripe Checkout and expose URL for callers/tests
     window.location.href = safeRedirect;

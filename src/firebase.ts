@@ -1,6 +1,6 @@
-import { initializeApp, getApps } from 'firebase/app';
-import { getAnalytics, type Analytics } from 'firebase/analytics';
+import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics';
 import { getFirestore } from 'firebase/firestore';
+import { getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDWHgqFOblVcyy14qROkGth-gUqCyug0AY',
@@ -12,19 +12,19 @@ const firebaseConfig = {
   measurementId: 'G-CLR14N1PER',
 };
 
-// Reuse any existing Firebase app to avoid re-initialization in Vite HMR.
-export const app = getApps()[0] ?? initializeApp(firebaseConfig);
-
+// Avoid re-initializing during Vite HMR
+export const app: FirebaseApp = getApps()[0] ?? initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
-let analytics: Analytics | undefined;
+export let analytics: Analytics | null = null;
 if (typeof window !== 'undefined') {
-  try {
-    analytics = getAnalytics(app);
-  } catch (error) {
-    // getAnalytics can throw in non-browser contexts (SSR, tests); ignore gracefully.
-    console.warn('Analytics unavailable in this environment.', error);
-  }
+  isSupported()
+    .then((supported) => {
+      if (supported) {
+        analytics = getAnalytics(app);
+      }
+    })
+    .catch((error) => {
+      console.warn('Analytics unavailable in this environment.', error);
+    });
 }
-
-export { analytics };
