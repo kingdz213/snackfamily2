@@ -1,9 +1,9 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAnalytics, isSupported, type Analytics } from "firebase/analytics";
+import { getAnalytics, isSupported } from "firebase/analytics";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDWHgqFObIVcyy14qROkGth-gUqCyug0AY",
+  apiKey: "AIzaSyDWHgqF0bIVcyy14qROkGth-gUqCyug0AY",
   authDomain: "snackfamily2.firebaseapp.com",
   projectId: "snackfamily2",
   storageBucket: "snackfamily2.appspot.com",
@@ -12,15 +12,12 @@ const firebaseConfig = {
   measurementId: "G-CLR14N1PER",
 };
 
-// Fonctionne dans un environnement Vite + React + TypeScript
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+let analytics = null;
 
-let analytics: Analytics | null = null;
-if (typeof window !== "undefined") {
-  isSupported().then((ok) => {
-    if (ok) analytics = getAnalytics(app);
-  });
-}
+isSupported().then((yes) => {
+  if (yes) analytics = getAnalytics(app);
+});
 
 export { app, db, analytics };
