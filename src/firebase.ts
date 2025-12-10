@@ -2,6 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAnalytics, isSupported } from "firebase/analytics";
 
+// Firebase initialization for Vite + React + TypeScript
 const firebaseConfig = {
   apiKey: "AIzaSyDWHgqF0bIVcyy14qROkGth-gUqCyug0AY",
   authDomain: "snackfamily2.firebaseapp.com",
@@ -9,7 +10,7 @@ const firebaseConfig = {
   storageBucket: "snackfamily2.appspot.com",
   messagingSenderId: "749971984886",
   appId: "1:749971984886:web:9d9f262fe288178efb77d7",
-  measurementId: "G-CLR14N1PER",
+  measurementId: "G-CLR14N1PER"
 };
 
 const app = initializeApp(firebaseConfig);
