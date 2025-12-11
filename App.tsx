@@ -11,6 +11,7 @@ import { Footer } from './components/Footer';
 import { OrderingCTA } from './components/OrderingCTA';
 import { OrderUI } from './components/OrderUI';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
+import { db } from './src/firebase';
 
 function App() {
   const pageToPath: Record<Page, string> = {

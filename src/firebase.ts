@@ -2,7 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAnalytics, isSupported } from "firebase/analytics";
 
-// Firebase initialization for Vite + React + TypeScript
+// Firebase config for Vite + React + TypeScript
 const firebaseConfig = {
   apiKey: "AIzaSyDWHgqFOblVcyy14qROkGth-gUqCyug0AY",
   authDomain: "snackfamily2.firebaseapp.com",
@@ -15,18 +15,6 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-let analytics: ReturnType<typeof getAnalytics> | null = null;
-
-if (typeof window !== "undefined") {
-  isSupported()
-    .then((supported) => {
-      if (supported) {
-        analytics = getAnalytics(app);
-      }
-    })
-    .catch(() => {
-      // ignore analytics init errors in unsupported environments
-    });
-}
+const analytics = (await isSupported()) ? getAnalytics(app) : null;
 
 export { app, db, analytics };
