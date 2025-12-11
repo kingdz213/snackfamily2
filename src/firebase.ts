@@ -2,7 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAnalytics, isSupported } from "firebase/analytics";
 
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// Firebase initialization for Vite + React + TypeScript
 const firebaseConfig = {
   apiKey: "AIzaSyDWHgqFOblVcyy14qROkGth-gUqCyug0AY",
   authDomain: "snackfamily2.firebaseapp.com",
@@ -13,19 +13,20 @@ const firebaseConfig = {
   measurementId: "G-CLR14N1PER"
 };
 
-// Initialize core Firebase app
 const app = initializeApp(firebaseConfig);
-
-// Initialize Firestore database
 const db = getFirestore(app);
-
-// Initialize Analytics (guarded for SSR + unsupported environments)
 let analytics: ReturnType<typeof getAnalytics> | null = null;
 
-isSupported().then((supported) => {
-  if (supported) {
-    analytics = getAnalytics(app);
-  }
-});
+if (typeof window !== "undefined") {
+  isSupported()
+    .then((supported) => {
+      if (supported) {
+        analytics = getAnalytics(app);
+      }
+    })
+    .catch(() => {
+      // ignore analytics init errors in unsupported environments
+    });
+}
 
 export { app, db, analytics };
