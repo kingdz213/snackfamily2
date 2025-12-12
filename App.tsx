@@ -127,5 +127,6 @@ function App() {
     </div>
   );
 }
+import { app, db, analytics } from "./firebase";
 
 export default App;
