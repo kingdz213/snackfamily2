@@ -1,3 +1,4 @@
+import { loadStripe } from '@stripe/stripe-js';
 import type { CartItem } from '../types';
 import { saveOrderInFirestore } from '../src/lib/orders';
 
@@ -35,6 +36,14 @@ const STRIPE_REDIRECT_HOST_SUFFIXES = ['stripe.com'];
 const MAX_ITEMS = 100;
 const MAX_QUANTITY = 99;
 const MAX_PRICE_CENTS = 1_000_000; // 10,000 EUR safeguard
+
+function getStripePublishableKey() {
+  const key = import.meta.env?.VITE_STRIPE_PUBLIC_KEY?.trim();
+  if (!key) {
+    throw new Error('Clé publique Stripe manquante. Configurez VITE_STRIPE_PUBLIC_KEY.');
+  }
+  return key;
+}
 
 function sanitizeText(value: string, max = 200) {
   // Remove control characters (ASCII), angle brackets, and normalize whitespace
@@ -195,6 +204,15 @@ function validateRedirectUrl(redirectUrl: string): string {
   }
 }
 
+async function redirectToCheckout(sessionUrl: string) {
+  const publishableKey = getStripePublishableKey();
+  const stripe = await loadStripe(publishableKey);
+  if (!stripe) {
+    throw new Error('Impossible de charger Stripe Checkout.');
+  }
+  window.location.href = sessionUrl;
+}
+
 export async function startCheckout(
   items: CheckoutItem[],
   options?: CheckoutOptions,
@@ -271,7 +289,7 @@ export async function startCheckout(
     }
 
     // Redirect to Stripe Checkout and expose URL for callers/tests
-    window.location.href = safeRedirect;
+    await redirectToCheckout(safeRedirect);
     return safeRedirect;
   } catch (e) {
     console.error("Checkout Exception:", e);
