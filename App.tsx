@@ -10,6 +10,7 @@ import { CancelPage } from './components/CancelPage';
 import { Footer } from './components/Footer';
 import { OrderingCTA } from './components/OrderingCTA';
 import { OrderUI } from './components/OrderUI';
+import { AdminPage } from './components/AdminPage';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
 
 function App() {
@@ -18,7 +19,8 @@ function App() {
     try {
       const path = window.location.pathname;
       const search = window.location.search;
-      
+
+      if (path.includes('/admin')) return 'admin';
       if (path.includes('/success') || search.includes('success=true')) return 'success';
       if (path.includes('/cancel') || search.includes('canceled=true')) return 'cancel';
     } catch (e) {
@@ -82,6 +84,7 @@ function App() {
       case 'commander': return <OrderPage openOrderModal={openOrderModal} />;
       case 'success': return <SuccessPage navigateTo={navigateTo} />;
       case 'cancel': return <CancelPage navigateTo={navigateTo} />;
+      case 'admin': return <AdminPage navigateTo={navigateTo} />;
       default: return <Home navigateTo={navigateTo} />;
     }
   };
@@ -102,10 +105,10 @@ function App() {
       <Footer navigateTo={navigateTo} />
 
       {/* Bouton flottant Commander (visible sauf sur Checkout/Success/Cancel/Commander) */}
-      {currentPage !== 'success' && currentPage !== 'cancel' && currentPage !== 'commander' && (
-        <OrderingCTA 
+      {currentPage !== 'success' && currentPage !== 'cancel' && currentPage !== 'commander' && currentPage !== 'admin' && (
+        <OrderingCTA
             navigateTo={navigateTo}
-            toggleCart={() => setIsCartOpen(true)} 
+            toggleCart={() => setIsCartOpen(true)}
         />
       )}
 
