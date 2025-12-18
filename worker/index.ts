@@ -28,6 +28,7 @@ type IncomingItem = {
 
 const DEFAULT_BASE_URL = "https://snackfamily2.eu";
 const DEFAULT_ALLOWED_ORIGIN = DEFAULT_BASE_URL;
+const SECONDARY_ALLOWED_ORIGIN = "https://www.snackfamily2.eu";
 const DEFAULT_CURRENCY = "eur";
 
 const slugifyId = (value: string): string => {
@@ -141,6 +142,19 @@ const withCors = (response: Response, origin: string) => {
   return response;
 };
 
+const resolveAllowedOrigin = (request: Request, env: Env) => {
+  if (env.ALLOWED_ORIGIN && env.ALLOWED_ORIGIN.trim()) {
+    return env.ALLOWED_ORIGIN.trim();
+  }
+
+  const reqOrigin = request.headers.get("origin") || "";
+  if (reqOrigin === DEFAULT_ALLOWED_ORIGIN || reqOrigin === SECONDARY_ALLOWED_ORIGIN) {
+    return reqOrigin;
+  }
+
+  return DEFAULT_ALLOWED_ORIGIN;
+};
+
 const normalizeBaseUrl = (raw: string | null | undefined) => {
   if (!raw) return DEFAULT_BASE_URL;
   return raw.replace(/\/+$/, "");
@@ -190,7 +204,7 @@ const handleCreateCheckout = async (request: Request, env: Env) => {
   const secret = getStripeSecret(env);
   if (!secret) {
     return json(
-      { error: "Missing Stripe secret (set STRIPE_SECRET2 or STRIPE_SECRET_KEY)" },
+      { error: "Missing Stripe secret (set STRIPE_SECRET_KEY or STRIPE_SECRET2)" },
       500
     );
   }
@@ -238,7 +252,7 @@ const handleWebhook = async (request: Request, env: Env) => {
   const secret = getStripeSecret(env);
   if (!secret) {
     return json(
-      { error: "Missing Stripe secret (set STRIPE_SECRET2 or STRIPE_SECRET_KEY)" },
+      { error: "Missing Stripe secret (set STRIPE_SECRET_KEY or STRIPE_SECRET2)" },
       500
     );
   }
@@ -287,14 +301,14 @@ const handleWebhook = async (request: Request, env: Env) => {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const origin = env.ALLOWED_ORIGIN || DEFAULT_ALLOWED_ORIGIN;
+    const origin = resolveAllowedOrigin(request, env);
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
 
     if (url.pathname === "/create-checkout-session" && request.method === "POST") {
-      const allowedOrigin = env.ALLOWED_ORIGIN || DEFAULT_ALLOWED_ORIGIN;
+      const allowedOrigin = resolveAllowedOrigin(request, env);
       try {
         const response = await handleCreateCheckout(request, env);
         return withCors(response, allowedOrigin);

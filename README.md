@@ -1,7 +1,8 @@
 # Stripe / Cloudflare Worker Setup (quick note)
 
-Required Cloudflare secrets:
-- `STRIPE_SECRET2` (current) **or** `STRIPE_SECRET_KEY` (preferred)
+Supported Cloudflare secrets:
+- `STRIPE_SECRET_KEY` (preferred)
+- `STRIPE_SECRET2` (fallback)
 - `STRIPE_WEBHOOK_SECRET`
 
 Stripe webhook destination:
