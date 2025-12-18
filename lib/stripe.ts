@@ -1,5 +1,3 @@
-import { loadStripe } from '@stripe/stripe-js';
-
 export interface CheckoutPayloadItem {
   id: string;
   qty: number;
@@ -13,25 +11,10 @@ export interface CheckoutCustomer {
 
 const WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
 
-let stripePromise: ReturnType<typeof loadStripe> | null = null;
-
-const getStripe = () => {
-  const key = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
-  if (!key) {
-    throw new Error("Clé Stripe publique manquante. Définissez VITE_STRIPE_PUBLIC_KEY.");
-  }
-  if (!stripePromise) {
-    stripePromise = loadStripe(key);
-  }
-  return stripePromise;
-};
-
 export async function startCheckout(items: CheckoutPayloadItem[], customer?: CheckoutCustomer) {
   if (!items.length) {
     throw new Error("Aucun article dans le panier.");
   }
-
-  await getStripe();
 
   const payload = {
     items: items.map(it => ({
@@ -58,7 +41,7 @@ export async function startCheckout(items: CheckoutPayloadItem[], customer?: Che
   const data = await response.json();
 
   if (data.url) {
-    window.location.href = data.url;
+    window.location.assign(data.url);
     return;
   }
 
@@ -66,12 +49,6 @@ export async function startCheckout(items: CheckoutPayloadItem[], customer?: Che
 }
 
 export async function runDevTest() {
-  try {
-    await getStripe();
-  } catch (error) {
-    console.error("Stripe init error", error);
-  }
-
   const payload = {
     items: [
       { id: "assiettes__assiette_pita", qty: 1 }
