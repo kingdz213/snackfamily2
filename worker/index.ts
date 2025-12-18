@@ -4,11 +4,7 @@ import { SUPPLEMENTS } from "../types";
 
 type Env = {
   STRIPE_SECRET_KEY?: string;
-  STRIPE_SECRET2?: string;
-  "STRIPE-SECRET2"?: string;
   STRIPE_WEBHOOK_SECRET?: string;
-  STRIPE_WEBHOOK_SECRET2?: string;
-  "STRIPE-WEBHOOK-SECRET2"?: string;
   ALLOWED_ORIGIN?: string;
   PUBLIC_BASE_URL?: string;
   [key: string]: string | undefined;
@@ -109,16 +105,11 @@ const pickSecret = (env: Env, keys: string[]): string | null => {
 };
 
 const getStripeSecret = (env: Env): string | null => {
-  // Primary then fallback, preserving STRIPE_SECRET_KEY as the preferred name
-  return pickSecret(env, ["STRIPE_SECRET_KEY", "STRIPE_SECRET2", "STRIPE-SECRET2"]);
+  return pickSecret(env, ["STRIPE_SECRET_KEY"]);
 };
 
 const getWebhookSecret = (env: Env): string | null => {
-  return pickSecret(env, [
-    "STRIPE_WEBHOOK_SECRET",
-    "STRIPE_WEBHOOK_SECRET2",
-    "STRIPE-WEBHOOK-SECRET2",
-  ]);
+  return pickSecret(env, ["STRIPE_WEBHOOK_SECRET"]);
 };
 
 const json = (data: unknown, status = 200, headers?: HeadersInit) =>
@@ -205,7 +196,7 @@ const handleCreateCheckout = async (request: Request, env: Env) => {
   const secret = getStripeSecret(env);
   if (!secret) {
     return json(
-      { error: "Missing STRIPE secret. Set STRIPE_SECRET_KEY or STRIPE_SECRET2." },
+      { error: "Missing STRIPE secret. Set STRIPE_SECRET_KEY." },
       500
     );
   }
@@ -253,7 +244,7 @@ const handleWebhook = async (request: Request, env: Env) => {
   const secret = getStripeSecret(env);
   if (!secret) {
     return json(
-      { error: "Missing STRIPE secret. Set STRIPE_SECRET_KEY or STRIPE_SECRET2." },
+      { error: "Missing STRIPE secret. Set STRIPE_SECRET_KEY." },
       500
     );
   }
@@ -261,7 +252,7 @@ const handleWebhook = async (request: Request, env: Env) => {
   const webhookSecret = getWebhookSecret(env);
   if (!webhookSecret) {
     return json(
-      { error: "Missing STRIPE webhook secret. Set STRIPE_WEBHOOK_SECRET (or *_SECRET2)." },
+      { error: "Missing STRIPE webhook secret. Set STRIPE_WEBHOOK_SECRET." },
       500
     );
   }
