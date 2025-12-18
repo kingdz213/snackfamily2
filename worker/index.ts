@@ -190,7 +190,7 @@ const handleCreateCheckout = async (request: Request, env: Env) => {
   const secret = getStripeSecret(env);
   if (!secret) {
     return json(
-      { error: "Missing Stripe secret key env var. Set STRIPE_SECRET_KEY (recommended) or STRIPE_SECRET2" },
+      { error: "Missing Stripe secret (set STRIPE_SECRET2 or STRIPE_SECRET_KEY)" },
       500
     );
   }
@@ -238,7 +238,7 @@ const handleWebhook = async (request: Request, env: Env) => {
   const secret = getStripeSecret(env);
   if (!secret) {
     return json(
-      { error: "Missing Stripe secret key env var. Set STRIPE_SECRET_KEY (recommended) or STRIPE_SECRET2" },
+      { error: "Missing Stripe secret (set STRIPE_SECRET2 or STRIPE_SECRET_KEY)" },
       500
     );
   }
@@ -246,7 +246,7 @@ const handleWebhook = async (request: Request, env: Env) => {
   const webhookSecret = getWebhookSecret(env);
   if (!webhookSecret) {
     return json(
-      { error: "Missing Stripe webhook secret env var. Set STRIPE_WEBHOOK_SECRET (recommended) or STRIPE_WEBHOOK_SECRET2" },
+      { error: "Missing Stripe webhook secret (set STRIPE_WEBHOOK_SECRET)" },
       500
     );
   }
@@ -309,6 +309,15 @@ export default {
     }
 
     if (url.pathname === "/webhook" && request.method === "POST") {
+      try {
+        return await handleWebhook(request, env);
+      } catch (error) {
+        console.error("Webhook handler error", error);
+        return json({ error: "Webhook processing failed" }, 500);
+      }
+    }
+
+    if (url.pathname === "/" && request.method === "POST" && request.headers.get("stripe-signature")) {
       try {
         return await handleWebhook(request, env);
       } catch (error) {
