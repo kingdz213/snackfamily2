@@ -109,6 +109,7 @@ const pickSecret = (env: Env, keys: string[]): string | null => {
 };
 
 const getStripeSecret = (env: Env): string | null => {
+  // Primary then fallback, preserving STRIPE_SECRET_KEY as the preferred name
   return pickSecret(env, ["STRIPE_SECRET_KEY", "STRIPE_SECRET2", "STRIPE-SECRET2"]);
 };
 
