@@ -1,8 +1,8 @@
 import Stripe from 'stripe';
 
 interface Env {
-  STRIPE_SECRET_KEY?: string;
-  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_SECRET_KEY: string;
+  STRIPE_WEBHOOK_SECRET: string;
   PUBLIC_BASE_URL?: string;
   ALLOWED_ORIGIN?: string;
 }
@@ -80,7 +80,7 @@ const getStripeSecret = (env: Env, corsHeaders: Record<string, string>) => {
   if (!secret) {
     return {
       error: jsonResponse(
-        { error: 'Missing STRIPE_SECRET_KEY' },
+        { error: 'Missing STRIPE_SECRET_KEY (Cloudflare Worker secret)' },
         500,
         corsHeaders,
       ),
@@ -96,7 +96,7 @@ const getWebhookSecret = (env: Env, corsHeaders: Record<string, string>) => {
   if (!webhookSecret) {
     return {
       error: jsonResponse(
-        { error: 'Missing STRIPE_WEBHOOK_SECRET' },
+        { error: 'Missing STRIPE_WEBHOOK_SECRET (Cloudflare Worker secret)' },
         500,
         corsHeaders,
       ),
