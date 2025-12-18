@@ -3,10 +3,15 @@ import { MENU_CATEGORIES } from "../data/menuData";
 import { SUPPLEMENTS } from "../types";
 
 type Env = {
-  STRIPE_SECRET_KEY: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_SECRET2?: string;
+  "STRIPE-SECRET2"?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_WEBHOOK_SECRET2?: string;
+  "STRIPE-WEBHOOK-SECRET2"?: string;
   ALLOWED_ORIGIN?: string;
   PUBLIC_BASE_URL?: string;
+  [key: string]: string | undefined;
 };
 
 type PriceEntry = {
@@ -91,6 +96,28 @@ const PRICE_MAP: Record<string, PriceEntry> = (() => {
   return map;
 })();
 
+const pickSecret = (env: Env, keys: string[]): string | null => {
+  for (const key of keys) {
+    const val = env[key];
+    if (typeof val === "string" && val.trim().length > 0) {
+      return val.trim();
+    }
+  }
+  return null;
+};
+
+const getStripeSecret = (env: Env): string | null => {
+  return pickSecret(env, ["STRIPE_SECRET_KEY", "STRIPE_SECRET2", "STRIPE-SECRET2"]);
+};
+
+const getWebhookSecret = (env: Env): string | null => {
+  return pickSecret(env, [
+    "STRIPE_WEBHOOK_SECRET",
+    "STRIPE_WEBHOOK_SECRET2",
+    "STRIPE-WEBHOOK-SECRET2",
+  ]);
+};
+
 const json = (data: unknown, status = 200, headers?: HeadersInit) =>
   new Response(JSON.stringify(data), {
     status,
@@ -159,11 +186,15 @@ const buildLineItems = (items: IncomingItem[]): Stripe.Checkout.SessionCreatePar
 };
 
 const handleCreateCheckout = async (request: Request, env: Env) => {
-  if (!env.STRIPE_SECRET_KEY) {
-    return json({ error: "Missing STRIPE_SECRET_KEY" }, 500);
+  const secret = getStripeSecret(env);
+  if (!secret) {
+    return json(
+      { error: "Missing Stripe secret key env var. Set STRIPE_SECRET_KEY (recommended) or STRIPE_SECRET2" },
+      500
+    );
   }
 
-  const stripe = new Stripe(env.STRIPE_SECRET_KEY, {
+  const stripe = new Stripe(secret, {
     apiVersion: "2024-06-20" as any,
   });
 
@@ -205,11 +236,23 @@ const handleCreateCheckout = async (request: Request, env: Env) => {
 };
 
 const handleWebhook = async (request: Request, env: Env) => {
-  if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET) {
-    return json({ error: "Webhook secrets not configured" }, 500);
+  const secret = getStripeSecret(env);
+  if (!secret) {
+    return json(
+      { error: "Missing Stripe secret key env var. Set STRIPE_SECRET_KEY (recommended) or STRIPE_SECRET2" },
+      500
+    );
   }
 
-  const stripe = new Stripe(env.STRIPE_SECRET_KEY, {
+  const webhookSecret = getWebhookSecret(env);
+  if (!webhookSecret) {
+    return json(
+      { error: "Missing Stripe webhook secret env var. Set STRIPE_WEBHOOK_SECRET (recommended) or STRIPE_WEBHOOK_SECRET2" },
+      500
+    );
+  }
+
+  const stripe = new Stripe(secret, {
     apiVersion: "2024-06-20" as any,
   });
 
@@ -222,7 +265,7 @@ const handleWebhook = async (request: Request, env: Env) => {
   let event: Stripe.Event;
 
   try {
-    event = stripe.webhooks.constructEvent(rawBody, signature, env.STRIPE_WEBHOOK_SECRET);
+    event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
   } catch (error) {
     return json({ error: `Webhook signature verification failed: ${(error as Error).message}` }, 400);
   }
@@ -259,6 +302,10 @@ export default {
         console.error("Create checkout error", error);
         return withCors(json({ error: "Checkout failed" }, 500), origin);
       }
+    }
+
+    if (url.pathname === "/health" && request.method === "GET") {
+      return new Response("ok", { status: 200 });
     }
 
     if (url.pathname === "/webhook" && request.method === "POST") {
