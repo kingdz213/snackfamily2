@@ -3,6 +3,7 @@ import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { startCheckout, runDevTest } from '../lib/stripe';
+import { buildProductId, buildSupplementId, variantKeyFromLabel } from '../lib/productIds';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -81,9 +82,12 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const handleAddToCart = () => {
     if (!selectedItem) return;
     const itemTotal = getCurrentItemPrice();
+    const variantKey = selectedItem.priceSecondary ? (variantKeyFromLabel(variant) || 'menu') : undefined;
+    const productId = buildProductId(selectedItem.name, selectedCategory?.id, variantKey);
     
     const newItem: CartItem = {
       id: Math.random().toString(36).substr(2, 9),
+      productId,
       name: selectedItem.name,
       price: itemTotal,
       quantity: quantity,
@@ -102,23 +106,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-        const checkoutItems = cartItems.map(item => {
-            // Build a descriptive name including options for Stripe Line Items
-            let description = item.name;
-            if (item.variant) description += ` (${item.variant})`;
-            if (item.selectedSauce) description += ` - ${item.selectedSauce}`;
-            if (item.selectedSupplements && item.selectedSupplements.length > 0) {
-                description += ` + ${item.selectedSupplements.join(', ')}`;
-            }
-
-            return {
-                name: description,
-                // IMPORTANT: Stripe expects integer cents. 
-                // We round to avoid floating point errors
-                price: Math.round(item.price * 100), 
-                quantity: item.quantity
-            };
-        });
+        const checkoutItems = cartItems.map(item => ({
+            id: item.productId,
+            qty: item.quantity,
+            extras: item.selectedSupplements?.map(buildSupplementId)
+        }));
 
         await startCheckout(checkoutItems);
         // Page redirects on success

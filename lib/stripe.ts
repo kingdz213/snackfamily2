@@ -1,77 +1,81 @@
-export interface CheckoutItem {
-  name: string;
-  price: number; // in cents
-  quantity: number;
+import { loadStripe } from '@stripe/stripe-js';
+
+export interface CheckoutPayloadItem {
+  id: string;
+  qty: number;
+  extras?: string[];
 }
 
-export async function startCheckout(items: CheckoutItem[]) {
-  try {
-    console.log("Initiating Stripe Checkout...");
-    
-    // Determine a safe origin for success/cancel redirects
-    // Use fallback if window.location.origin is null/about:blank (sandboxes)
-    const origin = window.location.origin && window.location.origin !== 'null' && window.location.origin !== 'about:blank'
-      ? window.location.origin 
-      : 'https://snackfamily2.com'; 
+export interface CheckoutCustomer {
+  name?: string;
+  phone?: string;
+}
 
-    const WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
+const WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
 
-    const payload = {
-      items,
-      successUrl: `${origin}/success`,
-      cancelUrl: `${origin}/cancel`
-    };
+let stripePromise: ReturnType<typeof loadStripe> | null = null;
 
-    console.log("Sending payload to Worker:", payload);
-
-    const response = await fetch(WORKER_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      }
-    );
-
-    if (!response.ok) {
-        console.error("Worker response error:", response.status);
-        const text = await response.text();
-        throw new Error(`Erreur HTTP: ${response.status} - ${text}`);
-    }
-
-    const data = await response.json();
-    console.log("Session created:", data);
-
-    if (data.url) {
-      // Redirect to Stripe Checkout
-      window.location.href = data.url;
-    } else {
-      console.error("No URL in response:", data);
-      alert("Erreur: Le service de paiement n'a pas renvoyé d'URL de redirection.");
-    }
-  } catch (e) {
-    console.error("Checkout Exception:", e);
-    alert("Impossible de contacter le serveur de paiement. Veuillez réessayer.");
-    throw e;
+const getStripe = () => {
+  const key = import.meta.env.VITE_STRIPE_PUBLIC_KEY;
+  if (!key) {
+    throw new Error("Clé Stripe publique manquante. Définissez VITE_STRIPE_PUBLIC_KEY.");
   }
+  if (!stripePromise) {
+    stripePromise = loadStripe(key);
+  }
+  return stripePromise;
+};
+
+export async function startCheckout(items: CheckoutPayloadItem[], customer?: CheckoutCustomer) {
+  if (!items.length) {
+    throw new Error("Aucun article dans le panier.");
+  }
+
+  await getStripe();
+
+  const payload = {
+    items: items.map(it => ({
+      id: it.id,
+      qty: Math.max(1, Number(it.qty || 1)),
+      ...(Array.isArray(it.extras) && it.extras.length ? { extras: it.extras } : {})
+    })),
+    ...(customer ? { customer } : {})
+  };
+
+  const response = await fetch(WORKER_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Erreur HTTP: ${response.status} - ${text}`);
+  }
+
+  const data = await response.json();
+
+  if (data.url) {
+    window.location.href = data.url;
+    return;
+  }
+
+  throw new Error("Réponse inattendue du serveur de paiement (URL absente).");
 }
 
-/**
- * DEV ONLY: Test function to verify Worker connectivity
- */
 export async function runDevTest() {
-  const WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
-  
-  const origin = window.location.origin && window.location.origin !== 'null' 
-      ? window.location.origin 
-      : 'http://localhost:3000';
+  try {
+    await getStripe();
+  } catch (error) {
+    console.error("Stripe init error", error);
+  }
 
   const payload = {
     items: [
-      { name: "Test Snack (DEV)", price: 500, quantity: 1 } // 5.00 EUR (500 cents)
-    ],
-    successUrl: `${origin}/success`,
-    cancelUrl: `${origin}/cancel`
+      { id: "assiettes__assiette_pita", qty: 1 }
+    ]
   };
 
   console.group("🧪 Stripe Worker Dev Test");
@@ -103,11 +107,11 @@ export async function runDevTest() {
     }
 
     if (data.url) {
-        if (confirm(`Test réussi ! URL reçue : ${data.url}\n\nVoulez-vous être redirigé vers Stripe ?`)) {
-             window.location.href = data.url;
-        }
+      if (confirm(`Test réussi ! URL reçue : ${data.url}\n\nVoulez-vous être redirigé vers Stripe ?`)) {
+        window.location.href = data.url;
+      }
     } else {
-        alert("Réponse reçue mais pas d'URL: " + JSON.stringify(data));
+      alert("Réponse reçue mais pas d'URL: " + JSON.stringify(data));
     }
 
   } catch (error) {
