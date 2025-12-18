@@ -205,7 +205,7 @@ const handleCreateCheckout = async (request: Request, env: Env) => {
   const secret = getStripeSecret(env);
   if (!secret) {
     return json(
-      { error: "Missing Stripe secret. Set STRIPE_SECRET_KEY or STRIPE_SECRET2." },
+      { error: "Missing STRIPE secret. Set STRIPE_SECRET_KEY or STRIPE_SECRET2." },
       500
     );
   }
@@ -253,7 +253,7 @@ const handleWebhook = async (request: Request, env: Env) => {
   const secret = getStripeSecret(env);
   if (!secret) {
     return json(
-      { error: "Missing Stripe secret. Set STRIPE_SECRET_KEY or STRIPE_SECRET2." },
+      { error: "Missing STRIPE secret. Set STRIPE_SECRET_KEY or STRIPE_SECRET2." },
       500
     );
   }
@@ -261,7 +261,7 @@ const handleWebhook = async (request: Request, env: Env) => {
   const webhookSecret = getWebhookSecret(env);
   if (!webhookSecret) {
     return json(
-      { error: "Missing webhook secret. Set STRIPE_WEBHOOK_SECRET (or ..._SECRET2)." },
+      { error: "Missing STRIPE webhook secret. Set STRIPE_WEBHOOK_SECRET (or *_SECRET2)." },
       500
     );
   }
