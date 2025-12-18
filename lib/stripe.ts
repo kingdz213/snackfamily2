@@ -43,6 +43,14 @@ export async function startCheckout(items: CheckoutPayloadItem[], customer?: Che
 
   const textBody = await response.text();
   if (!response.ok) {
+    try {
+      const errorData = JSON.parse(textBody);
+      if (errorData?.error) {
+        throw new Error(`Erreur paiement: ${errorData.error}`);
+      }
+    } catch (_) {
+      /* fall through */
+    }
     throw new Error(`Erreur HTTP: ${response.status} - ${textBody}`);
   }
 
