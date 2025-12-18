@@ -11,3 +11,6 @@ Webhook destination URLs:
 
 Health check:
 - `https://<worker-domain>/health` returns `{ ok: true }`.
+
+Checkout endpoint:
+- `POST https://<worker-domain>/create-checkout-session` returns `{ url }` for Stripe Checkout redirection.
