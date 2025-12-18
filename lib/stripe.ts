@@ -22,13 +22,14 @@ const withDefaultItemIds = (items: CheckoutItem[]) =>
     id: item.id || 'menu-item',
   }));
 
-export async function startCheckout(items: CheckoutItem[]) {
+export async function startCheckout(items: CheckoutItem[], customer?: Record<string, unknown>) {
   const workerBaseUrl = resolveWorkerBaseUrl();
   const endpoint = `${workerBaseUrl}/create-checkout-session`;
 
   try {
     const payload = {
       items: withDefaultItemIds(items),
+      ...(customer ? { customer } : {}),
     };
 
     const response = await fetch(endpoint, {

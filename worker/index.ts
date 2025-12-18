@@ -2,7 +2,6 @@ import Stripe from 'stripe';
 
 interface Env {
   STRIPE_SECRET_KEY?: string;
-  STRIPE_SECRET2?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   PUBLIC_BASE_URL?: string;
   ALLOWED_ORIGIN?: string;
@@ -76,12 +75,12 @@ const jsonResponse = (body: unknown, status: number, corsHeaders: Record<string,
 };
 
 const getStripeSecret = (env: Env, corsHeaders: Record<string, string>) => {
-  const secret = env.STRIPE_SECRET_KEY || env.STRIPE_SECRET2;
+  const secret = env.STRIPE_SECRET_KEY;
 
   if (!secret) {
     return {
       error: jsonResponse(
-        { error: 'Missing Stripe secret: set STRIPE_SECRET_KEY or STRIPE_SECRET2 in Cloudflare Worker secrets.' },
+        { error: 'Missing Stripe secret: set STRIPE_SECRET_KEY in Cloudflare Worker secrets.' },
         500,
         corsHeaders,
       ),
