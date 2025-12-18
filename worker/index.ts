@@ -81,7 +81,7 @@ const getStripeSecret = (env: Env, corsHeaders: Record<string, string>) => {
   if (!secret) {
     return {
       error: jsonResponse(
-        { error: 'Missing Stripe secret. Set STRIPE_SECRET_KEY or STRIPE_SECRET2 in Cloudflare Worker secrets.' },
+        { error: 'Missing Stripe secret: set STRIPE_SECRET_KEY or STRIPE_SECRET2 in Cloudflare Worker secrets.' },
         500,
         corsHeaders,
       ),
@@ -97,7 +97,7 @@ const getWebhookSecret = (env: Env, corsHeaders: Record<string, string>) => {
   if (!webhookSecret) {
     return {
       error: jsonResponse(
-        { error: 'Missing Stripe webhook secret. Set STRIPE_WEBHOOK_SECRET in Cloudflare Worker secrets.' },
+        { error: 'Missing STRIPE_WEBHOOK_SECRET in Cloudflare Worker secrets.' },
         500,
         corsHeaders,
       ),
