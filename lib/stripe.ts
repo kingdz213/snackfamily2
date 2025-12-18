@@ -9,7 +9,15 @@ export interface CheckoutCustomer {
   phone?: string;
 }
 
-const WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
+const DEFAULT_WORKER_BASE = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
+
+const getWorkerBaseUrl = (): string => {
+  const raw = import.meta.env.VITE_WORKER_BASE_URL || DEFAULT_WORKER_BASE;
+  return raw.replace(/\/+$/, "");
+};
+
+const getWorkerEndpoint = (path: string) =>
+  `${getWorkerBaseUrl()}${path.startsWith("/") ? "" : "/"}${path}`;
 
 export async function startCheckout(items: CheckoutPayloadItem[], customer?: CheckoutCustomer) {
   if (!items.length) {
@@ -25,7 +33,7 @@ export async function startCheckout(items: CheckoutPayloadItem[], customer?: Che
     ...(customer ? { customer } : {})
   };
 
-  const response = await fetch(WORKER_URL, {
+  const response = await fetch(getWorkerEndpoint("/create-checkout-session"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -33,16 +41,25 @@ export async function startCheckout(items: CheckoutPayloadItem[], customer?: Che
     body: JSON.stringify(payload)
   });
 
+  const textBody = await response.text();
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Erreur HTTP: ${response.status} - ${text}`);
+    throw new Error(`Erreur HTTP: ${response.status} - ${textBody}`);
   }
 
-  const data = await response.json();
+  let data: any;
+  try {
+    data = JSON.parse(textBody);
+  } catch {
+    throw new Error("Réponse invalide du serveur de paiement.");
+  }
 
   if (data.url) {
     window.location.assign(data.url);
     return;
+  }
+
+  if (data.error) {
+    throw new Error(`Erreur paiement: ${data.error}`);
   }
 
   throw new Error("Réponse inattendue du serveur de paiement (URL absente).");
@@ -56,11 +73,12 @@ export async function runDevTest() {
   };
 
   console.group("🧪 Stripe Worker Dev Test");
-  console.log("Target URL:", WORKER_URL);
+  const target = getWorkerEndpoint("/create-checkout-session");
+  console.log("Target URL:", target);
   console.log("Payload:", payload);
 
   try {
-    const response = await fetch(WORKER_URL, {
+    const response = await fetch(target, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)

@@ -116,6 +116,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         // Page redirects on success
     } catch (error) {
         console.error("Checkout failed", error);
+        alert("Le service de paiement est momentanément indisponible. Veuillez réessayer dans un instant.");
         setIsCheckingOut(false);
     }
   };

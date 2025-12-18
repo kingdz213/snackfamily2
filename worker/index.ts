@@ -27,6 +27,7 @@ type IncomingItem = {
 };
 
 const DEFAULT_BASE_URL = "https://snackfamily2.eu";
+const DEFAULT_ALLOWED_ORIGIN = DEFAULT_BASE_URL;
 const DEFAULT_CURRENCY = "eur";
 
 const slugifyId = (value: string): string => {
@@ -217,9 +218,7 @@ const handleCreateCheckout = async (request: Request, env: Env) => {
     return json({ error: (error as Error).message }, 400);
   }
 
-  const baseUrl = normalizeBaseUrl(
-    env.PUBLIC_BASE_URL || env.ALLOWED_ORIGIN || request.headers.get("origin")
-  );
+  const baseUrl = normalizeBaseUrl(env.PUBLIC_BASE_URL || DEFAULT_BASE_URL);
 
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
@@ -288,24 +287,25 @@ const handleWebhook = async (request: Request, env: Env) => {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const origin = env.ALLOWED_ORIGIN || "*";
+    const origin = env.ALLOWED_ORIGIN || DEFAULT_ALLOWED_ORIGIN;
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
 
     if (url.pathname === "/create-checkout-session" && request.method === "POST") {
+      const allowedOrigin = env.ALLOWED_ORIGIN || DEFAULT_ALLOWED_ORIGIN;
       try {
         const response = await handleCreateCheckout(request, env);
-        return withCors(response, origin);
+        return withCors(response, allowedOrigin);
       } catch (error) {
         console.error("Create checkout error", error);
-        return withCors(json({ error: "Checkout failed" }, 500), origin);
+        return withCors(json({ error: "Checkout failed" }, 500), allowedOrigin);
       }
     }
 
     if (url.pathname === "/health" && request.method === "GET") {
-      return new Response("ok", { status: 200 });
+      return json({ ok: true });
     }
 
     if (url.pathname === "/webhook" && request.method === "POST") {
