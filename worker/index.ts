@@ -3,9 +3,7 @@ import Stripe from 'stripe';
 interface Env {
   STRIPE_SECRET_KEY?: string;
   STRIPE_SECRET2?: string;
-  "STRIPE-SECRET2"?: string;
   STRIPE_WEBHOOK_SECRET?: string;
-  "STRIPE-WEBHOOK-SECRET"?: string;
   PUBLIC_BASE_URL?: string;
   ALLOWED_ORIGIN?: string;
 }
@@ -77,8 +75,8 @@ const jsonResponse = (body: unknown, status: number, corsHeaders: Record<string,
   });
 };
 
-const resolveStripeSecret = (env: Env, corsHeaders: Record<string, string>) => {
-  const secret = env.STRIPE_SECRET_KEY || env.STRIPE_SECRET2 || env['STRIPE-SECRET2'];
+const getStripeSecret = (env: Env, corsHeaders: Record<string, string>) => {
+  const secret = env.STRIPE_SECRET_KEY || env.STRIPE_SECRET2;
 
   if (!secret) {
     return {
@@ -93,8 +91,8 @@ const resolveStripeSecret = (env: Env, corsHeaders: Record<string, string>) => {
   return { secret };
 };
 
-const resolveWebhookSecret = (env: Env, corsHeaders: Record<string, string>) => {
-  const webhookSecret = env.STRIPE_WEBHOOK_SECRET || env['STRIPE-WEBHOOK-SECRET'];
+const getWebhookSecret = (env: Env, corsHeaders: Record<string, string>) => {
+  const webhookSecret = env.STRIPE_WEBHOOK_SECRET;
 
   if (!webhookSecret) {
     return {
@@ -163,7 +161,7 @@ const buildLineItem = (item: CheckoutItem, index: number) => {
 };
 
 const handleCreateCheckoutSession = async (request: Request, env: Env, corsHeaders: Record<string, string>) => {
-  const secretResult = resolveStripeSecret(env, corsHeaders);
+  const secretResult = getStripeSecret(env, corsHeaders);
   if ('error' in secretResult) return secretResult.error;
 
   let payload: { items?: CheckoutItem[] };
@@ -209,10 +207,10 @@ const handleWebhook = async (
   corsHeaders: Record<string, string>,
   stripeSignature: string | null,
 ) => {
-  const secretResult = resolveStripeSecret(env, corsHeaders);
+  const secretResult = getStripeSecret(env, corsHeaders);
   if ('error' in secretResult) return secretResult.error;
 
-  const webhookSecretResult = resolveWebhookSecret(env, corsHeaders);
+  const webhookSecretResult = getWebhookSecret(env, corsHeaders);
   if ('error' in webhookSecretResult) return webhookSecretResult.error;
 
   const payload = await request.text();
@@ -224,7 +222,11 @@ const handleWebhook = async (
   const stripe = new Stripe(secretResult.secret, { apiVersion: API_VERSION });
 
   try {
-    stripe.webhooks.constructEvent(payload, stripeSignature, webhookSecretResult.webhookSecret);
+    const event = stripe.webhooks.constructEvent(payload, stripeSignature, webhookSecretResult.webhookSecret);
+
+    if (event.type === 'checkout.session.completed') {
+      // add any future fulfillment here
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Webhook signature verification failed.';
     return jsonResponse({ error: message }, 400, corsHeaders);
