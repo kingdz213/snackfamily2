@@ -11,8 +11,10 @@ const normalizeBase = (base: string) => base.replace(/\/+$/, '');
 
 const resolveWorkerBaseUrl = () => {
   const configured = import.meta.env.VITE_WORKER_BASE_URL;
-  return configured && configured.trim().length > 0
-    ? normalizeBase(configured)
+  const trimmed = configured?.trim();
+
+  return trimmed && trimmed.length > 0
+    ? normalizeBase(trimmed)
     : normalizeBase(DEFAULT_WORKER_BASE_URL);
 };
 
