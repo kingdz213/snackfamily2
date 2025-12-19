@@ -102,29 +102,19 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-        const checkoutItems = cartItems.map(item => {
-            // Build a descriptive name including options for Stripe Line Items
-            let description = item.name;
-            if (item.variant) description += ` (${item.variant})`;
-            if (item.selectedSauce) description += ` - ${item.selectedSauce}`;
-            if (item.selectedSupplements && item.selectedSupplements.length > 0) {
-                description += ` + ${item.selectedSupplements.join(', ')}`;
-            }
+      const totalQuantity = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
-            return {
-                name: description,
-                // IMPORTANT: Stripe expects integer cents. 
-                // We round to avoid floating point errors
-                price: Math.round(item.price * 100), 
-                quantity: item.quantity
-            };
-        });
-
-        await startCheckout(checkoutItems);
-        // Page redirects on success
+      await startCheckout([
+        {
+          id: 'menu-item',
+          quantity: totalQuantity,
+        },
+      ]);
+      // Page redirects on success
     } catch (error) {
-        console.error("Checkout failed", error);
-        setIsCheckingOut(false);
+      console.error('Checkout failed', error);
+      setIsCheckingOut(false);
+      alert(error instanceof Error ? error.message : 'Le paiement a échoué.');
     }
   };
 

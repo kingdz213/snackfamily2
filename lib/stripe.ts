@@ -2,11 +2,11 @@ export type CheckoutItem = {
   id?: string;
   name?: string;
   quantity?: number;
-  price?: number;
 };
 
 type WorkerResponse =
   | { url: string }
+  | { sessionId: string }
   | { error: string; details?: unknown }
   | Record<string, unknown>;
 
@@ -22,8 +22,7 @@ const resolveWorkerBaseUrl = () => {
 };
 
 const resolvePublicOrigin = () => {
-  const envOrigin = (import.meta.env.VITE_ORIGIN_FALLBACK as string | undefined)?.trim() ||
-    (import.meta.env.VITE_PUBLIC_ORIGIN as string | undefined)?.trim();
+  const envOrigin = (import.meta.env.VITE_ORIGIN_FALLBACK as string | undefined)?.trim();
 
   if (typeof window !== 'undefined' && window.location) {
     const o = window.location.origin;
@@ -85,6 +84,10 @@ export async function startCheckout(items: CheckoutItem[], customer?: Record<str
   if (typeof (data as any)?.url === 'string' && (data as any).url) {
     window.location.assign((data as any).url);
     return;
+  }
+
+  if (typeof (data as any)?.sessionId === 'string' && (data as any).sessionId) {
+    throw new Error('Checkout session requires Stripe.js redirect, but no URL was provided.');
   }
 
   throw new Error("Le service de paiement n'a renvoyé ni URL ni sessionId.");
