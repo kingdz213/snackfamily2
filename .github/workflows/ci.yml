@@ -17,10 +17,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        run: npm install
-        # npm ci requires a lockfile; using npm install here because the lockfile is not available yet in CI.
+        id: install
+        run: npm ci
+
+      - name: Show npm debug log on failure
+        if: failure() && steps.install.outcome == 'failure'
+        run: cat /home/runner/.npm/_logs/*debug-0.log || true
 
       - name: Build
         run: npm run build
