@@ -35,7 +35,9 @@ const sanitizeItems = (items: CheckoutItem[]) =>
     }))
     .filter((it) => it.id.length > 0);
 
-async function parseWorkerResponse(res: Response): Promise<{ raw: string; json?: WorkerResponse }> {
+async function parseWorkerResponse(
+  res: Response
+): Promise<{ raw: string; json?: WorkerResponse }> {
   const raw = await res.text();
   try {
     return { raw, json: JSON.parse(raw) as WorkerResponse };
@@ -44,6 +46,11 @@ async function parseWorkerResponse(res: Response): Promise<{ raw: string; json?:
   }
 }
 
+/**
+ * Démarre le checkout :
+ * - le front envoie UNIQUEMENT {id, quantity}
+ * - le Worker calcule les prix et renvoie { url }
+ */
 export async function startCheckout(items: CheckoutItem[], customer?: Record<string, unknown>) {
   const safeItems = sanitizeItems(items);
   if (safeItems.length === 0) throw new Error("Panier vide : impossible de démarrer le paiement.");
@@ -80,4 +87,13 @@ export async function startCheckout(items: CheckoutItem[], customer?: Record<str
   }
 
   throw new Error("Le serveur de paiement n'a pas renvoyé d'URL de redirection.");
+}
+
+/**
+ * Test DEV (optionnel) :
+ * ⚠️ Remplace "TEST_ITEM_ID" par un ID existant dans ton menu côté Worker.
+ */
+export async function runDevTest() {
+  const testItems: CheckoutItem[] = [{ id: "TEST_ITEM_ID", quantity: 1 }];
+  return startCheckout(testItems);
 }
