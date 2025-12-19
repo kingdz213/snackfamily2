@@ -1,17 +1,14 @@
 // lib/stripe.ts
 export type CheckoutItem = { id: string; quantity: number };
 
-type WorkerResponse = { url?: string; sessionId?: string; error?: string; details?: unknown };
+type WorkerResponse = { url?: string; error?: string; details?: unknown };
 
 const DEFAULT_WORKER_BASE_URL =
   "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
-
 const DEFAULT_PUBLIC_ORIGIN = "https://snackfamily2.eu";
 
 const normalizeBase = (base: string) => base.replace(/\/+$/, "");
-
-const envStr = (key: string) =>
-  (import.meta.env[key] as string | undefined)?.trim();
+const envStr = (key: string) => (import.meta.env[key] as string | undefined)?.trim();
 
 export const resolveWorkerBaseUrl = () => {
   const configured = envStr("VITE_WORKER_BASE_URL");
@@ -19,9 +16,7 @@ export const resolveWorkerBaseUrl = () => {
 };
 
 export const resolvePublicOrigin = () => {
-  const envOrigin =
-    envStr("VITE_PUBLIC_ORIGIN") ||
-    envStr("VITE_ORIGIN_FALLBACK");
+  const envOrigin = envStr("VITE_PUBLIC_ORIGIN") || envStr("VITE_ORIGIN_FALLBACK");
 
   if (typeof window !== "undefined" && window.location) {
     const o = window.location.origin;
@@ -79,15 +74,9 @@ export async function startCheckout(items: CheckoutItem[], customer?: Record<str
     throw new Error(msg);
   }
 
-  // Flow recommandé: worker renvoie url => redirection directe
   if (json && typeof json.url === "string" && json.url) {
     window.location.assign(json.url);
     return;
-  }
-
-  // Optionnel: si tu choisis de renvoyer sessionId au lieu de url, alors il faudra stripe-js côté front.
-  if (json && typeof json.sessionId === "string" && json.sessionId) {
-    throw new Error("Réponse Stripe invalide: sessionId reçu mais flow Stripe.js non activé.");
   }
 
   throw new Error("Le serveur de paiement n'a pas renvoyé d'URL de redirection.");
