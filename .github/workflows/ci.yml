@@ -19,10 +19,16 @@ jobs:
           cache-dependency-path: package-lock.json
           registry-url: https://registry.npmjs.org/
 
+      - name: Environment info
+        run: |
+          node -v
+          npm -v
+          ls -la
+
       - name: Install dependencies
         env:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
-        run: npm install
+        run: npm ci --no-audit --no-fund
 
       - name: Show npm debug log on failure
         if: failure()
