@@ -1,94 +1,79 @@
-export type CheckoutItem = {
-  id?: string;
-  name?: string;
-  quantity?: number;
-};
+// lib/stripe.ts
+export type CheckoutItem = { id: string; quantity: number };
 
-type WorkerResponse =
-  | { url: string }
-  | { sessionId: string }
-  | { error: string; details?: unknown }
-  | Record<string, unknown>;
+type WorkerResponse = { url?: string; error?: string; details?: unknown };
 
 const DEFAULT_WORKER_BASE_URL =
-  'https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev';
+  "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
 
-const normalizeBase = (base: string) => base.replace(/\/+$/, '');
+const normalizeBase = (base: string) => base.replace(/\/+$/, "");
 
 const resolveWorkerBaseUrl = () => {
-  const configured = import.meta.env.VITE_WORKER_BASE_URL as string | undefined;
-  const trimmed = configured?.trim();
-  return trimmed && trimmed.length > 0 ? normalizeBase(trimmed) : normalizeBase(DEFAULT_WORKER_BASE_URL);
+  const env = (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.trim();
+  return normalizeBase(env && env.length > 0 ? env : DEFAULT_WORKER_BASE_URL);
 };
 
 const resolvePublicOrigin = () => {
-  const envOrigin = (import.meta.env.VITE_ORIGIN_FALLBACK as string | undefined)?.trim();
+  const envOrigin =
+    (import.meta.env.VITE_ORIGIN_FALLBACK as string | undefined)?.trim() ||
+    (import.meta.env.VITE_PUBLIC_ORIGIN as string | undefined)?.trim();
 
-  if (typeof window !== 'undefined' && window.location) {
+  if (typeof window !== "undefined" && window.location) {
     const o = window.location.origin;
-    if (o && o !== 'null' && o !== 'about:blank') return o;
+    if (o && o !== "null" && o !== "about:blank") return o;
   }
+  if (envOrigin) return envOrigin;
 
-  if (envOrigin && envOrigin.length > 0) return envOrigin;
-
-  return 'https://snackfamily2.eu';
+  return "https://snackfamily2.eu";
 };
 
 const sanitizeItems = (items: CheckoutItem[]) =>
-  (items || [])
-    .map((item) => ({
-      id: (item.id || 'menu-item').trim(),
-      quantity: Number.isFinite(item.quantity) ? Math.max(1, Math.trunc(item.quantity!)) : 1,
+  (items ?? [])
+    .map((it) => ({
+      id: String(it?.id ?? "").trim(),
+      quantity: Number.isFinite(it?.quantity) ? Math.max(1, Math.trunc(it.quantity)) : 1,
     }))
-    .filter((item) => item.id.length > 0);
+    .filter((it) => it.id.length > 0);
 
 export async function startCheckout(items: CheckoutItem[], customer?: Record<string, unknown>) {
-  if (!items || items.length === 0) {
-    throw new Error('Panier vide: impossible de démarrer le paiement.');
-  }
+  const safeItems = sanitizeItems(items);
+  if (safeItems.length === 0) throw new Error("Panier vide : impossible de démarrer le paiement.");
 
-  const workerBaseUrl = resolveWorkerBaseUrl();
-  const endpoint = `${workerBaseUrl}/create-checkout-session`;
+  const base = resolveWorkerBaseUrl();
+  const endpoint = `${base}/create-checkout-session`;
   const origin = resolvePublicOrigin();
 
   const payload: Record<string, unknown> = {
-    items: sanitizeItems(items),
+    items: safeItems,
     successUrl: `${origin}/success`,
     cancelUrl: `${origin}/cancel`,
   };
+  if (customer) payload.customer = customer;
 
-  if (customer) {
-    payload.customer = customer;
-  }
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
-  const rawText = await response.text();
+  const raw = await res.text();
+
   let data: WorkerResponse;
-
   try {
-    data = rawText ? (JSON.parse(rawText) as WorkerResponse) : ({} as WorkerResponse);
+    data = JSON.parse(raw) as WorkerResponse;
   } catch {
-    throw new Error('Le serveur de paiement a renvoyé une réponse invalide.');
+    throw new Error("Réponse invalide du serveur de paiement.");
   }
 
-  if (!response.ok) {
-    const message = typeof (data as any)?.error === 'string' ? (data as any).error : `Erreur HTTP: ${response.status}`;
-    throw new Error(message);
+  if (!res.ok) {
+    const msg = typeof data?.error === "string" ? data.error : `Erreur HTTP ${res.status}`;
+    throw new Error(msg);
   }
 
-  if (typeof (data as any)?.url === 'string' && (data as any).url) {
-    window.location.assign((data as any).url);
+  if (typeof data?.url === "string" && data.url) {
+    window.location.assign(data.url);
     return;
   }
 
-  if (typeof (data as any)?.sessionId === 'string' && (data as any).sessionId) {
-    throw new Error('Checkout session requires Stripe.js redirect, but no URL was provided.');
-  }
-
-  throw new Error("Le service de paiement n'a renvoyé ni URL ni sessionId.");
+  throw new Error("Le serveur de paiement n'a pas renvoyé d'URL de redirection.");
 }
