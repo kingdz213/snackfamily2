@@ -28,9 +28,19 @@ export async function startCheckout(items: CheckoutItem[], customer?: Record<str
   const workerBaseUrl = resolveWorkerBaseUrl();
   const endpoint = `${workerBaseUrl}/create-checkout-session`;
 
+  const origin =
+    typeof window !== 'undefined' &&
+    window.location &&
+    window.location.origin &&
+    window.location.origin !== 'null' &&
+    window.location.origin !== 'about:blank'
+      ? window.location.origin
+      : 'https://snackfamily2.eu';
+
   try {
     const payload = {
       items: withDefaultItemIds(items),
+      origin,
       ...(customer ? { customer } : {}),
     };
 
