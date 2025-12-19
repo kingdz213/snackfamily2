@@ -1,4 +1,5 @@
 name: CI
+
 on:
   push:
   pull_request:
@@ -14,15 +15,19 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Ensure npm registry
+      - name: Reset npm config
         run: |
           rm -f .npmrc || true
           npm config delete proxy || true
           npm config delete https-proxy || true
           npm config set registry https://registry.npmjs.org/
 
-      - name: Install
-        run: npm ci --no-audit --fund=false
+      - name: Install dependencies
+        run: |
+          if npm ci --no-audit --no-fund; then
+            exit 0
+          fi
+          npm install --no-audit --no-fund
 
       - name: Build
         run: npm run build
