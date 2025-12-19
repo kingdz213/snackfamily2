@@ -22,7 +22,11 @@ jobs:
       - name: Install dependencies
         env:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
-        run: npm ci
+        run: npm install
+
+      - name: Show npm debug log on failure
+        if: failure()
+        run: cat /home/runner/.npm/_logs/*debug-0.log || true
 
       - name: Build
         run: npm run build
