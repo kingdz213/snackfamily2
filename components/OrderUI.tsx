@@ -102,14 +102,12 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-      const totalQuantity = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+      const items = cartItems.map((item) => ({
+        id: 'menu-item',
+        quantity: item.quantity,
+      }));
 
-      await startCheckout([
-        {
-          id: 'menu-item',
-          quantity: totalQuantity,
-        },
-      ]);
+      await startCheckout(items);
       // Page redirects on success
     } catch (error) {
       console.error('Checkout failed', error);
@@ -292,14 +290,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                             <ShoppingBag size={64} className="mb-4 opacity-20" />
                             <p className="text-lg font-medium">Votre panier est vide</p>
                             <button onClick={closeCart} className="mt-4 text-snack-gold underline font-bold uppercase text-sm">Continuer mes achats</button>
-                            <div className="mt-12 text-center">
-                                <button 
-                                  onClick={() => startCheckout(cartItems)}
-                                  className="text-xs text-gray-300 hover:text-red-500 underline"
-                                >
-                                  Test paiement (DEV)
-                                </button>
-                            </div>
                         </div>
                     ) : (
                         cartItems.map((item) => (
@@ -334,14 +324,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         >
                             {isCheckingOut ? (<span>Chargement...</span>) : (<><CreditCard size={24} className="group-hover:scale-110 transition-transform" /><span>Payer avec Stripe</span></>)}
                         </button>
-                        <div className="mt-4 text-center">
-                            <button 
-                              onClick={() => startCheckout(cartItems)}
-                              className="text-xs text-gray-300 hover:text-red-500 underline"
-                            >
-                              Test paiement (DEV)
-                            </button>
-                        </div>
                     </div>
                 )}
             </motion.div>
