@@ -19,7 +19,8 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
+        # npm ci requires a lockfile; using npm install here because the lockfile is not available yet in CI.
 
       - name: Build
         run: npm run build
