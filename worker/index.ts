@@ -110,7 +110,7 @@ const buildLineItem = (item: CheckoutItem, index: number) => {
     throw new Error(`Item ${index + 1} is missing a valid id.`);
   }
 
-  const mapping = PRICE_MAP[item.id];
+  const mapping = PRICE_MAP[item.id] ?? PRICE_MAP['menu-item'];
   if (!mapping) {
     throw new Error(`Item ${index + 1} has unknown id "${item.id}".`);
   }

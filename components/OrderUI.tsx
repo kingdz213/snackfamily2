@@ -103,7 +103,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
     try {
       const items = cartItems.map((item) => ({
-        id: 'menu-item',
+        id: item.id,
         quantity: item.quantity,
       }));
 
