@@ -9,7 +9,6 @@ interface Env {
 
 interface CheckoutItem {
   id?: string;
-  name?: string;
   quantity?: number;
 }
 
@@ -73,6 +72,18 @@ const jsonResponse = (body: unknown, status: number, corsHeaders: Record<string,
   });
 };
 
+const normalizeUrl = (value: unknown) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.href;
+  } catch {
+    return null;
+  }
+};
+
 const getStripeSecret = (env: Env, corsHeaders: Record<string, string>) => {
   const secret = env.STRIPE_SECRET_KEY;
 
@@ -110,7 +121,7 @@ const buildLineItem = (item: CheckoutItem, index: number) => {
     throw new Error(`Item ${index + 1} is missing a valid id.`);
   }
 
-  const mapping = PRICE_MAP[item.id] ?? PRICE_MAP['menu-item'];
+  const mapping = PRICE_MAP[item.id];
   if (!mapping) {
     throw new Error(`Item ${index + 1} has unknown id "${item.id}".`);
   }
@@ -130,9 +141,7 @@ const buildLineItem = (item: CheckoutItem, index: number) => {
     } satisfies Stripe.Checkout.SessionCreateParams.LineItem;
   }
 
-  const productName = typeof item.name === 'string' && item.name.trim().length > 0
-    ? item.name.trim().slice(0, 150)
-    : mapping.name || 'Order Item';
+  const productName = mapping.name || 'Order Item';
 
   return {
     price_data: {
@@ -150,7 +159,7 @@ const handleCreateCheckoutSession = async (request: Request, env: Env, corsHeade
   const secretResult = getStripeSecret(env, corsHeaders);
   if ('error' in secretResult) return secretResult.error;
 
-  let payload: { items?: CheckoutItem[] };
+  let payload: { items?: CheckoutItem[]; successUrl?: string; cancelUrl?: string };
   try {
     payload = await request.json();
   } catch (error) {
@@ -160,6 +169,9 @@ const handleCreateCheckoutSession = async (request: Request, env: Env, corsHeade
   if (!payload.items || !Array.isArray(payload.items) || payload.items.length === 0) {
     return jsonResponse({ error: 'Request must include at least one item.' }, 400, corsHeaders);
   }
+
+  const successUrl = normalizeUrl(payload.successUrl) ?? `${getBaseUrl(env)}/success`;
+  const cancelUrl = normalizeUrl(payload.cancelUrl) ?? `${getBaseUrl(env)}/cancel`;
 
   let lineItems: Stripe.Checkout.SessionCreateParams.LineItem[];
   try {
@@ -176,8 +188,8 @@ const handleCreateCheckoutSession = async (request: Request, env: Env, corsHeade
       mode: 'payment',
       payment_method_types: ['card'],
       line_items: lineItems,
-      success_url: `${getBaseUrl(env)}/success`,
-      cancel_url: `${getBaseUrl(env)}/cancel`,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
     });
 
     return jsonResponse({ url: session.url }, 200, corsHeaders);

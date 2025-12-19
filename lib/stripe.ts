@@ -1,30 +1,35 @@
+// lib/stripe.ts
 export type CheckoutItem = { id: string; quantity: number };
 
-type WorkerResponse = { url?: string; sessionId?: string; error?: string; details?: unknown };
+type WorkerResponse = { url?: string; error?: string; details?: unknown };
 
 const DEFAULT_WORKER_BASE_URL =
   "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
 
+const DEFAULT_PUBLIC_ORIGIN = "https://snackfamily2.eu";
+
 const normalizeBase = (base: string) => base.replace(/\/+$/, "");
 
-const resolveWorkerBaseUrl = () => {
-  const env = (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.trim();
-  return normalizeBase(env && env.length > 0 ? env : DEFAULT_WORKER_BASE_URL);
+const envStr = (key: string) =>
+  (import.meta.env[key] as string | undefined)?.trim();
+
+export const resolveWorkerBaseUrl = () => {
+  const configured = envStr("VITE_WORKER_BASE_URL");
+  return normalizeBase(configured && configured.length > 0 ? configured : DEFAULT_WORKER_BASE_URL);
 };
 
-const resolvePublicOrigin = () => {
+export const resolvePublicOrigin = () => {
   const envOrigin =
-    (import.meta.env.VITE_ORIGIN_FALLBACK as string | undefined)?.trim() ||
-    (import.meta.env.VITE_PUBLIC_ORIGIN as string | undefined)?.trim();
+    envStr("VITE_PUBLIC_ORIGIN") ||
+    envStr("VITE_ORIGIN_FALLBACK");
 
   if (typeof window !== "undefined" && window.location) {
     const o = window.location.origin;
     if (o && o !== "null" && o !== "about:blank") return o;
   }
 
-  if (envOrigin) return envOrigin;
-
-  return "https://snackfamily2.eu";
+  if (envOrigin && envOrigin.length > 0) return envOrigin;
+  return DEFAULT_PUBLIC_ORIGIN;
 };
 
 const sanitizeItems = (items: CheckoutItem[]) =>
@@ -36,6 +41,15 @@ const sanitizeItems = (items: CheckoutItem[]) =>
         : 1,
     }))
     .filter((it) => it.id.length > 0);
+
+async function parseWorkerJsonSafe(res: Response): Promise<{ raw: string; json?: WorkerResponse }> {
+  const raw = await res.text();
+  try {
+    return { raw, json: JSON.parse(raw) as WorkerResponse };
+  } catch {
+    return { raw };
+  }
+}
 
 export async function startCheckout(items: CheckoutItem[], customer?: Record<string, unknown>) {
   const safeItems = sanitizeItems(items);
@@ -60,27 +74,20 @@ export async function startCheckout(items: CheckoutItem[], customer?: Record<str
     body: JSON.stringify(payload),
   });
 
-  const raw = await res.text();
-
-  let data: WorkerResponse = {};
-  try {
-    data = raw ? (JSON.parse(raw) as WorkerResponse) : {};
-  } catch {
-    throw new Error("Réponse invalide du serveur de paiement.");
-  }
+  const { raw, json } = await parseWorkerJsonSafe(res);
 
   if (!res.ok) {
-    const msg = typeof data?.error === "string" ? data.error : `Erreur HTTP ${res.status}`;
+    const msg =
+      typeof json?.error === "string"
+        ? json.error
+        : `Erreur HTTP ${res.status}${raw ? `: ${raw}` : ""}`;
     throw new Error(msg);
   }
 
-  if (typeof data?.url === "string" && data.url) {
-    window.location.assign(data.url);
+  const url = json?.url;
+  if (typeof url === "string" && url.length > 0) {
+    window.location.assign(url);
     return;
-  }
-
-  if (typeof data?.sessionId === "string" && data.sessionId) {
-    throw new Error("Le serveur a renvoyé un identifiant de session non pris en charge côté client.");
   }
 
   throw new Error("Le serveur de paiement n'a pas renvoyé d'URL de redirection.");

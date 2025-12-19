@@ -102,10 +102,13 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-      const items = cartItems.map((item) => ({
-        id: item.id,
-        quantity: item.quantity,
-      }));
+      const totalQuantity = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+      const items = [
+        {
+          id: 'menu-item',
+          quantity: totalQuantity > 0 ? totalQuantity : 1,
+        },
+      ];
 
       await startCheckout(items);
       // Page redirects on success
