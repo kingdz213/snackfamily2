@@ -14,8 +14,7 @@
     "lucide-react": "0.263.1",
     "framer-motion": "10.12.16",
     "firebase": "^11.0.2",
-    "stripe": "^16.8.0",
-    "@stripe/stripe-js": "file:vendor/stripe-js"
+    "stripe": "^16.8.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

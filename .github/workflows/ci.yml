@@ -22,7 +22,7 @@ jobs:
           npm config set registry https://registry.npmjs.org/
 
       - name: Install
-        run: npm install --no-audit --fund=false
+        run: npm ci --no-audit --fund=false
 
       - name: Build
         run: npm run build
