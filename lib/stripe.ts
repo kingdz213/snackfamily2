@@ -1,7 +1,7 @@
 // lib/stripe.ts
 export type CheckoutItem = { id: string; quantity: number };
 
-type WorkerResponse = { url?: string; error?: string; details?: unknown };
+type WorkerResponse = { url?: string; sessionId?: string; error?: string; details?: unknown };
 
 const DEFAULT_WORKER_BASE_URL =
   "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
@@ -35,14 +35,12 @@ export const resolvePublicOrigin = () => {
 const sanitizeItems = (items: CheckoutItem[]) =>
   (items ?? [])
     .map((it) => ({
-      id: String((it as any)?.id ?? "").trim(),
-      quantity: Number.isFinite((it as any)?.quantity)
-        ? Math.max(1, Math.trunc((it as any).quantity))
-        : 1,
+      id: String(it?.id ?? "").trim(),
+      quantity: Number.isFinite(it?.quantity) ? Math.max(1, Math.trunc(it.quantity)) : 1,
     }))
     .filter((it) => it.id.length > 0);
 
-async function parseWorkerJsonSafe(res: Response): Promise<{ raw: string; json?: WorkerResponse }> {
+async function parseWorkerResponse(res: Response): Promise<{ raw: string; json?: WorkerResponse }> {
   const raw = await res.text();
   try {
     return { raw, json: JSON.parse(raw) as WorkerResponse };
@@ -53,9 +51,7 @@ async function parseWorkerJsonSafe(res: Response): Promise<{ raw: string; json?:
 
 export async function startCheckout(items: CheckoutItem[], customer?: Record<string, unknown>) {
   const safeItems = sanitizeItems(items);
-  if (safeItems.length === 0) {
-    throw new Error("Panier vide : impossible de démarrer le paiement.");
-  }
+  if (safeItems.length === 0) throw new Error("Panier vide : impossible de démarrer le paiement.");
 
   const base = resolveWorkerBaseUrl();
   const endpoint = `${base}/create-checkout-session`;
@@ -74,20 +70,24 @@ export async function startCheckout(items: CheckoutItem[], customer?: Record<str
     body: JSON.stringify(payload),
   });
 
-  const { raw, json } = await parseWorkerJsonSafe(res);
+  const { raw, json } = await parseWorkerResponse(res);
 
   if (!res.ok) {
     const msg =
-      typeof json?.error === "string"
-        ? json.error
-        : `Erreur HTTP ${res.status}${raw ? `: ${raw}` : ""}`;
+      (json && typeof json.error === "string" && json.error) ||
+      `Erreur HTTP ${res.status}${raw ? ` : ${raw}` : ""}`;
     throw new Error(msg);
   }
 
-  const url = json?.url;
-  if (typeof url === "string" && url.length > 0) {
-    window.location.assign(url);
+  // Flow recommandé: worker renvoie url => redirection directe
+  if (json && typeof json.url === "string" && json.url) {
+    window.location.assign(json.url);
     return;
+  }
+
+  // Optionnel: si tu choisis de renvoyer sessionId au lieu de url, alors il faudra stripe-js côté front.
+  if (json && typeof json.sessionId === "string" && json.sessionId) {
+    throw new Error("Réponse Stripe invalide: sessionId reçu mais flow Stripe.js non activé.");
   }
 
   throw new Error("Le serveur de paiement n'a pas renvoyé d'URL de redirection.");
