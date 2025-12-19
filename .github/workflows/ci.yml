@@ -20,15 +20,10 @@ jobs:
           rm -f .npmrc || true
           npm config delete proxy || true
           npm config delete https-proxy || true
-          npm config delete install-strategy || true
           npm config set registry https://registry.npmjs.org/
 
       - name: Install dependencies
-        run: |
-          if npm ci --no-audit --no-fund; then
-            exit 0
-          fi
-          npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Build
         run: npm run build
