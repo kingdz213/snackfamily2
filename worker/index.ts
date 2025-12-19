@@ -10,17 +10,16 @@ interface Env {
 interface CheckoutItem {
   id?: string;
   name?: string;
-  price?: number;
   quantity?: number;
 }
 
 const DEFAULT_BASE_URL = 'https://snackfamily2.eu';
 const DEFAULT_ALLOWED_ORIGINS = [DEFAULT_BASE_URL, 'https://www.snackfamily2.eu'];
 
-const PRICE_MAP: Record<string, { priceId?: string; currency: string; allowCustomAmount: boolean; name?: string }> = {
+const PRICE_MAP: Record<string, { priceId?: string; currency: string; unit_amount: number; name: string }> = {
   'menu-item': {
     currency: 'eur',
-    allowCustomAmount: true,
+    unit_amount: 1000,
     name: 'Snack Family Order',
   },
 };
@@ -131,18 +130,6 @@ const buildLineItem = (item: CheckoutItem, index: number) => {
     } satisfies Stripe.Checkout.SessionCreateParams.LineItem;
   }
 
-  if (!mapping.allowCustomAmount) {
-    throw new Error(`Item ${index + 1} cannot override price data.`);
-  }
-
-  const price = typeof item.price === 'number' && Number.isInteger(item.price) && item.price > 0
-    ? item.price
-    : null;
-
-  if (!price) {
-    throw new Error(`Item ${index + 1} has an invalid price.`);
-  }
-
   const productName = typeof item.name === 'string' && item.name.trim().length > 0
     ? item.name.trim().slice(0, 150)
     : mapping.name || 'Order Item';
@@ -150,7 +137,7 @@ const buildLineItem = (item: CheckoutItem, index: number) => {
   return {
     price_data: {
       currency: mapping.currency,
-      unit_amount: price,
+      unit_amount: mapping.unit_amount,
       product_data: {
         name: productName,
       },

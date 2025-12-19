@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { startCheckout, runDevTest } from '../lib/stripe';
+import { startCheckout } from '../lib/stripe';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -304,7 +304,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                             <button onClick={closeCart} className="mt-4 text-snack-gold underline font-bold uppercase text-sm">Continuer mes achats</button>
                             <div className="mt-12 text-center">
                                 <button 
-                                  onClick={() => runDevTest()}
+                                  onClick={() => startCheckout(cartItems)}
                                   className="text-xs text-gray-300 hover:text-red-500 underline"
                                 >
                                   Test paiement (DEV)
@@ -346,7 +346,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         </button>
                         <div className="mt-4 text-center">
                             <button 
-                              onClick={() => runDevTest()}
+                              onClick={() => startCheckout(cartItems)}
                               className="text-xs text-gray-300 hover:text-red-500 underline"
                             >
                               Test paiement (DEV)
