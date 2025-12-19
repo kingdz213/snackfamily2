@@ -1,7 +1,13 @@
-// lib/stripe.ts
+import { loadStripe } from "@stripe/stripe-js";
+
 export type CheckoutItem = { id: string; quantity: number };
 
-type WorkerResponse = { url?: string; error?: string; details?: unknown };
+type WorkerResponse = {
+  url?: string;
+  sessionId?: string;
+  error?: string;
+  details?: unknown;
+};
 
 const DEFAULT_WORKER_BASE_URL =
   "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
@@ -22,6 +28,7 @@ const resolvePublicOrigin = () => {
     const o = window.location.origin;
     if (o && o !== "null" && o !== "about:blank") return o;
   }
+
   if (envOrigin) return envOrigin;
 
   return "https://snackfamily2.eu";
@@ -30,10 +37,30 @@ const resolvePublicOrigin = () => {
 const sanitizeItems = (items: CheckoutItem[]) =>
   (items ?? [])
     .map((it) => ({
-      id: String(it?.id ?? "").trim(),
-      quantity: Number.isFinite(it?.quantity) ? Math.max(1, Math.trunc(it.quantity)) : 1,
+      id: String((it as any)?.id ?? "").trim(),
+      quantity: Number.isFinite((it as any)?.quantity)
+        ? Math.max(1, Math.trunc((it as any).quantity))
+        : 1,
     }))
     .filter((it) => it.id.length > 0);
+
+// Stripe (fallback si le worker renvoie sessionId plutôt que url)
+const STRIPE_PUBLIC_KEY =
+  (import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined)?.trim() ||
+  (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined)?.trim();
+
+export const stripePromise = STRIPE_PUBLIC_KEY ? loadStripe(STRIPE_PUBLIC_KEY) : Promise.resolve(null);
+
+async function parseWorkerJson(res: Response): Promise<{ data: WorkerResponse; raw: string }> {
+  const raw = await res.text();
+  try {
+    const data = JSON.parse(raw) as WorkerResponse;
+    return { data, raw };
+  } catch {
+    // si le worker renvoie autre chose
+    return { data: { error: "Invalid JSON response from payment server.", details: raw }, raw };
+  }
+}
 
 export async function startCheckout(items: CheckoutItem[], customer?: Record<string, unknown>) {
   const safeItems = sanitizeItems(items);
@@ -48,7 +75,7 @@ export async function startCheckout(items: CheckoutItem[], customer?: Record<str
     successUrl: `${origin}/success`,
     cancelUrl: `${origin}/cancel`,
   };
-  if (customer) payload.customer = customer;
+  if (customer && typeof customer === "object") payload.customer = customer;
 
   const res = await fetch(endpoint, {
     method: "POST",
@@ -56,24 +83,30 @@ export async function startCheckout(items: CheckoutItem[], customer?: Record<str
     body: JSON.stringify(payload),
   });
 
-  const raw = await res.text();
-
-  let data: WorkerResponse;
-  try {
-    data = JSON.parse(raw) as WorkerResponse;
-  } catch {
-    throw new Error("Réponse invalide du serveur de paiement.");
-  }
+  const { data, raw } = await parseWorkerJson(res);
 
   if (!res.ok) {
-    const msg = typeof data?.error === "string" ? data.error : `Erreur HTTP ${res.status}`;
+    const msg =
+      typeof data?.error === "string" && data.error.length > 0
+        ? data.error
+        : `Erreur HTTP ${res.status}: ${raw}`;
     throw new Error(msg);
   }
 
+  // 1) Cas recommandé : worker renvoie une URL Stripe Checkout
   if (typeof data?.url === "string" && data.url) {
     window.location.assign(data.url);
     return;
   }
 
-  throw new Error("Le serveur de paiement n'a pas renvoyé d'URL de redirection.");
+  // 2) Fallback : worker renvoie sessionId (Stripe.js)
+  if (typeof data?.sessionId === "string" && data.sessionId) {
+    const stripe = await stripePromise;
+    if (!stripe) throw new Error("Stripe n'est pas configuré (clé publique manquante).");
+    const { error } = await stripe.redirectToCheckout({ sessionId: data.sessionId });
+    if (error) throw error;
+    return;
+  }
+
+  throw new Error("Le serveur de paiement n'a renvoyé ni url ni sessionId.");
 }
