@@ -151,8 +151,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                   onClick={closeOrderModal}
               />
               <motion.div
-                  initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-                  transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                  initial={{ y: '100%' }} animate={{ y: '0%' }} exit={{ y: '100%' }}
+                  transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }}
                   className="bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col overflow-hidden"
                   style={{ zIndex: 9999 }}
               >
@@ -271,8 +271,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                   onClick={closeCart}
               />
               <motion.div
-                  initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-                  transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                  initial={{ x: '100%' }} animate={{ x: '0%' }} exit={{ x: '100%' }}
+                  transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }}
                   className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl flex flex-col relative"
                   style={{ zIndex: 9999 }}
               >
