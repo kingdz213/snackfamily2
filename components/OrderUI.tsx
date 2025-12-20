@@ -127,6 +127,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         // Page redirects on success
     } catch (error) {
         console.error("Checkout failed", error);
+    } finally {
         setIsCheckingOut(false);
     }
   };
