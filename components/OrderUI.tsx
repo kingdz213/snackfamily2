@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -34,7 +35,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [selectedSauce, setSelectedSauce] = useState<string>('Sans sauce');
   const [selectedSupplements, setSelectedSupplements] = useState<string[]>([]);
   const [selectedVeggies, setSelectedVeggies] = useState<string[]>([]);
-  
+
   const [variant, setVariant] = useState<'Menu/Frites' | 'Solo'>('Menu/Frites');
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
@@ -82,7 +83,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const handleAddToCart = () => {
     if (!selectedItem) return;
     const itemTotal = getCurrentItemPrice();
-    
+
     const newItem: CartItem = {
       id: Math.random().toString(36).substr(2, 9),
       name: selectedItem.name,
@@ -114,9 +115,9 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
             return {
                 name: description,
-                // IMPORTANT: Stripe expects integer cents. 
+                // IMPORTANT: Stripe expects integer cents.
                 // We round to avoid floating point errors
-                price: Math.round(item.price * 100), 
+                price: Math.round(item.price * 100),
                 quantity: item.quantity
             };
         });
@@ -132,21 +133,23 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   const cartTotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
+  const portalTarget = typeof document !== 'undefined' ? document.body : null;
+
   return (
     <>
       {/* --- ORDER MODAL --- */}
       <AnimatePresence>
-        {isOrderModalOpen && selectedItem && selectedCategory && (
-          <div className="fixed inset-0 z-[60] flex items-end md:items-center justify-center pointer-events-none">
-            <motion.div 
+        {isOrderModalOpen && selectedItem && selectedCategory && portalTarget && createPortal(
+          <div className="fixed inset-0 z-[1000] flex items-end md:items-center justify-center pointer-events-none">
+            <motion.div
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 className="absolute inset-0 bg-black/80 backdrop-blur-sm pointer-events-auto"
                 onClick={closeOrderModal}
             />
-            <motion.div 
+            <motion.div
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden"
+                className="bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden z-[1001]"
             >
                 <div className="bg-snack-black text-white p-5 flex justify-between items-center">
                    <div>
@@ -246,29 +249,30 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     </button>
                 </div>
             </motion.div>
-          </div>
+          </div>,
+          portalTarget
         )}
       </AnimatePresence>
 
       {/* --- CART DRAWER --- */}
       <AnimatePresence>
-        {isCartOpen && (
+        {isCartOpen && portalTarget && createPortal(
           <>
-            <motion.div 
+            <motion.div
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[70]"
+                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1000]"
                 onClick={closeCart}
             />
             <motion.div
                 initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
                 transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl z-[80] flex flex-col relative"
+                className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl z-[1010] flex flex-col relative"
             >
                 <AnimatePresence>
                 {isClearConfirmOpen && (
-                    <motion.div 
+                    <motion.div
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[90] flex items-center justify-center p-6"
+                        className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[1020] flex items-center justify-center p-6"
                     >
                         <div className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-xs text-center">
                              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
@@ -340,7 +344,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                             <span className="text-gray-500 uppercase font-bold tracking-wider text-sm">Total</span>
                             <span className="text-3xl font-display font-bold text-snack-black">{cartTotal.toFixed(2)} €</span>
                         </div>
-                        <button 
+                        <button
                             id="stripe-checkout-btn"
                             onClick={handleStripeCheckout}
                             disabled={isCheckingOut}
@@ -361,7 +365,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     </div>
                 )}
             </motion.div>
-          </>
+          </>,
+          portalTarget
         )}
       </AnimatePresence>
     </>
