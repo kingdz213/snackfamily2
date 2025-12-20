@@ -120,7 +120,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                 // IMPORTANT: Stripe expects integer cents.
                 // We round to avoid floating point errors
                 price: Math.round(item.price * 100),
-                quantity: item.quantity
+                quantity: Math.max(1, Math.round(item.quantity))
             };
         });
 
