@@ -9,10 +9,11 @@ export interface CheckoutItem {
 const STRIPE_KEY = (import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined)?.trim();
 export const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : Promise.resolve(null);
 
-const WORKER_URL = (import.meta.env.VITE_WORKER_URL as string | undefined)
+const WORKER_URL_ENV = (import.meta.env.VITE_WORKER_URL as string | undefined)?.trim();
+const WORKER_URL = WORKER_URL_ENV
   ?? "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
 
-if (!import.meta.env.VITE_WORKER_URL) {
+if (!WORKER_URL_ENV) {
   console.warn("VITE_WORKER_URL is not set; using default worker URL.");
 }
 
@@ -20,12 +21,31 @@ export async function startCheckout(items: CheckoutItem[]) {
   try {
     console.log("Initiating Stripe Checkout...");
 
+    const missingConfig: string[] = [];
+    if (!STRIPE_KEY) missingConfig.push("Clé publique Stripe manquante (VITE_STRIPE_PUBLIC_KEY)");
+    if (!WORKER_URL_ENV) missingConfig.push("URL du worker Stripe manquante (VITE_WORKER_URL)");
+
+    if (missingConfig.length > 0) {
+      const message = missingConfig.join(". ");
+      console.warn(message);
+      if (import.meta.env.DEV) {
+        throw new Error(message);
+      }
+      throw new Error("Configuration du paiement indisponible. Veuillez réessayer plus tard.");
+    }
+
     const origin = window.location.origin && window.location.origin !== "null" && window.location.origin !== "about:blank"
       ? window.location.origin
       : "https://snackfamily2.eu";
 
+    const payloadItems = items.map((item) => ({
+      name: item.name,
+      price: Math.round(item.price),
+      quantity: item.quantity
+    }));
+
     const payload = {
-      items,
+      items: payloadItems,
       successUrl: `${origin}/success`,
       cancelUrl: `${origin}/cancel`
     };
@@ -42,18 +62,25 @@ export async function startCheckout(items: CheckoutItem[]) {
 
     if (!response.ok) {
       console.error("Worker response error:", response.status);
-      const text = await response.text();
-      throw new Error(`Erreur HTTP: ${response.status} - ${text}`);
+      const errorBody = await response.text().catch(() => "");
+      if (errorBody) {
+        console.error("Worker response body:", errorBody);
+      }
+      throw new Error("Serveur de paiement indisponible. Veuillez réessayer dans quelques instants.");
     }
 
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch (error) {
+      throw new Error("Réponse invalide du serveur de paiement.");
+    }
     console.log("Session created:", data);
 
     if (data?.sessionId) {
       const stripe = await stripePromise;
       if (!stripe) {
-        alert("Clé Stripe publique manquante (VITE_STRIPE_PUBLIC_KEY) ou Stripe indisponible.");
-        throw new Error("Stripe failed to load");
+        throw new Error("Stripe n'a pas pu être chargé (clé publique manquante ?).");
       }
       const { error } = await stripe.redirectToCheckout({ sessionId: data.sessionId });
       if (error) {
@@ -68,17 +95,9 @@ export async function startCheckout(items: CheckoutItem[]) {
     }
 
     console.error("No URL or sessionId in response:", data);
-    alert("Erreur: Le service de paiement n'a pas renvoyé d'URL de redirection.");
+    throw new Error("Le service de paiement n'a pas renvoyé de redirection Stripe.");
   } catch (e) {
     console.error("Checkout Exception:", e);
-    const errorMessage = e instanceof Error ? e.message : String(e);
-
-    if (import.meta.env.DEV) {
-      alert(errorMessage);
-    } else {
-      alert("Impossible de contacter le serveur de paiement. Veuillez réessayer.");
-    }
-
     throw e;
   }
 }
