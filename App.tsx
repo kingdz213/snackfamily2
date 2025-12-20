@@ -123,7 +123,7 @@ function App() {
         currentPage={currentPage}
         navigateTo={navigateTo}
         cartCount={cartItems.reduce((acc, item) => acc + item.quantity, 0)}
-        toggleCart={() => setIsCartOpen(!isCartOpen)}
+        toggleCart={() => setIsCartOpen((v) => !v)}
       />
 
       <main className="flex-grow pt-24">
