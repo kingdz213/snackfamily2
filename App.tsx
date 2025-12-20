@@ -13,23 +13,34 @@ import { OrderUI } from './components/OrderUI';
 import { AdminPage } from './components/AdminPage';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
 
+const pageToPath: Record<Page, string> = {
+  home: '/',
+  menu: '/menu',
+  infos: '/infos',
+  contact: '/contact',
+  commander: '/commander',
+  admin: '/admin',
+  success: '/success',
+  cancel: '/cancel',
+};
+
+const getPageFromLocation = (): Page => {
+  try {
+    const { pathname, search } = window.location;
+
+    if (search.includes('success=true')) return 'success';
+    if (search.includes('canceled=true')) return 'cancel';
+
+    const matchedEntry = Object.entries(pageToPath).find(([, path]) => path === pathname);
+    if (matchedEntry) return matchedEntry[0] as Page;
+  } catch (e) {
+    console.warn("Navigation warning: could not determine initial page", e);
+  }
+  return 'home';
+};
+
 function App() {
-  // Détection robuste de la page initiale (Success/Cancel) compatible sandbox
-  const getInitialPage = (): Page => {
-    try {
-      const path = window.location.pathname;
-      const search = window.location.search;
-
-      if (path.includes('/admin')) return 'admin';
-      if (path.includes('/success') || search.includes('success=true')) return 'success';
-      if (path.includes('/cancel') || search.includes('canceled=true')) return 'cancel';
-    } catch (e) {
-      console.warn("Navigation warning: could not determine initial page", e);
-    }
-    return 'home';
-  };
-
-  const [currentPage, setCurrentPage] = useState<Page>(getInitialPage());
+  const [currentPage, setCurrentPage] = useState<Page>(getPageFromLocation());
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
@@ -41,8 +52,25 @@ function App() {
     window.scrollTo(0, 0);
   }, [currentPage]);
 
+  useEffect(() => {
+    const handlePopstate = () => {
+      setCurrentPage(getPageFromLocation());
+    };
+
+    window.addEventListener('popstate', handlePopstate);
+    return () => window.removeEventListener('popstate', handlePopstate);
+  }, []);
+
   const navigateTo = (page: Page) => {
+    try {
+      const path = pageToPath[page] || '/';
+      window.history.pushState({}, '', path);
+    } catch (e) {
+      console.warn("Navigation warning: could not push state", e);
+    }
+
     setCurrentPage(page);
+
     // Si on va sur la page Commander, on s'assure que le panier est fermé initialement
     if (page === 'commander') {
       setIsCartOpen(false);
@@ -107,8 +135,7 @@ function App() {
       {/* Bouton flottant Commander (visible sauf sur Checkout/Success/Cancel/Commander) */}
       {currentPage !== 'success' && currentPage !== 'cancel' && currentPage !== 'commander' && currentPage !== 'admin' && (
         <OrderingCTA
-            navigateTo={navigateTo}
-            toggleCart={() => setIsCartOpen(true)}
+          navigateTo={navigateTo}
         />
       )}
 
@@ -130,6 +157,5 @@ function App() {
     </div>
   );
 }
-import { app, db, analytics } from "./firebase";
 
 export default App;

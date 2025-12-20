@@ -3,11 +3,10 @@ import { ShoppingBag } from 'lucide-react';
 import { Page } from '../types';
 
 interface OrderingCTAProps {
-    toggleCart: () => void;
     navigateTo: (page: Page) => void;
 }
 
-export const OrderingCTA: React.FC<OrderingCTAProps> = ({ toggleCart, navigateTo }) => {
+export const OrderingCTA: React.FC<OrderingCTAProps> = ({ navigateTo }) => {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
