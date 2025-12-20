@@ -8,7 +8,12 @@ export interface CheckoutItem {
 
 export const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY);
 
-const WORKER_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
+const WORKER_URL = (import.meta.env.VITE_WORKER_URL as string | undefined)
+  ?? "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
+
+if (!import.meta.env.VITE_WORKER_URL) {
+  console.warn("VITE_WORKER_URL is not set; using default worker URL.");
+}
 
 export async function startCheckout(items: CheckoutItem[]) {
   try {
