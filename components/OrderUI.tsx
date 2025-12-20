@@ -139,16 +139,18 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       <AnimatePresence>
         {isOrderModalOpen && selectedItem && selectedCategory && (
           <Portal>
-            <div className="fixed inset-0 flex items-end md:items-center justify-center pointer-events-none">
+            <div className="fixed inset-0 flex items-end md:items-center justify-center">
               <motion.div
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  className="absolute inset-0 bg-black/80 backdrop-blur-sm pointer-events-auto z-[9998]"
+                  className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+                  style={{ zIndex: 9998 }}
                   onClick={closeOrderModal}
               />
               <motion.div
                   initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                   transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                  className="bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden z-[9999]"
+                  className="bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col overflow-hidden"
+                  style={{ zIndex: 9999 }}
               >
                 <div className="bg-snack-black text-white p-5 flex justify-between items-center">
                    <div>
@@ -257,22 +259,25 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       <AnimatePresence>
         {isCartOpen && (
           <Portal>
-            <div className="pointer-events-none">
+            <div>
               <motion.div
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9998] pointer-events-auto"
+                  className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+                  style={{ zIndex: 9998 }}
                   onClick={closeCart}
               />
               <motion.div
                   initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
                   transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                  className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl z-[9999] flex flex-col relative pointer-events-auto"
+                  className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl flex flex-col relative"
+                  style={{ zIndex: 9999 }}
               >
                 <AnimatePresence>
                 {isClearConfirmOpen && (
                     <motion.div
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[1020] flex items-center justify-center p-6"
+                        className="absolute inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+                        style={{ zIndex: 10000 }}
                     >
                         <div className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-xs text-center">
                              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
