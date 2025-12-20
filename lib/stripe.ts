@@ -6,7 +6,8 @@ export interface CheckoutItem {
   quantity: number;
 }
 
-export const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLIC_KEY);
+const STRIPE_KEY = (import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined)?.trim();
+export const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : Promise.resolve(null);
 
 const WORKER_URL = (import.meta.env.VITE_WORKER_URL as string | undefined)
   ?? "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev/create-checkout-session";
@@ -70,7 +71,14 @@ export async function startCheckout(items: CheckoutItem[]) {
     alert("Erreur: Le service de paiement n'a pas renvoyé d'URL de redirection.");
   } catch (e) {
     console.error("Checkout Exception:", e);
-    alert("Impossible de contacter le serveur de paiement. Veuillez réessayer.");
+    const errorMessage = e instanceof Error ? e.message : String(e);
+
+    if (import.meta.env.DEV) {
+      alert(errorMessage);
+    } else {
+      alert("Impossible de contacter le serveur de paiement. Veuillez réessayer.");
+    }
+
     throw e;
   }
 }

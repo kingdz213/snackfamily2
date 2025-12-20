@@ -10,13 +10,12 @@ interface OrderUIProps {
   selectedCategory: MenuCategory | null;
   closeOrderModal: () => void;
   addToCart: (item: CartItem) => void;
-  
+
   isCartOpen: boolean;
   closeCart: () => void;
   cartItems: CartItem[];
   removeFromCart: (id: string) => void;
   clearCart: () => void;
-  isCommanderPage?: boolean;
 }
 
 export const OrderUI: React.FC<OrderUIProps> = ({
@@ -29,8 +28,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   closeCart,
   cartItems,
   removeFromCart,
-  clearCart,
-  isCommanderPage = false
+  clearCart
 }) => {
   const [quantity, setQuantity] = useState(1);
   const [selectedSauce, setSelectedSauce] = useState<string>('Sans sauce');
