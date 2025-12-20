@@ -15,6 +15,75 @@ const stripe = new Stripe(process.env.STRIPE_API_KEY ?? "", {
 const db = getFirestore();
 const messaging = getMessaging();
 
+export const createCheckoutSession = onRequest(
+  {
+    cors: true,
+    maxInstances: 1,
+    secrets: ["STRIPE_API_KEY"],
+  },
+  async (req, res) => {
+    if (req.method === "OPTIONS") {
+      res.set("Access-Control-Allow-Origin", "*");
+      res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.set("Access-Control-Allow-Headers", "Content-Type");
+      res.status(204).send("");
+      return;
+    }
+
+    if (req.method !== "POST") {
+      res.status(405).send("Method not allowed");
+      return;
+    }
+
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+      const { items, successUrl, cancelUrl } = body ?? {};
+
+      if (!Array.isArray(items) || items.length === 0) {
+        res.status(400).json({ error: "Missing items" });
+        return;
+      }
+
+      if (!successUrl || !cancelUrl) {
+        res.status(400).json({ error: "Missing success/cancel URLs" });
+        return;
+      }
+
+      const lineItems = items.map((item: any, idx: number) => {
+        const name = typeof item?.name === "string" ? item.name.trim() : "";
+        const price = Math.round(Number(item?.price));
+        const quantity = Math.round(Number(item?.quantity ?? 1));
+
+        if (!name) throw new Error(`ITEM_${idx}_NAME`);
+        if (!Number.isFinite(price) || price <= 0) throw new Error(`ITEM_${idx}_PRICE`);
+        if (!Number.isFinite(quantity) || quantity < 1) throw new Error(`ITEM_${idx}_QTY`);
+
+        return {
+          price_data: {
+            currency: "eur",
+            product_data: { name },
+            unit_amount: price,
+          },
+          quantity,
+        } satisfies Stripe.Checkout.SessionCreateParams.LineItem;
+      });
+
+      const session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        line_items: lineItems,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+      });
+
+      res.set("Access-Control-Allow-Origin", "*");
+      res.status(200).json({ url: session.url, sessionId: session.id });
+    } catch (error) {
+      console.error("createCheckoutSession error", error);
+      res.status(500).json({ error: "create session failed" });
+    }
+  }
+);
+
 function formatItems(items: Stripe.LineItem[]) {
   return items.map((item) => ({
     name: item.description ?? item.price?.nickname ?? "Article",
