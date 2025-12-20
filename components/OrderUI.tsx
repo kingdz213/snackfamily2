@@ -53,28 +53,31 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   }, [isOrderModalOpen, selectedItem]);
 
   const handleSupplementToggle = (suppName: string) => {
-    if (selectedSupplements.includes(suppName)) {
-      setSelectedSupplements(selectedSupplements.filter(s => s !== suppName));
-    } else {
-      setSelectedSupplements([...selectedSupplements, suppName]);
-    }
+    setSelectedSupplements((prev) =>
+      prev.includes(suppName)
+        ? prev.filter(s => s !== suppName)
+        : [...prev, suppName]
+    );
   };
 
   const handleVeggieToggle = (vegName: string) => {
-    if (selectedVeggies.includes(vegName)) {
-        setSelectedVeggies(selectedVeggies.filter(v => v !== vegName));
-    } else {
-        setSelectedVeggies([...selectedVeggies, vegName]);
-    }
+    setSelectedVeggies((prev) =>
+      prev.includes(vegName)
+        ? prev.filter(v => v !== vegName)
+        : [...prev, vegName]
+    );
   };
+
+  const getSupplementPrice = (name: string) => SUPPLEMENTS.find((sup) => sup.name === name)?.price ?? 0;
+  const supplementLabelPrice = SUPPLEMENTS[0]?.price ?? 0;
 
   const getCurrentItemPrice = () => {
     if (!selectedItem) return 0;
-    let base = variant === 'Solo' && selectedItem.priceSecondary 
-        ? Number(selectedItem.priceSecondary) 
+    let base = variant === 'Solo' && selectedItem.priceSecondary
+        ? Number(selectedItem.priceSecondary)
         : Number(selectedItem.price);
-    
-    const suppsCost = selectedSupplements.length * 0.80;
+
+    const suppsCost = selectedSupplements.reduce((total, name) => total + getSupplementPrice(name), 0);
     return base + suppsCost;
   };
 
@@ -212,24 +215,24 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                        </div>
                    )}
 
-                   {selectedCategory.hasSupplements && (
-                       <div className="bg-white p-4 rounded border border-gray-200 shadow-sm">
-                           <h4 className="font-bold text-snack-black uppercase mb-3 text-sm tracking-wider flex items-center gap-2">
-                               <span className="w-2 h-2 bg-snack-gold rounded-full"></span> Suppléments (+0.80€)
-                           </h4>
-                           <div className="grid grid-cols-2 gap-2">
-                               {SUPPLEMENTS.map(sup => (
-                                   <label key={sup.name} className={`flex items-center justify-between cursor-pointer select-none p-3 border rounded transition-all ${selectedSupplements.includes(sup.name) ? 'border-snack-gold bg-yellow-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
-                                       <div className="flex items-center space-x-2">
-                                            <input type="checkbox" checked={selectedSupplements.includes(sup.name)} onChange={() => handleSupplementToggle(sup.name)} className="accent-snack-gold w-4 h-4" />
-                                            <span className="text-sm font-bold text-snack-black">{sup.name}</span>
-                                       </div>
-                                       <span className="text-xs font-bold text-snack-gold bg-black px-1.5 py-0.5 rounded">+0.80€</span>
-                                   </label>
-                               ))}
-                           </div>
-                       </div>
-                   )}
+                  {selectedCategory.hasSupplements && (
+                      <div className="bg-white p-4 rounded border border-gray-200 shadow-sm">
+                          <h4 className="font-bold text-snack-black uppercase mb-3 text-sm tracking-wider flex items-center gap-2">
+                              <span className="w-2 h-2 bg-snack-gold rounded-full"></span> Suppléments (+{supplementLabelPrice.toFixed(2)}€)
+                          </h4>
+                          <div className="grid grid-cols-2 gap-2">
+                              {SUPPLEMENTS.map(sup => (
+                                  <label key={sup.name} className={`flex items-center justify-between cursor-pointer select-none p-3 border rounded transition-all ${selectedSupplements.includes(sup.name) ? 'border-snack-gold bg-yellow-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
+                                      <div className="flex items-center space-x-2">
+                                           <input type="checkbox" checked={selectedSupplements.includes(sup.name)} onChange={() => handleSupplementToggle(sup.name)} className="accent-snack-gold w-4 h-4" />
+                                           <span className="text-sm font-bold text-snack-black">{sup.name}</span>
+                                      </div>
+                                      <span className="text-xs font-bold text-snack-gold bg-black px-1.5 py-0.5 rounded">+{sup.price.toFixed(2)}€</span>
+                                  </label>
+                              ))}
+                          </div>
+                      </div>
+                  )}
                 </div>
 
                 <div className="p-5 border-t border-gray-200 bg-white flex items-center gap-4 shadow-up-lg">
@@ -302,14 +305,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                             <ShoppingBag size={64} className="mb-4 opacity-20" />
                             <p className="text-lg font-medium">Votre panier est vide</p>
                             <button onClick={closeCart} className="mt-4 text-snack-gold underline font-bold uppercase text-sm">Continuer mes achats</button>
-                            <div className="mt-12 text-center">
-                                <button 
-                                  onClick={() => runDevTest()}
-                                  className="text-xs text-gray-300 hover:text-red-500 underline"
-                                >
-                                  Test paiement (DEV)
-                                </button>
-                            </div>
+                            {import.meta.env.DEV && (
+                              <div className="mt-12 text-center">
+                                  <button
+                                    onClick={() => runDevTest()}
+                                    className="text-xs text-gray-300 hover:text-red-500 underline"
+                                  >
+                                    Test paiement (DEV)
+                                  </button>
+                              </div>
+                            )}
                         </div>
                     ) : (
                         cartItems.map((item) => (
@@ -344,14 +349,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         >
                             {isCheckingOut ? (<span>Chargement...</span>) : (<><CreditCard size={24} className="group-hover:scale-110 transition-transform" /><span>Payer avec Stripe</span></>)}
                         </button>
-                        <div className="mt-4 text-center">
-                            <button 
-                              onClick={() => runDevTest()}
-                              className="text-xs text-gray-300 hover:text-red-500 underline"
-                            >
-                              Test paiement (DEV)
-                            </button>
-                        </div>
+                        {import.meta.env.DEV && (
+                          <div className="mt-4 text-center">
+                              <button
+                                onClick={() => runDevTest()}
+                                className="text-xs text-gray-300 hover:text-red-500 underline"
+                              >
+                                Test paiement (DEV)
+                              </button>
+                          </div>
+                        )}
                     </div>
                 )}
             </motion.div>
