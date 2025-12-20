@@ -152,7 +152,6 @@ function App() {
         cartItems={cartItems}
         removeFromCart={removeFromCart}
         clearCart={clearCart}
-        isCommanderPage={currentPage === 'commander'}
       />
     </div>
   );
