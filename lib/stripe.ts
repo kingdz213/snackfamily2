@@ -9,10 +9,14 @@ export interface CheckoutItem {
 const STRIPE_KEY = (import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined)?.trim();
 
 function resolveWorkerUrl() {
-  const raw = (import.meta.env.VITE_WORKER_URL as string | undefined)?.trim();
-  const fallback = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
+  const rawCandidates = [
+    (import.meta.env.VITE_WORKER_URL as string | undefined)?.trim(),
+    // Compatibilité legacy : ancien nom d'env utilisé en prod
+    (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.trim(),
+    "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev",
+  ].filter(Boolean) as string[];
 
-  const base = raw || fallback;
+  const base = rawCandidates[0];
   const trimmed = base.replace(/\/+$/, "");
 
   if (trimmed.endsWith("/create-checkout-session")) return trimmed;
@@ -26,12 +30,18 @@ export const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : Promise.resol
 
 function safeOrigin() {
   const envOrigin = (import.meta.env.VITE_PUBLIC_ORIGIN as string | undefined)?.trim();
-  if (envOrigin) return envOrigin;
+  if (envOrigin) return envOrigin.replace(/^http:\/\//, "https://");
 
-  const o = window.location.origin;
-  if (o?.startsWith("http://snackfamily2.eu")) return "https://snackfamily2.eu";
-  if (o && o !== "null" && o !== "about:blank") return o;
+  const { origin, hostname } = window.location;
 
+  // Forcer le https sur le domaine officiel pour éviter les mixed-content en prod
+  if (hostname === "snackfamily2.eu" || hostname === "www.snackfamily2.eu") {
+    return `https://${hostname}`;
+  }
+
+  if (origin && origin !== "null" && origin !== "about:blank") return origin;
+
+  // Fallback sûr (évite about:blank)
   return "https://snackfamily2.eu";
 }
 
@@ -45,19 +55,20 @@ export async function startCheckout(items: CheckoutItem[]) {
   if (!STRIPE_KEY) {
     console.error("Missing VITE_STRIPE_PUBLIC_KEY");
     console.groupEnd();
-    throw new Error("Clé Stripe manquante sur cette version (Preview/Prod).");
+    throw new Error("MISSING_STRIPE_KEY: Clé Stripe manquante sur cette version (Preview/Prod).");
   }
 
   if (!Array.isArray(items) || items.length === 0) {
     console.error("No items");
     console.groupEnd();
-    throw new Error("Panier vide.");
+    throw new Error("CART_EMPTY: Panier vide.");
   }
 
   const payload = {
     items: items.map((it) => ({
       name: String(it.name ?? "").trim(),
       price: Math.round(Number(it.price)), // cents integer
+      unitAmount: Math.round(Number(it.price)), // compat worker qui attendrait unit_amount
       quantity: Math.round(Number(it.quantity)),
     })),
     successUrl: `${origin}/success`,
@@ -66,17 +77,25 @@ export async function startCheckout(items: CheckoutItem[]) {
 
   console.log("Payload:", payload);
 
-  const res = await fetch(WORKER_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  let res: Response;
+  try {
+    res = await fetch(WORKER_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.groupEnd();
+    throw new Error(`WORKER_FETCH: Impossible d’appeler le backend (${(err as Error)?.message || err}).`);
+  }
 
   const raw = await res.text().catch(() => "");
+  const contentType = res.headers.get("content-type") || "";
   console.log("HTTP:", res.status);
+  console.log("Content-Type:", contentType);
   console.log("Raw:", raw);
 
   if (!res.ok) {
@@ -89,7 +108,20 @@ export async function startCheckout(items: CheckoutItem[]) {
     }
     console.error("Worker returned error", errorDetail || "(empty body)");
     console.groupEnd();
-    throw new Error(`Worker error (${res.status}): ${errorDetail || "Réponse vide"}`);
+    const code = res.status === 404 ? "WORKER_404" : `WORKER_${res.status}`;
+    throw new Error(`${code}: ${errorDetail || "Réponse vide"}`);
+  }
+
+  const looksLikeHtml =
+    contentType.includes("text/html") ||
+    raw.trimStart().toLowerCase().startsWith("<!doctype html") ||
+    raw.trimStart().toLowerCase().startsWith("<html");
+
+  if (looksLikeHtml) {
+    console.groupEnd();
+    throw new Error(
+      "WORKER_HTML: Le backend de paiement renvoie une page HTML (Cloudflare Access / mauvaise URL ?). L’endpoint doit être public et retourner du JSON."
+    );
   }
 
   let data: any = null;
@@ -97,7 +129,7 @@ export async function startCheckout(items: CheckoutItem[]) {
     data = raw ? JSON.parse(raw) : null;
   } catch {
     console.groupEnd();
-    throw new Error("Réponse Worker non-JSON (probablement HTML 404/CORS/Access)");
+    throw new Error("WORKER_NON_JSON: Réponse Worker non-JSON (probablement HTML 404/CORS/Access)");
   }
 
   console.log("Parsed:", data);
@@ -113,7 +145,7 @@ export async function startCheckout(items: CheckoutItem[]) {
     const stripe = await stripePromise;
     if (!stripe) {
       console.groupEnd();
-      throw new Error("Stripe n’a pas pu être chargé.");
+      throw new Error("STRIPE_LOAD: Stripe n’a pas pu être chargé.");
     }
     const { error } = await stripe.redirectToCheckout({ sessionId: data.sessionId });
     console.groupEnd();
@@ -122,7 +154,7 @@ export async function startCheckout(items: CheckoutItem[]) {
   }
 
   console.groupEnd();
-  throw new Error("Worker: aucune url/sessionId retournée.");
+  throw new Error("WORKER_EMPTY: aucune url/sessionId retournée.");
 }
 
 export async function runDevTest() {
