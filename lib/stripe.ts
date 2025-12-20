@@ -94,6 +94,7 @@ export async function startCheckout(items: CheckoutItem[], customer?: Record<str
  * ⚠️ Remplace "TEST_ITEM_ID" par un ID existant dans ton menu côté Worker.
  */
 export async function runDevTest() {
-  const testItems: CheckoutItem[] = [{ id: "TEST_ITEM_ID", quantity: 1 }];
+  const testId = envStr("VITE_DEV_TEST_ITEM_ID") || "TEST_ITEM_ID";
+  const testItems: CheckoutItem[] = [{ id: testId, quantity: 1 }];
   return startCheckout(testItems);
 }
