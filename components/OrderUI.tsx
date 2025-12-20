@@ -39,6 +39,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [variant, setVariant] = useState<'Menu/Frites' | 'Solo'>('Menu/Frites');
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOrderModalOpen) {
@@ -102,6 +103,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const handleStripeCheckout = async () => {
     if (cartItems.length === 0) return;
     setIsCheckingOut(true);
+    setCheckoutError(null);
 
     try {
         const checkoutItems = cartItems.map(item => {
@@ -126,6 +128,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         // Page redirects on success
     } catch (error) {
         console.error("Checkout failed", error);
+        const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
+        setCheckoutError(message);
     } finally {
         setIsCheckingOut(false);
     }
@@ -357,6 +361,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         >
                             {isCheckingOut ? (<span>Chargement...</span>) : (<><CreditCard size={24} className="group-hover:scale-110 transition-transform" /><span>Payer avec Stripe</span></>)}
                         </button>
+                        {checkoutError && (
+                          <p className="mt-3 text-sm text-red-600 text-center font-semibold">
+                            {checkoutError}
+                          </p>
+                        )}
                         {import.meta.env.DEV && (
                           <div className="mt-4 text-center">
                               <button
