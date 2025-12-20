@@ -50,7 +50,10 @@ export async function startCheckout(items: CheckoutItem[]) {
 
     if (data?.sessionId) {
       const stripe = await stripePromise;
-      if (!stripe) throw new Error("Stripe failed to load");
+      if (!stripe) {
+        alert("Clé Stripe publique manquante (VITE_STRIPE_PUBLIC_KEY) ou Stripe indisponible.");
+        throw new Error("Stripe failed to load");
+      }
       const { error } = await stripe.redirectToCheckout({ sessionId: data.sessionId });
       if (error) {
         throw error;
