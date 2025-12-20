@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { startCheckout, runDevTest } from '../lib/stripe';
+import { Portal } from './Portal';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -133,24 +133,23 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   const cartTotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
-  const portalTarget = typeof document !== 'undefined' ? document.body : null;
-
   return (
     <>
       {/* --- ORDER MODAL --- */}
       <AnimatePresence>
-        {isOrderModalOpen && selectedItem && selectedCategory && portalTarget && createPortal(
-          <div className="fixed inset-0 z-[1000] flex items-end md:items-center justify-center pointer-events-none">
-            <motion.div
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className="absolute inset-0 bg-black/80 backdrop-blur-sm pointer-events-auto"
-                onClick={closeOrderModal}
-            />
-            <motion.div
-                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden z-[1001]"
-            >
+        {isOrderModalOpen && selectedItem && selectedCategory && (
+          <Portal>
+            <div className="fixed inset-0 flex items-end md:items-center justify-center pointer-events-none">
+              <motion.div
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  className="absolute inset-0 bg-black/80 backdrop-blur-sm pointer-events-auto z-[9998]"
+                  onClick={closeOrderModal}
+              />
+              <motion.div
+                  initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                  className="bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col pointer-events-auto overflow-hidden z-[9999]"
+              >
                 <div className="bg-snack-black text-white p-5 flex justify-between items-center">
                    <div>
                        <h3 className="font-display font-bold text-2xl uppercase tracking-wide">{selectedItem.name}</h3>
@@ -248,26 +247,27 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         <span>{(getCurrentItemPrice() * quantity).toFixed(2)} €</span>
                     </button>
                 </div>
-            </motion.div>
-          </div>,
-          portalTarget
+              </motion.div>
+            </div>
+          </Portal>
         )}
       </AnimatePresence>
 
       {/* --- CART DRAWER --- */}
       <AnimatePresence>
-        {isCartOpen && portalTarget && createPortal(
-          <>
-            <motion.div
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1000]"
-                onClick={closeCart}
-            />
-            <motion.div
-                initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
-                transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl z-[1010] flex flex-col relative"
-            >
+        {isCartOpen && (
+          <Portal>
+            <div className="pointer-events-none">
+              <motion.div
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9998] pointer-events-auto"
+                  onClick={closeCart}
+              />
+              <motion.div
+                  initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+                  transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+                  className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl z-[9999] flex flex-col relative pointer-events-auto"
+              >
                 <AnimatePresence>
                 {isClearConfirmOpen && (
                     <motion.div
@@ -364,9 +364,9 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         )}
                     </div>
                 )}
-            </motion.div>
-          </>,
-          portalTarget
+              </motion.div>
+            </div>
+          </Portal>
         )}
       </AnimatePresence>
     </>
