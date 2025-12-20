@@ -16,7 +16,7 @@ export async function startCheckout(items: CheckoutItem[]) {
 
     const origin = window.location.origin && window.location.origin !== "null" && window.location.origin !== "about:blank"
       ? window.location.origin
-      : "https://snackfamily2.com";
+      : "https://snackfamily2.eu";
 
     const payload = {
       items,
