@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, Truck, Store, User, Phone, MapPin } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { startCheckout, runDevTest } from '../lib/stripe';
@@ -20,6 +20,26 @@ interface OrderUIProps {
   screenW: number;
 }
 
+const MIN_ORDER_EUR = 20;
+const DELIVERY_FEE_EUR = 2.5;
+
+// ✅ Zone livraison (sans API): whitelist codes postaux ~10km autour de Wasmes/Colfontaine
+// Ajuste si tu veux élargir/rétrécir.
+const ALLOWED_POSTAL_CODES = new Set([
+  '7340', // Colfontaine
+  '7390', // Quaregnon
+  '7080', // Frameries
+  '7330', // Saint-Ghislain
+  '7300', // Boussu
+  '7370', // Dour
+  '7000', // Mons
+  '7012', // Jemappes
+  '7011', // Ghlin
+  '7020', // Nimy / Maisières (selon communes)
+]);
+
+type DeliveryMode = 'delivery' | 'pickup';
+
 export const OrderUI: React.FC<OrderUIProps> = ({
   isOrderModalOpen,
   selectedItem,
@@ -39,6 +59,18 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [selectedVeggies, setSelectedVeggies] = useState<string[]>([]);
 
   const [variant, setVariant] = useState<'Menu/Frites' | 'Solo'>('Menu/Frites');
+
+  // ✅ Livraison / Adresse
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('delivery');
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [addressLine, setAddressLine] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [city, setCity] = useState('');
+
+  // ✅ Cash confirmation (sans backend)
+  const [cashConfirm, setCashConfirm] = useState<string | null>(null);
+
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -61,7 +93,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const hiddenCartX = Math.max(safeW, 480);
   const hiddenModalY = Math.max(safeH, 900);
 
-  // ✅ Overlay doit être basé sur les overlays réellement affichés
   const overlayOpen = isCartOpen || (isOrderModalOpen && !!selectedItem && !!selectedCategory);
 
   useEffect(() => {
@@ -117,7 +148,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       setQuantity(1);
       setSelectedSauce('Sans sauce');
       setSelectedSupplements([]);
-      setSelectedVeggies([]); // default: rien
+      setSelectedVeggies([]);
       setVariant('Menu/Frites');
     }
   }, [isOrderModalOpen, selectedItem]);
@@ -151,11 +182,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         ? Number(selectedItem.priceSecondary)
         : Number(selectedItem.price);
 
-    const suppsCost = selectedSupplements.reduce(
-      (total, name) => total + getSupplementPrice(name),
-      0
-    );
-
+    const suppsCost = selectedSupplements.reduce((total, name) => total + getSupplementPrice(name), 0);
     return base + suppsCost;
   };
 
@@ -172,7 +199,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     const newItem: CartItem = {
       id: Math.random().toString(36).substr(2, 9),
       name: selectedItem.name,
-      price: itemTotal,
+      price: itemTotal, // ✅ EUROS dans le panier
       quantity: quantity,
       selectedSauce: selectedCategory?.hasSauces ? selectedSauce : undefined,
       selectedSupplements: selectedCategory?.hasSupplements ? selectedSupplements : undefined,
@@ -186,17 +213,103 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     closeOrderModal();
   };
 
+  // ✅ Totaux
+  const itemsSubtotal = useMemo(
+    () => cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0),
+    [cartItems]
+  );
+
+  const deliveryFee = deliveryMode === 'delivery' ? DELIVERY_FEE_EUR : 0;
+  const grandTotal = itemsSubtotal + deliveryFee;
+
+  // ✅ Minimum sur le sous-total (sans livraison)
+  const minOk = itemsSubtotal >= MIN_ORDER_EUR;
+
+  // ✅ Adresse requise seulement si livraison
+  const cleanedPostal = postalCode.trim().replace(/\s+/g, '');
+  const addressRequiredOk =
+    deliveryMode === 'pickup' ||
+    (
+      customerName.trim().length >= 2 &&
+      customerPhone.trim().length >= 6 &&
+      addressLine.trim().length >= 4 &&
+      cleanedPostal.length >= 4 &&
+      city.trim().length >= 2
+    );
+
+  // ✅ Zone livraison (sans API): on contrôle le code postal
+  const zoneOk =
+    deliveryMode === 'pickup' ||
+    (ALLOWED_POSTAL_CODES.has(cleanedPostal));
+
+  const canPay = cartItems.length > 0 && minOk && addressRequiredOk && zoneOk && !isCheckingOut;
+
+  const buildOrderSummaryText = () => {
+    const lines: string[] = [];
+    lines.push(`Snack Family 2 - Nouvelle commande (${deliveryMode === 'delivery' ? 'Livraison' : 'À emporter'})`);
+    lines.push(`Nom: ${customerName || '-'}`);
+    lines.push(`Téléphone: ${customerPhone || '-'}`);
+
+    if (deliveryMode === 'delivery') {
+      lines.push(`Adresse: ${addressLine}, ${cleanedPostal} ${city}`);
+      lines.push(`Frais livraison: ${DELIVERY_FEE_EUR.toFixed(2)}€`);
+    } else {
+      lines.push(`Retrait sur place`);
+    }
+
+    lines.push(`--- Articles ---`);
+    cartItems.forEach((it) => {
+      lines.push(`- ${it.quantity}x ${it.name} = ${(it.price * it.quantity).toFixed(2)}€`);
+    });
+
+    lines.push(`Sous-total: ${itemsSubtotal.toFixed(2)}€`);
+    lines.push(`Total: ${grandTotal.toFixed(2)}€`);
+    return lines.join('\n');
+  };
+
+  const handleCashOrder = async () => {
+    setCheckoutError(null);
+    setCashConfirm(null);
+
+    if (cartItems.length === 0) {
+      setCheckoutError('Votre panier est vide.');
+      return;
+    }
+    if (!minOk) {
+      setCheckoutError(`Il faut commander un minimum de ${MIN_ORDER_EUR.toFixed(2)}€ (hors livraison).`);
+      return;
+    }
+    if (!addressRequiredOk) {
+      setCheckoutError(`Merci de remplir vos informations ${deliveryMode === 'delivery' ? 'de livraison' : 'client'} avant de valider.`);
+      return;
+    }
+    if (!zoneOk) {
+      setCheckoutError(`Zone de livraison limitée : 10 km autour du snack (7340 et alentours).`);
+      return;
+    }
+
+    const text = buildOrderSummaryText();
+    setCashConfirm(text);
+
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // si clipboard pas dispo, on affiche juste le texte
+    }
+  };
+
   const handleStripeCheckout = async () => {
     setIsCheckingOut(true);
     setCheckoutError(null);
+    setCashConfirm(null);
 
     try {
-      if (cartItems.length === 0) {
-        throw new Error('Votre panier est vide.');
-      }
+      if (cartItems.length === 0) throw new Error('Votre panier est vide.');
+      if (!minOk) throw new Error(`Il faut commander un minimum de ${MIN_ORDER_EUR.toFixed(2)}€ (hors livraison).`);
+      if (!addressRequiredOk) throw new Error(`Merci de remplir vos informations ${deliveryMode === 'delivery' ? 'de livraison' : 'client'} avant de payer.`);
+      if (!zoneOk) throw new Error(`Zone de livraison limitée : 10 km autour du snack (7340 et alentours).`);
 
-      const cartTotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-
+      // ✅ On envoie les items en CENTIMES au Worker (il est “flexible” mais ça reste propre)
       const checkoutItems: Array<{ name: string; price: number; quantity: number }> =
         cartItems.map(item => {
           let description = item.name;
@@ -206,18 +319,23 @@ export const OrderUI: React.FC<OrderUIProps> = ({
             description += ` + ${item.selectedSupplements.join(', ')}`;
           }
 
-          const euros = item.price;
-          const price = toCents(euros);
+          const price = toCents(item.price); // ✅ item.price est en euros
           const quantity = Math.max(1, Math.trunc(item.quantity));
-
           return { name: description, price, quantity };
         });
 
       logDev('[Checkout][DEV] Items envoyés', checkoutItems);
-      logDev('[Checkout][DEV] Total panier', cartTotal.toFixed(2));
-      logDev('[Checkout][DEV] Click Payer avec Stripe');
+      logDev('[Checkout][DEV] Sous-total', itemsSubtotal.toFixed(2));
+      logDev('[Checkout][DEV] DeliveryMode', deliveryMode);
 
-      await startCheckout(checkoutItems);
+      await startCheckout(checkoutItems, {
+        deliveryMode,
+        customer: { name: customerName.trim(), phone: customerPhone.trim() },
+        address: deliveryMode === 'delivery'
+          ? { line1: addressLine.trim(), postalCode: cleanedPostal, city: city.trim(), country: 'BE' }
+          : undefined
+      });
+      // redirection Stripe si OK
     } catch (error) {
       console.error("Checkout failed", error);
       const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
@@ -226,8 +344,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       setIsCheckingOut(false);
     }
   };
-
-  const cartTotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
   return (
     <>
@@ -500,39 +616,173 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       </div>
                     ))
                   )}
+
+                  {/* ✅ Infos livraison + client */}
+                  {cartItems.length > 0 && (
+                    <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-bold uppercase text-sm text-snack-black">Mode</h3>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setDeliveryMode('delivery')}
+                            className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 border ${
+                              deliveryMode === 'delivery' ? 'border-snack-gold bg-snack-gold/10 text-snack-black' : 'border-gray-200 text-gray-500'
+                            }`}
+                          >
+                            <Truck size={16} /> Livraison (+{DELIVERY_FEE_EUR.toFixed(2)}€)
+                          </button>
+                          <button
+                            onClick={() => setDeliveryMode('pickup')}
+                            className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 border ${
+                              deliveryMode === 'pickup' ? 'border-snack-gold bg-snack-gold/10 text-snack-black' : 'border-gray-200 text-gray-500'
+                            }`}
+                          >
+                            <Store size={16} /> À emporter
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3">
+                        <div className="flex items-center gap-2">
+                          <User size={16} className="text-gray-400" />
+                          <input
+                            value={customerName}
+                            onChange={(e) => setCustomerName(e.target.value)}
+                            placeholder="Nom"
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Phone size={16} className="text-gray-400" />
+                          <input
+                            value={customerPhone}
+                            onChange={(e) => setCustomerPhone(e.target.value)}
+                            placeholder="Téléphone"
+                            className="w-full p-3 border border-gray-300 rounded-lg"
+                          />
+                        </div>
+
+                        {deliveryMode === 'delivery' && (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <MapPin size={16} className="text-gray-400" />
+                              <input
+                                value={addressLine}
+                                onChange={(e) => setAddressLine(e.target.value)}
+                                placeholder="Adresse (rue + numéro)"
+                                className="w-full p-3 border border-gray-300 rounded-lg"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <input
+                                value={postalCode}
+                                onChange={(e) => setPostalCode(e.target.value)}
+                                placeholder="Code postal"
+                                className="w-full p-3 border border-gray-300 rounded-lg"
+                              />
+                              <input
+                                value={city}
+                                onChange={(e) => setCity(e.target.value)}
+                                placeholder="Ville"
+                                className="w-full p-3 border border-gray-300 rounded-lg"
+                              />
+                            </div>
+
+                            {!zoneOk && cleanedPostal.length > 0 && (
+                              <div className="flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm">
+                                <AlertTriangle className="mt-0.5" size={18} />
+                                <div>
+                                  <div className="font-bold">Zone de livraison limitée</div>
+                                  <div>Livraison uniquement à ~10 km autour du snack (7340 et alentours).</div>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {!minOk && (
+                          <div className="flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm">
+                            <AlertTriangle className="mt-0.5" size={18} />
+                            <div>
+                              <div className="font-bold">Minimum de commande</div>
+                              <div>Il faut commander un minimum de {MIN_ORDER_EUR.toFixed(2)}€ (hors livraison).</div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {cartItems.length > 0 && (
-                  <div className="p-6 border-t border-gray-200 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)]">
-                    <div className="flex justify-between items-center mb-6">
-                      <span className="text-gray-500 uppercase font-bold tracking-wider text-sm">Total</span>
-                      <span className="text-3xl font-display font-bold text-snack-black">{cartTotal.toFixed(2)} €</span>
+                  <div className="p-6 border-t border-gray-200 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)] space-y-4">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-gray-500 font-bold uppercase tracking-wider">Sous-total</span>
+                        <span className="font-bold text-snack-black">{itemsSubtotal.toFixed(2)} €</span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-gray-500 font-bold uppercase tracking-wider">Livraison</span>
+                        <span className="font-bold text-snack-black">{deliveryFee.toFixed(2)} €</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-500 uppercase font-bold tracking-wider text-sm">Total</span>
+                        <span className="text-3xl font-display font-bold text-snack-black">{grandTotal.toFixed(2)} €</span>
+                      </div>
                     </div>
 
+                    {/* ✅ Paiement Stripe */}
                     <button
                       id="stripe-checkout-btn"
                       onClick={handleStripeCheckout}
-                      disabled={isCheckingOut}
-                      className={`w-full bg-snack-gold text-snack-black py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group ${isCheckingOut ? 'opacity-75 cursor-not-allowed' : 'hover:bg-white hover:border-snack-black hover:border-gray-200'}`}
+                      disabled={!canPay}
+                      className={`w-full py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group ${
+                        canPay ? 'bg-snack-gold text-snack-black hover:bg-white hover:border-snack-black' : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                      }`}
                     >
                       {isCheckingOut ? (
                         <span>Chargement...</span>
                       ) : (
                         <>
                           <CreditCard size={24} className="group-hover:scale-110 transition-transform" />
-                          <span>Payer avec Stripe</span>
+                          <span>Payer en ligne</span>
                         </>
                       )}
                     </button>
 
+                    {/* ✅ Paiement cash */}
+                    <button
+                      onClick={handleCashOrder}
+                      disabled={cartItems.length === 0 || !minOk || !addressRequiredOk || !zoneOk}
+                      className={`w-full py-3 rounded-lg font-bold uppercase tracking-wide border transition-all ${
+                        (cartItems.length > 0 && minOk && addressRequiredOk && zoneOk)
+                          ? 'bg-snack-black text-white hover:bg-white hover:text-snack-black hover:border-snack-black'
+                          : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                      }`}
+                    >
+                      Payer en cash
+                    </button>
+
                     {checkoutError && (
-                      <p className="mt-3 text-sm text-red-600 text-center font-semibold">
+                      <p className="text-sm text-red-600 text-center font-semibold">
                         {checkoutError}
                       </p>
                     )}
 
+                    {cashConfirm && (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm">
+                        <div className="font-bold mb-1">Commande cash prête ✅</div>
+                        <div className="text-gray-700">
+                          Le récapitulatif a été copié (si possible). Tu peux aussi le copier ci-dessous :
+                        </div>
+                        <pre className="mt-2 whitespace-pre-wrap text-xs bg-white border border-green-200 rounded p-2 max-h-44 overflow-auto">
+{cashConfirm}
+                        </pre>
+                      </div>
+                    )}
+
                     {dev && (
-                      <div className="mt-4 text-center">
+                      <div className="text-center">
                         <button
                           onClick={() => runDevTest()}
                           className="text-xs text-gray-300 hover:text-red-500 underline"
