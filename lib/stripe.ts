@@ -8,6 +8,19 @@ export interface CheckoutItem {
 
 const STRIPE_KEY = (import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined)?.trim();
 
+const logDev = (...args: any[]) => {
+  if (import.meta.env.DEV) console.log(...args);
+};
+const logDevGroup = (label: string) => {
+  if (import.meta.env.DEV) console.group(label);
+};
+const logDevGroupEnd = () => {
+  if (import.meta.env.DEV) console.groupEnd();
+};
+const logDevWarn = (...args: any[]) => {
+  if (import.meta.env.DEV) console.warn(...args);
+};
+
 function normalizeEndpoint(base: string) {
   const trimmed = base.replace(/\/+$/, "");
   if (trimmed.endsWith("/create-checkout-session")) return trimmed;
@@ -67,26 +80,26 @@ function safeOrigin() {
 }
 
 export async function startCheckout(items: CheckoutItem[]) {
-  console.group("🧾 startCheckout");
-  console.log("Worker URL:", WORKER_URL);
+  logDevGroup("🧾 startCheckout");
+  logDev("Worker URL:", WORKER_URL);
 
   const origin = safeOrigin();
-  console.log("Origin:", origin);
+  logDev("Origin:", origin);
 
   if (!STRIPE_KEY) {
     console.error("Missing VITE_STRIPE_PUBLIC_KEY");
-    console.groupEnd();
+    logDevGroupEnd();
     throw new Error("MISSING_STRIPE_KEY: Clé Stripe manquante sur cette version (Preview/Prod).");
   }
 
   if (!Array.isArray(items) || items.length === 0) {
     console.error("No items");
-    console.groupEnd();
+    logDevGroupEnd();
     throw new Error("CART_EMPTY: Panier vide.");
   }
 
   if (!WORKER_URL) {
-    console.groupEnd();
+    logDevGroupEnd();
     throw new Error(
       "MISSING_WORKER_URL: Aucun endpoint Stripe n'est configuré (VITE_CHECKOUT_API_URL / VITE_WORKER_URL / VITE_WORKER_BASE_URL)."
     );
@@ -116,10 +129,11 @@ export async function startCheckout(items: CheckoutItem[]) {
     cancelUrl: `${origin}/cancel`,
   };
 
-  console.log("Payload:", payload);
+  logDev("Payload:", payload);
 
   let res: Response;
   try {
+    logDev("[Checkout][DEV] Requête Worker", WORKER_URL);
     res = await fetch(WORKER_URL, {
       method: "POST",
       headers: {
@@ -129,15 +143,15 @@ export async function startCheckout(items: CheckoutItem[]) {
       body: JSON.stringify(payload),
     });
   } catch (err) {
-    console.groupEnd();
+    logDevGroupEnd();
     throw new Error(`WORKER_FETCH: Impossible d’appeler le backend (${(err as Error)?.message || err}).`);
   }
 
   const raw = await res.text().catch(() => "");
   const contentType = res.headers.get("content-type") || "";
-  console.log("HTTP:", res.status);
-  console.log("Content-Type:", contentType);
-  console.log("Raw:", raw);
+  logDev("HTTP:", res.status);
+  logDev("Content-Type:", contentType);
+  logDev("Raw:", raw);
 
   if (!res.ok) {
     let errorDetail = raw;
@@ -145,10 +159,10 @@ export async function startCheckout(items: CheckoutItem[]) {
       const parsed = raw ? JSON.parse(raw) : null;
       errorDetail = parsed?.error || parsed?.message || raw;
     } catch (e) {
-      console.warn("Worker error body not JSON", e);
+      logDevWarn("Worker error body not JSON", e);
     }
     console.error("Worker returned error", errorDetail || "(empty body)");
-    console.groupEnd();
+    logDevGroupEnd();
     const code = res.status === 404 ? "WORKER_404" : `WORKER_${res.status}`;
     throw new Error(`${code}: ${errorDetail || "Réponse vide"}`);
   }
@@ -159,7 +173,7 @@ export async function startCheckout(items: CheckoutItem[]) {
     raw.trimStart().toLowerCase().startsWith("<html");
 
   if (looksLikeHtml) {
-    console.groupEnd();
+    logDevGroupEnd();
     throw new Error(
       "WORKER_HTML: Le backend de paiement renvoie une page HTML (Cloudflare Access / mauvaise URL ?). L’endpoint doit être public et retourner du JSON."
     );
@@ -171,7 +185,7 @@ export async function startCheckout(items: CheckoutItem[]) {
   try {
     data = raw ? JSON.parse(raw) : null;
   } catch {
-    console.groupEnd();
+    logDevGroupEnd();
     const code = isLikelyJson ? "WORKER_NON_JSON" : "WORKER_HTML";
     const message =
       code === "WORKER_HTML"
@@ -180,11 +194,13 @@ export async function startCheckout(items: CheckoutItem[]) {
     throw new Error(message);
   }
 
-  console.log("Parsed:", data);
+  logDev("Parsed:", data);
 
   // ✅ Worker peut renvoyer url ou sessionId
   if (data?.url) {
-    console.groupEnd();
+    logDev("[Checkout][DEV] Réponse Worker (url)", data.url);
+    logDev("[Checkout][DEV] Redirection", data.url);
+    logDevGroupEnd();
     window.location.href = data.url;
     return;
   }
@@ -192,16 +208,17 @@ export async function startCheckout(items: CheckoutItem[]) {
   if (data?.sessionId) {
     const stripe = await stripePromise;
     if (!stripe) {
-      console.groupEnd();
+      logDevGroupEnd();
       throw new Error("STRIPE_LOAD: Stripe n’a pas pu être chargé.");
     }
     const { error } = await stripe.redirectToCheckout({ sessionId: data.sessionId });
-    console.groupEnd();
+    logDev("[Checkout][DEV] Redirection via sessionId", data.sessionId);
+    logDevGroupEnd();
     if (error) throw error;
     return;
   }
 
-  console.groupEnd();
+  logDevGroupEnd();
   throw new Error("WORKER_EMPTY: aucune url/sessionId retournée.");
 }
 

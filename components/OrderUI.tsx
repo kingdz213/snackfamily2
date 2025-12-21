@@ -119,6 +119,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       variant: selectedItem.priceSecondary ? variant : undefined
     };
 
+    if (import.meta.env.DEV) {
+      console.log('[Checkout][DEV] Ajout panier', { name: newItem.name, quantity: newItem.quantity, total: itemTotal * quantity });
+    }
+
     addToCart(newItem);
     closeOrderModal();
   };
@@ -146,6 +150,12 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                 quantity: Math.max(1, Math.round(item.quantity))
             };
         });
+
+        if (import.meta.env.DEV) {
+          console.log('[Checkout][DEV] Items envoyés', checkoutItems);
+          console.log('[Checkout][DEV] Total panier', cartTotal.toFixed(2));
+          console.log('[Checkout][DEV] Click Payer avec Stripe');
+        }
 
         await startCheckout(checkoutItems);
         // Page redirects on success
