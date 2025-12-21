@@ -39,6 +39,11 @@ const getPageFromLocation = (): Page => {
   return 'home';
 };
 
+const getWindowWidth = () => {
+  if (typeof window === 'undefined') return 0;
+  return Number.isFinite(window.innerWidth) ? window.innerWidth : 0;
+};
+
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>(getPageFromLocation());
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -46,9 +51,7 @@ function App() {
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<MenuCategory | null>(null);
-  const [screenW, setScreenW] = useState(
-    () => (typeof window !== 'undefined' ? window.innerWidth : 1200)
-  );
+  const [screenW, setScreenW] = useState<number>(() => getWindowWidth());
 
   // Scroll en haut à chaque changement de page
   useEffect(() => {
@@ -57,7 +60,7 @@ function App() {
 
   useEffect(() => {
     const updateSize = () => {
-      const width = typeof window !== 'undefined' ? window.innerWidth : 1200;
+      const width = getWindowWidth();
       setScreenW(width);
       console.log('[App] screenW updated', width);
     };
