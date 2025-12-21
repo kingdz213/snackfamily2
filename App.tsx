@@ -46,11 +46,31 @@ function App() {
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<MenuCategory | null>(null);
+  const [screenW, setScreenW] = useState(
+    () => (typeof window !== 'undefined' ? window.innerWidth : 1200)
+  );
 
   // Scroll en haut à chaque changement de page
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [currentPage]);
+
+  useEffect(() => {
+    const updateSize = () => {
+      const width = typeof window !== 'undefined' ? window.innerWidth : 1200;
+      setScreenW(width);
+      console.log('[App] screenW updated', width);
+    };
+
+    window.addEventListener('resize', updateSize);
+    window.addEventListener('orientationchange', updateSize);
+    updateSize();
+
+    return () => {
+      window.removeEventListener('resize', updateSize);
+      window.removeEventListener('orientationchange', updateSize);
+    };
+  }, []);
 
   useEffect(() => {
     const handlePopstate = () => {
@@ -74,6 +94,16 @@ function App() {
     setSelectedItem(null);
     setSelectedCategory(null);
 
+    if (page === 'commander') {
+      console.log('[App] Navigating to commander, closing overlays');
+      setIsCartOpen(false);
+    }
+
+    if (page === 'home') {
+      console.log('[App] Navigating to home, cleaning overlays');
+      setIsCartOpen(false);
+    }
+
     // Si on va sur la page Commander, on s'assure que le panier est fermé initialement
     if (page === 'commander') {
       setIsCartOpen(false);
@@ -83,6 +113,14 @@ function App() {
   const addToCart = (item: CartItem) => {
     setCartItems(prev => [...prev, item]);
     setIsCartOpen(true); // Ouvre le panier automatiquement après ajout
+  };
+
+  const toggleCart = () => {
+    setIsCartOpen((v) => {
+      const next = !v;
+      console.log('[App] Cart icon clicked, toggling cart to', next);
+      return next;
+    });
   };
 
   const removeFromCart = (id: string) => {
@@ -105,6 +143,14 @@ function App() {
     setSelectedCategory(null);
   };
 
+  useEffect(() => {
+    console.log('[App] isCartOpen', isCartOpen, 'isOrderModalOpen', isOrderModalOpen, 'screenW', screenW);
+    if (!isCartOpen && !isOrderModalOpen) {
+      document.body.style.removeProperty('overflow');
+      document.body.style.removeProperty('filter');
+    }
+  }, [isCartOpen, isOrderModalOpen, screenW]);
+
   // Rendu conditionnel des pages
   const renderPage = () => {
     switch (currentPage) {
@@ -126,7 +172,7 @@ function App() {
         currentPage={currentPage}
         navigateTo={navigateTo}
         cartCount={cartItems.reduce((acc, item) => acc + item.quantity, 0)}
-        toggleCart={() => setIsCartOpen((v) => !v)}
+        toggleCart={toggleCart}
       />
 
       <main className="flex-grow pt-24">
@@ -155,6 +201,7 @@ function App() {
         cartItems={cartItems}
         removeFromCart={removeFromCart}
         clearCart={clearCart}
+        screenW={screenW}
       />
     </div>
   );

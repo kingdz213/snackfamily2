@@ -17,6 +17,7 @@ interface OrderUIProps {
   cartItems: CartItem[];
   removeFromCart: (id: string) => void;
   clearCart: () => void;
+  screenW: number;
 }
 
 export const OrderUI: React.FC<OrderUIProps> = ({
@@ -29,7 +30,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   closeCart,
   cartItems,
   removeFromCart,
-  clearCart
+  clearCart,
+  screenW
 }) => {
   const [quantity, setQuantity] = useState(1);
   const [selectedSauce, setSelectedSauce] = useState<string>('Sans sauce');
@@ -40,15 +42,17 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  const [screenW, setScreenW] = useState(
-    () => (typeof window !== 'undefined' ? window.innerWidth : 1200)
-  );
+  const hiddenCartX = Math.max(screenW, 480);
+  const hiddenModalY = Math.max(typeof window !== 'undefined' ? window.innerHeight : 900, 900);
+  const showOverlay = isCartOpen || (isOrderModalOpen && selectedItem && selectedCategory);
 
   useEffect(() => {
-    const handleResize = () => setScreenW(window.innerWidth);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    console.log('[OrderUI] isCartOpen', isCartOpen, 'isOrderModalOpen', isOrderModalOpen, 'screenW', screenW);
+    if (!showOverlay) {
+      document.body.style.removeProperty('overflow');
+      document.body.style.removeProperty('filter');
+    }
+  }, [isCartOpen, isOrderModalOpen, screenW, showOverlay]);
 
   useEffect(() => {
     if (isOrderModalOpen) {
@@ -79,6 +83,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   const getSupplementPrice = (name: string) => SUPPLEMENTS.find((sup) => sup.name === name)?.price ?? 0;
   const supplementLabelPrice = SUPPLEMENTS[0]?.price ?? 0;
+  const handleOverlayClick = () => {
+    if (isCartOpen) closeCart();
+    if (isOrderModalOpen) closeOrderModal();
+  };
 
   const getCurrentItemPrice = () => {
     if (!selectedItem) return 0;
@@ -148,19 +156,28 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   return (
     <>
+      <AnimatePresence>
+        {showOverlay && (
+          <Portal>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 backdrop-blur-sm"
+              style={{ zIndex: 9998, pointerEvents: showOverlay ? 'auto' : 'none' }}
+              onClick={handleOverlayClick}
+            />
+          </Portal>
+        )}
+      </AnimatePresence>
+
       {/* --- ORDER MODAL --- */}
       <AnimatePresence>
         {isOrderModalOpen && selectedItem && selectedCategory && (
           <Portal>
             <div className="fixed inset-0 flex items-end md:items-center justify-center">
               <motion.div
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-                  style={{ zIndex: 9998 }}
-                  onClick={closeOrderModal}
-              />
-              <motion.div
-                  initial={{ y: '100%' }} animate={{ y: '0%' }} exit={{ y: '100%' }}
+                  initial={{ y: hiddenModalY }} animate={{ y: 0 }} exit={{ y: hiddenModalY }}
                   transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }}
                   className="bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col overflow-hidden"
                   style={{ zIndex: 9999 }}
@@ -274,13 +291,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
           <Portal>
             <div>
               <motion.div
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  className="fixed inset-0 bg-black/60 backdrop-blur-sm"
-                  style={{ zIndex: 9998 }}
-                  onClick={closeCart}
-              />
-              <motion.div
-                  initial={{ x: screenW }} animate={{ x: 0 }} exit={{ x: screenW }}
+                  initial={{ x: hiddenCartX }} animate={{ x: isCartOpen ? 0 : hiddenCartX }} exit={{ x: hiddenCartX }}
                   transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }}
                   className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl flex flex-col relative"
                   style={{ zIndex: 9999 }}
