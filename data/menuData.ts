@@ -1,6 +1,14 @@
-import { MenuCategory } from '../types';
+import { MenuCategory, MenuItem } from '../types';
 
-export const MENU_CATEGORIES: MenuCategory[] = [
+function parsePrice(v: string | number | undefined | null): number | undefined {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
+  if (typeof v !== 'string') return undefined;
+  const cleaned = v.replace('€', '').trim().replace(',', '.');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+const RAW_MENU_CATEGORIES: MenuCategory[] = [
   {
     id: 'assiettes',
     title: '1. Assiettes',
@@ -47,7 +55,7 @@ export const MENU_CATEGORIES: MenuCategory[] = [
     description: 'Sandwichs froids et chauds.',
     hasSauces: true,
     hasVeggies: true,
-    hasSupplements: true, 
+    hasSupplements: true,
     items: [
       { name: 'Sandwich Jambon', price: 4.00 },
       { name: 'Sandwich Fromage', price: 4.00 },
@@ -121,7 +129,7 @@ export const MENU_CATEGORIES: MenuCategory[] = [
     id: 'snacks',
     title: '7. Snacks',
     description: 'Snacks frits à la pièce.',
-    hasSauces: false, 
+    hasSauces: false,
     hasVeggies: false,
     hasSupplements: true,
     items: [
@@ -209,3 +217,33 @@ export const MENU_CATEGORIES: MenuCategory[] = [
     ]
   }
 ];
+
+const sanitizeItem = (item: MenuItem, categoryTitle: string): MenuItem => {
+  const price = parsePrice(item.price);
+  const priceSecondary = item.priceSecondary !== undefined
+    ? parsePrice(item.priceSecondary)
+    : undefined;
+
+  const hasInvalidPrimary = price === undefined;
+  const hasInvalidSecondary = item.priceSecondary !== undefined && priceSecondary === undefined;
+  const hasInvalidPrice = hasInvalidPrimary || hasInvalidSecondary;
+
+  if (import.meta.env.DEV && hasInvalidPrice) {
+    console.warn(`[menuData] Prix invalide pour "${item.name}" dans "${categoryTitle}"`, {
+      price: item.price,
+      priceSecondary: item.priceSecondary,
+    });
+  }
+
+  return {
+    ...item,
+    price: price ?? 0,
+    priceSecondary,
+    unavailable: item.unavailable ?? hasInvalidPrice,
+  };
+};
+
+export const MENU_CATEGORIES: MenuCategory[] = RAW_MENU_CATEGORIES.map((category) => ({
+  ...category,
+  items: category.items.map((item) => sanitizeItem(item, category.title)),
+}));
