@@ -10,18 +10,12 @@ export function Portal({ children }: PortalProps) {
 
   const el = document.getElementById("portal-root");
 
-  // Si portal-root n'existe pas, c'est une erreur de setup HTML.
-  // On crée un fallback pour éviter un crash, et on log en DEV.
   if (!el) {
+    // Pas de fallback en prod => pas de doublons, pas de couches fantômes
     if (import.meta.env.DEV) {
-      console.warn(
-        '[Portal][DEV] #portal-root introuvable dans index.html. Il devrait exister. Création fallback.'
-      );
+      console.warn('[Portal][DEV] #portal-root introuvable. Vérifie index.html.');
     }
-    const fallback = document.createElement("div");
-    fallback.id = "portal-root";
-    document.body.appendChild(fallback);
-    return createPortal(children, fallback);
+    return null;
   }
 
   return createPortal(children, el);
