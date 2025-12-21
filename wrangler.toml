@@ -1,0 +1,8 @@
+name = "snackfamily2-worker"
+main = "cloudflare-worker.ts"
+compatibility_date = "2024-12-12"
+
+# Configure with: wrangler secret put STRIPE_SECRET_KEY
+# DEFAULT_ORIGIN is a safe fallback for checkout URLs
+[vars]
+DEFAULT_ORIGIN = "https://snackfamily2.eu"
