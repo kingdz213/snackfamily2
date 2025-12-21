@@ -3,15 +3,18 @@ import { createPortal } from 'react-dom';
 
 interface PortalProps {
   children: ReactNode;
-  container?: Element | DocumentFragment | null;
 }
 
-export function Portal({ children, container }: PortalProps) {
+export function Portal({ children }: PortalProps) {
   if (typeof document === 'undefined') return null;
 
-  const target = container ?? document.body;
+  let el = document.getElementById('portal-root');
 
-  if (!target) return null;
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'portal-root';
+    document.body.appendChild(el);
+  }
 
-  return createPortal(children, target);
+  return createPortal(children, el);
 }
