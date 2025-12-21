@@ -42,8 +42,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
-  const hiddenCartX = Math.max(screenW, 480);
-  const hiddenModalY = Math.max(typeof window !== 'undefined' ? window.innerHeight : 900, 900);
+  const safeW = Number.isFinite(screenW) && screenW > 0
+    ? screenW
+    : (typeof window !== 'undefined' ? window.innerWidth : 0);
+  const safeH = typeof window !== 'undefined' && Number.isFinite(window.innerHeight)
+    ? window.innerHeight
+    : 0;
+  const hiddenCartX = Math.max(safeW, 480);
+  const hiddenModalY = Math.max(safeH, 900);
   const showOverlay = isCartOpen || (isOrderModalOpen && selectedItem && selectedCategory);
 
   useEffect(() => {
