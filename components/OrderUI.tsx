@@ -104,6 +104,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     return base + suppsCost;
   };
 
+  function toCents(euros: number): number {
+    if (!Number.isFinite(euros)) throw new Error("Prix invalide (NaN/Infinity)");
+    return Math.round(euros * 100);
+  }
+
   const handleAddToCart = () => {
     if (!selectedItem) return;
     const itemTotal = getCurrentItemPrice();
@@ -119,17 +124,24 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       variant: selectedItem.priceSecondary ? variant : undefined
     };
 
+    if (import.meta.env.DEV) {
+      console.log('[Checkout][DEV] Ajout panier', { name: newItem.name, quantity: newItem.quantity, total: itemTotal * quantity });
+    }
+
     addToCart(newItem);
     closeOrderModal();
   };
 
   const handleStripeCheckout = async () => {
-    if (cartItems.length === 0) return;
     setIsCheckingOut(true);
     setCheckoutError(null);
 
     try {
-        const checkoutItems = cartItems.map(item => {
+        if (cartItems.length === 0) {
+          throw new Error('Votre panier est vide.');
+        }
+
+        const checkoutItems: Array<{ name: string; price: number; quantity: number }> = cartItems.map(item => {
             // Build a descriptive name including options for Stripe Line Items
             let description = item.name;
             if (item.variant) description += ` (${item.variant})`;
@@ -138,14 +150,22 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                 description += ` + ${item.selectedSupplements.join(', ')}`;
             }
 
+            const euros = item.price;
+            const price = toCents(euros);
+            const quantity = Math.max(1, Math.trunc(item.quantity));
+
             return {
                 name: description,
-                // IMPORTANT: Stripe expects integer cents.
-                // We round to avoid floating point errors
-                price: Math.round(item.price * 100),
-                quantity: Math.max(1, Math.round(item.quantity))
+                price,
+                quantity
             };
         });
+
+        if (import.meta.env.DEV) {
+          console.log('[Checkout][DEV] Items envoyés', checkoutItems);
+          console.log('[Checkout][DEV] Total panier', cartTotal.toFixed(2));
+          console.log('[Checkout][DEV] Click Payer avec Stripe');
+        }
 
         await startCheckout(checkoutItems);
         // Page redirects on success

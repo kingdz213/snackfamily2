@@ -1,215 +1,164 @@
-import { loadStripe } from "@stripe/stripe-js";
-
+// lib/stripe.ts
 export interface CheckoutItem {
   name: string;
   price: number; // cents (integer)
   quantity: number;
 }
 
-const STRIPE_KEY = (
-  (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined) ||
-  (import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined)
-)
-  ?.trim();
+type WorkerResponse = { url?: string; error?: string; details?: unknown };
 
-function normalizeEndpoint(base: string) {
-  const trimmed = base.replace(/\/+$/, "");
-  if (trimmed.endsWith("/create-checkout-session")) return trimmed;
-  return `${trimmed}/create-checkout-session`;
+const DEFAULT_WORKER_BASE_URL =
+  "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
+
+const dev = import.meta.env.DEV;
+
+// Logs DEV (sans casser la prod)
+const logDev = (...args: any[]) => dev && console.log(...args);
+const logDevGroup = (label: string) => dev && console.group(label);
+const logDevGroupEnd = () => dev && console.groupEnd();
+const logDevWarn = (...args: any[]) => dev && console.warn(...args);
+
+function normalizeBaseUrl(base: string): string {
+  return base.replace(/\/+$/, "");
 }
 
-function resolveWorkerUrl() {
-  const rawCandidates = [
-    (import.meta.env.VITE_CHECKOUT_API_URL as string | undefined)?.trim(),
-    (import.meta.env.VITE_WORKER_URL as string | undefined)?.trim(),
-    // Compatibilité legacy : ancien nom d'env utilisé en prod
-    (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.trim(),
-  ].filter(Boolean) as string[];
-
-  if (rawCandidates.length === 0) {
-    if (import.meta.env.DEV) {
-      return normalizeEndpoint("https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev");
-    }
-    throw new Error(
-      "MISSING_WORKER_URL: Aucun endpoint Stripe n'est configuré (VITE_CHECKOUT_API_URL / VITE_WORKER_URL / VITE_WORKER_BASE_URL)."
-    );
-  }
-
-  return normalizeEndpoint(rawCandidates[0]);
+function envStr(key: string): string | undefined {
+  return (import.meta.env[key] as string | undefined)?.trim();
 }
 
-// ⚠️ En prod, l'URL doit être fournie via l'env. En dev on tolère un fallback public.
-const WORKER_URL = (() => {
-  try {
-    return resolveWorkerUrl();
-  } catch (error) {
-    console.error(error);
-    return "";
-  }
-})();
+/**
+ * Base URL du Worker Cloudflare
+ * Exemple: https://xxxx.workers.dev
+ */
+export function resolveWorkerBaseUrl(): string {
+  const configured = envStr("VITE_WORKER_BASE_URL") || envStr("VITE_WORKER_URL") || envStr("VITE_CHECKOUT_API_URL");
 
-export const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : Promise.resolve(null);
+  if (configured) return normalizeBaseUrl(configured);
 
-function safeOrigin() {
-  const envOrigin = (import.meta.env.VITE_PUBLIC_ORIGIN as string | undefined)?.trim();
-  if (envOrigin) return envOrigin.replace(/^http:\/\//, "https://");
+  // En DEV, on autorise un fallback (pratique pour tester)
+  if (dev) return normalizeBaseUrl(DEFAULT_WORKER_BASE_URL);
 
-  const { origin, hostname } = window.location;
-
-  if (origin.startsWith("http://snackfamily2.eu")) return "https://snackfamily2.eu";
-  if (origin.startsWith("http://www.snackfamily2.eu")) return "https://www.snackfamily2.eu";
-
-  // Forcer le https sur le domaine officiel pour éviter les mixed-content en prod
-  if (hostname === "snackfamily2.eu" || hostname === "www.snackfamily2.eu") {
-    return `https://${hostname}`;
-  }
-
-  if (origin && origin !== "null" && origin !== "about:blank") return origin;
-
-  // Fallback sûr (évite about:blank)
-  return "https://snackfamily2.eu";
+  // En prod, on force à configurer la variable
+  throw new Error(
+    "MISSING_WORKER_BASE_URL: Configure VITE_WORKER_BASE_URL (ex: https://xxxx.workers.dev)"
+  );
 }
 
-export async function startCheckout(items: CheckoutItem[]) {
-  console.group("🧾 startCheckout");
-  console.log("Worker URL:", WORKER_URL);
-
-  const origin = safeOrigin();
-  console.log("Origin:", origin);
-
-  if (!STRIPE_KEY) {
-    console.error("Missing VITE_STRIPE_PUBLIC_KEY / VITE_STRIPE_PUBLISHABLE_KEY");
-    console.groupEnd();
-    throw new Error("MISSING_STRIPE_KEY: Clé Stripe manquante sur cette version (Preview/Prod).");
+/**
+ * Origin public pour construire les success/cancel urls côté backend.
+ * En prod, mets VITE_PUBLIC_ORIGIN=https://snackfamily2.eu
+ */
+export function resolvePublicOrigin(): string {
+  const o = envStr("VITE_PUBLIC_ORIGIN");
+  if (o) return o.replace(/\/+$/, "");
+  // fallback runtime
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin.replace(/\/+$/, "");
   }
+  return "https://example.com";
+}
 
+function validateItems(items: CheckoutItem[]): CheckoutItem[] {
   if (!Array.isArray(items) || items.length === 0) {
-    console.error("No items");
-    console.groupEnd();
     throw new Error("CART_EMPTY: Panier vide.");
   }
 
-  if (!WORKER_URL) {
-    console.groupEnd();
-    throw new Error(
-      "MISSING_WORKER_URL: Aucun endpoint Stripe n'est configuré (VITE_CHECKOUT_API_URL / VITE_WORKER_URL / VITE_WORKER_BASE_URL)."
-    );
-  }
+  return items.map((item, index) => {
+    const name = String(item?.name ?? "").trim();
+    const price = Number(item?.price);
+    const quantity = Number(item?.quantity);
 
-  const validatedItems = items.map((it, idx) => {
-    const name = String(it.name ?? "").trim();
-    const price = Math.round(Number(it.price));
-    const quantity = Math.round(Number(it.quantity));
-
-    if (!name) {
-      throw new Error(`ITEM_${idx}_NAME: Article sans nom`);
-    }
-    if (!Number.isFinite(price) || price <= 0) {
-      throw new Error(`ITEM_${idx}_PRICE: Prix invalide (doit être un entier en centimes > 0)`);
-    }
-    if (!Number.isFinite(quantity) || quantity < 1) {
-      throw new Error(`ITEM_${idx}_QTY: Quantité invalide (>= 1)`);
-    }
+    if (!name) throw new Error(`ITEM_${index}_NAME: Nom manquant`);
+    if (!Number.isInteger(price) || price <= 0)
+      throw new Error(`ITEM_${index}_PRICE: Prix invalide (cents)`);
+    if (!Number.isInteger(quantity) || quantity < 1)
+      throw new Error(`ITEM_${index}_QTY: Quantité invalide`);
 
     return { name, price, quantity };
   });
+}
+
+export async function startCheckout(items: CheckoutItem[]): Promise<void> {
+  logDevGroup("🧾 startCheckout");
+
+  const validatedItems = validateItems(items);
 
   const payload = {
     items: validatedItems,
-    successUrl: `${origin}/success`,
-    cancelUrl: `${origin}/cancel`,
+    origin: resolvePublicOrigin(),
   };
 
-  console.log("Payload:", payload);
+  const base = resolveWorkerBaseUrl();
+  const endpoint = `${base}/create-checkout-session`;
 
-  let res: Response;
+  logDev("endpoint:", endpoint);
+  logDev("payload:", payload);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  let response: Response;
   try {
-    res = await fetch(WORKER_URL, {
+    response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
   } catch (err) {
-    console.groupEnd();
-    throw new Error(`WORKER_FETCH: Impossible d’appeler le backend (${(err as Error)?.message || err}).`);
+    clearTimeout(timeout);
+    logDevGroupEnd();
+    throw new Error(`WORKER_FETCH: ${(err as Error)?.message ?? String(err)}`);
   }
 
-  const raw = await res.text().catch(() => "");
-  const contentType = res.headers.get("content-type") || "";
-  console.log("HTTP:", res.status);
-  console.log("Content-Type:", contentType);
-  console.log("Raw:", raw);
+  clearTimeout(timeout);
 
-  if (!res.ok) {
-    let errorDetail = raw;
+  const contentType = response.headers.get("content-type") || "";
+  const raw = await response.text().catch(() => "");
+
+  logDev("status:", response.status);
+  logDev("content-type:", contentType);
+  logDev("raw:", raw);
+
+  // Erreurs HTTP
+  if (!response.ok) {
+    let detail = raw;
+
     try {
       const parsed = raw ? JSON.parse(raw) : null;
-      errorDetail = parsed?.error || parsed?.message || raw;
+      detail = parsed?.error || parsed?.message || raw;
     } catch (e) {
-      console.warn("Worker error body not JSON", e);
+      logDevWarn("Worker error body not JSON", e);
     }
-    console.error("Worker returned error", errorDetail || "(empty body)");
-    console.groupEnd();
-    const code = res.status === 404 ? "WORKER_404" : `WORKER_${res.status}`;
-    throw new Error(`${code}: ${errorDetail || "Réponse vide"}`);
+
+    logDevGroupEnd();
+    throw new Error(`WORKER_${response.status}: ${detail || "Réponse vide"}`);
   }
 
-  const looksLikeHtml =
-    contentType.includes("text/html") ||
-    raw.trimStart().toLowerCase().startsWith("<!doctype html") ||
-    raw.trimStart().toLowerCase().startsWith("<html");
+  // Doit être du JSON
+  let data: WorkerResponse;
+  try {
+    data = raw ? (JSON.parse(raw) as WorkerResponse) : {};
+  } catch {
+    logDevGroupEnd();
+    throw new Error("WORKER_NON_JSON: Le Worker doit renvoyer du JSON.");
+  }
 
-  if (looksLikeHtml) {
-    console.groupEnd();
+  const url = data?.url;
+
+  if (!url) {
+    logDevGroupEnd();
     throw new Error(
-      "WORKER_HTML: Le backend de paiement renvoie une page HTML (Cloudflare Access / mauvaise URL ?). L’endpoint doit être public et retourner du JSON."
+      `WORKER_EMPTY: aucune url retournée. (réponse: ${raw || "vide"})`
     );
   }
 
-  const isLikelyJson = contentType.includes("application/json") || contentType.includes("application/ld+json");
+  logDev("redirecting to:", url);
+  logDevGroupEnd();
 
-  let data: any = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    console.groupEnd();
-    const code = isLikelyJson ? "WORKER_NON_JSON" : "WORKER_HTML";
-    const message =
-      code === "WORKER_HTML"
-        ? "WORKER_HTML: Le backend de paiement renvoie une page HTML (Cloudflare Access / mauvaise URL ?). L’endpoint doit être public et retourner du JSON."
-        : "WORKER_NON_JSON: Réponse Worker non-JSON (probablement HTML 404/CORS/Access)";
-    throw new Error(message);
-  }
-
-  console.log("Parsed:", data);
-
-  // ✅ Worker peut renvoyer url ou sessionId
-  if (data?.url) {
-    console.groupEnd();
-    window.location.href = data.url;
-    return;
-  }
-
-  if (data?.sessionId) {
-    const stripe = await stripePromise;
-    if (!stripe) {
-      console.groupEnd();
-      throw new Error("STRIPE_LOAD: Stripe n’a pas pu être chargé.");
-    }
-    const { error } = await stripe.redirectToCheckout({ sessionId: data.sessionId });
-    console.groupEnd();
-    if (error) throw error;
-    return;
-  }
-
-  console.groupEnd();
-  throw new Error("WORKER_EMPTY: aucune url/sessionId retournée.");
+  window.location.assign(url);
 }
 
-export async function runDevTest() {
-  console.info("[runDevTest] Launching test checkout with 5€ item");
-  return startCheckout([{ name: "Test Snack", price: 500, quantity: 1 }]);
+export function runDevTest() {
+  return startCheckout([{ name: "Test", price: 100, quantity: 1 }]);
 }
