@@ -1,18 +1,17 @@
 // lib/stripe.ts
+
 export interface CheckoutItem {
   name: string;
   price: number; // cents (integer)
   quantity: number;
 }
 
-type WorkerResponse = { url?: string; error?: string; details?: unknown };
-
+// Worker prod par défaut (fallback en DEV seulement)
 const DEFAULT_WORKER_BASE_URL =
   "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
 
+// DEV logs (ne casse pas la prod)
 const dev = import.meta.env.DEV;
-
-// Logs DEV (sans casser la prod)
 const logDev = (...args: any[]) => dev && console.log(...args);
 const logDevGroup = (label: string) => dev && console.group(label);
 const logDevGroupEnd = () => dev && console.groupEnd();
@@ -22,74 +21,62 @@ function normalizeBaseUrl(base: string): string {
   return base.replace(/\/+$/, "");
 }
 
-function envStr(key: string): string | undefined {
-  return (import.meta.env[key] as string | undefined)?.trim();
+function normalizeEndpoint(baseOrEndpoint: string): string {
+  const trimmed = baseOrEndpoint.replace(/\/+$/, "");
+  if (trimmed.endsWith("/create-checkout-session")) return trimmed;
+  return `${trimmed}/create-checkout-session`;
 }
 
-/**
- * Base URL du Worker Cloudflare
- * Exemple: https://xxxx.workers.dev
- */
 export function resolveWorkerBaseUrl(): string {
-  const configured = envStr("VITE_WORKER_BASE_URL") || envStr("VITE_WORKER_URL") || envStr("VITE_CHECKOUT_API_URL");
+  // 1) Si tu mets directement l’endpoint complet (recommandé si tu veux)
+  const checkoutApiUrl = (import.meta.env.VITE_CHECKOUT_API_URL as string | undefined)?.trim();
+  if (checkoutApiUrl) return normalizeEndpoint(checkoutApiUrl);
 
-  if (configured) return normalizeBaseUrl(configured);
+  // 2) Sinon base URL du worker
+  const base = (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.trim();
+  if (base) return normalizeBaseUrl(base);
 
-  // En DEV, on autorise un fallback (pratique pour tester)
-  if (dev) return normalizeBaseUrl(DEFAULT_WORKER_BASE_URL);
+  // 3) Fallback DEV uniquement
+  if (import.meta.env.DEV) return normalizeBaseUrl(DEFAULT_WORKER_BASE_URL);
 
-  // En prod, on force à configurer la variable
-  throw new Error(
-    "MISSING_WORKER_BASE_URL: Configure VITE_WORKER_BASE_URL (ex: https://xxxx.workers.dev)"
-  );
+  throw new Error("MISSING_WORKER_BASE_URL: VITE_WORKER_BASE_URL (ou VITE_CHECKOUT_API_URL) est manquant.");
 }
 
-/**
- * Origin public pour construire les success/cancel urls côté backend.
- * En prod, mets VITE_PUBLIC_ORIGIN=https://snackfamily2.eu
- */
 export function resolvePublicOrigin(): string {
-  const o = envStr("VITE_PUBLIC_ORIGIN");
-  if (o) return o.replace(/\/+$/, "");
-  // fallback runtime
-  if (typeof window !== "undefined" && window.location?.origin) {
-    return window.location.origin.replace(/\/+$/, "");
-  }
-  return "https://example.com";
-}
-
-function validateItems(items: CheckoutItem[]): CheckoutItem[] {
-  if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("CART_EMPTY: Panier vide.");
-  }
-
-  return items.map((item, index) => {
-    const name = String(item?.name ?? "").trim();
-    const price = Number(item?.price);
-    const quantity = Number(item?.quantity);
-
-    if (!name) throw new Error(`ITEM_${index}_NAME: Nom manquant`);
-    if (!Number.isInteger(price) || price <= 0)
-      throw new Error(`ITEM_${index}_PRICE: Prix invalide (cents)`);
-    if (!Number.isInteger(quantity) || quantity < 1)
-      throw new Error(`ITEM_${index}_QTY: Quantité invalide`);
-
-    return { name, price, quantity };
-  });
+  const envOrigin = (import.meta.env.VITE_PUBLIC_ORIGIN as string | undefined)?.trim();
+  if (envOrigin) return envOrigin;
+  return window.location.origin;
 }
 
 export async function startCheckout(items: CheckoutItem[]): Promise<void> {
   logDevGroup("🧾 startCheckout");
 
-  const validatedItems = validateItems(items);
+  if (!Array.isArray(items) || items.length === 0) {
+    logDevGroupEnd();
+    throw new Error("CART_EMPTY: Panier vide.");
+  }
 
-  const payload = {
-    items: validatedItems,
-    origin: resolvePublicOrigin(),
-  };
+  const validatedItems = items.map((item, index) => {
+    const name = String(item?.name ?? "").trim();
+    const price = Number(item?.price);
+    const quantity = Number(item?.quantity);
 
-  const base = resolveWorkerBaseUrl();
-  const endpoint = `${base}/create-checkout-session`;
+    if (!name) throw new Error(`Item ${index} missing name`);
+    if (!Number.isInteger(price) || price <= 0) throw new Error(`Item ${index} invalid price`);
+    if (!Number.isInteger(quantity) || quantity < 1) throw new Error(`Item ${index} invalid quantity`);
+
+    return { name, price, quantity };
+  });
+
+  const origin = resolvePublicOrigin();
+
+  // Endpoint final
+  const baseOrEndpoint = resolveWorkerBaseUrl();
+  const endpoint = baseOrEndpoint.includes("/create-checkout-session")
+    ? baseOrEndpoint
+    : `${baseOrEndpoint}/create-checkout-session`;
+
+  const payload = { items: validatedItems, origin };
 
   logDev("endpoint:", endpoint);
   logDev("payload:", payload);
@@ -98,6 +85,8 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
   const timeout = setTimeout(() => controller.abort(), 15_000);
 
   let response: Response;
+  let raw = "";
+
   try {
     response = await fetch(endpoint, {
       method: "POST",
@@ -105,60 +94,52 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
+    raw = await response.text().catch(() => "");
   } catch (err) {
     clearTimeout(timeout);
     logDevGroupEnd();
-    throw new Error(`WORKER_FETCH: ${(err as Error)?.message ?? String(err)}`);
+    throw new Error(`WORKER_FETCH: ${(err as Error)?.message ?? err}`);
+  } finally {
+    clearTimeout(timeout);
   }
 
-  clearTimeout(timeout);
-
   const contentType = response.headers.get("content-type") || "";
-  const raw = await response.text().catch(() => "");
-
   logDev("status:", response.status);
   logDev("content-type:", contentType);
   logDev("raw:", raw);
 
-  // Erreurs HTTP
   if (!response.ok) {
     let detail = raw;
-
     try {
       const parsed = raw ? JSON.parse(raw) : null;
       detail = parsed?.error || parsed?.message || raw;
     } catch (e) {
       logDevWarn("Worker error body not JSON", e);
     }
-
     logDevGroupEnd();
     throw new Error(`WORKER_${response.status}: ${detail || "Réponse vide"}`);
   }
 
-  // Doit être du JSON
-  let data: WorkerResponse;
+  let data: any;
   try {
-    data = raw ? (JSON.parse(raw) as WorkerResponse) : {};
+    data = raw ? JSON.parse(raw) : null;
   } catch {
     logDevGroupEnd();
     throw new Error("WORKER_NON_JSON: Le Worker doit renvoyer du JSON.");
   }
 
   const url = data?.url;
-
   if (!url) {
     logDevGroupEnd();
-    throw new Error(
-      `WORKER_EMPTY: aucune url retournée. (réponse: ${raw || "vide"})`
-    );
+    throw new Error("WORKER_EMPTY: aucune url retournée.");
   }
 
   logDev("redirecting to:", url);
   logDevGroupEnd();
-
   window.location.assign(url);
 }
 
+// Petit test DEV (à appeler depuis la console si besoin)
 export function runDevTest() {
   return startCheckout([{ name: "Test", price: 100, quantity: 1 }]);
 }
