@@ -50,15 +50,27 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     : 0;
   const hiddenCartX = Math.max(safeW, 480);
   const hiddenModalY = Math.max(safeH, 900);
-  const showOverlay = isCartOpen || (isOrderModalOpen && selectedItem && selectedCategory);
+  const overlayOpen = isCartOpen || isOrderModalOpen;
 
   useEffect(() => {
     console.log('[OrderUI] isCartOpen', isCartOpen, 'isOrderModalOpen', isOrderModalOpen, 'screenW', screenW);
-    if (!showOverlay) {
+    if (!overlayOpen) {
       document.body.style.removeProperty('overflow');
       document.body.style.removeProperty('filter');
     }
-  }, [isCartOpen, isOrderModalOpen, screenW, showOverlay]);
+  }, [isCartOpen, isOrderModalOpen, screenW, overlayOpen]);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.log('[OrderUI][DEV] overlay/cart/modal states', { overlayOpen, isCartOpen, isOrderModalOpen });
+    }
+    if (!overlayOpen && import.meta.env.DEV) {
+      const hasOverflow = document.body.style.overflow;
+      if (hasOverflow) {
+        console.warn('[OrderUI][DEV] Body overflow should be cleared when overlay is hidden', { overflow: hasOverflow });
+      }
+    }
+  }, [overlayOpen, isCartOpen, isOrderModalOpen]);
 
   useEffect(() => {
     if (isOrderModalOpen) {
@@ -183,14 +195,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   return (
     <>
       <AnimatePresence>
-        {showOverlay && (
+        {overlayOpen && (
           <Portal>
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0, pointerEvents: 'none' }}
+              animate={{ opacity: 1, pointerEvents: 'auto' }}
+              exit={{ opacity: 0, pointerEvents: 'none' }}
               className="fixed inset-0 bg-black/70 backdrop-blur-sm"
-              style={{ zIndex: 9998, pointerEvents: showOverlay ? 'auto' : 'none' }}
+              style={{ zIndex: 9998 }}
               onClick={handleOverlayClick}
             />
           </Portal>
@@ -201,12 +213,15 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       <AnimatePresence>
         {isOrderModalOpen && selectedItem && selectedCategory && (
           <Portal>
-            <div className="fixed inset-0 flex items-end md:items-center justify-center">
+            <div
+              className="fixed inset-0 flex items-end md:items-center justify-center pointer-events-none"
+              style={{ zIndex: 9999 }}
+            >
               <motion.div
                   initial={{ y: hiddenModalY }} animate={{ y: 0 }} exit={{ y: hiddenModalY }}
                   transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }}
-                  className="bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col overflow-hidden"
-                  style={{ zIndex: 9999 }}
+                  className="relative bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto"
+                  onClick={(e) => e.stopPropagation()}
               >
                 <div className="bg-snack-black text-white p-5 flex justify-between items-center">
                    <div>
@@ -315,12 +330,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       <AnimatePresence>
         {isCartOpen && (
           <Portal>
-            <div>
+            <div className="fixed inset-0 flex justify-end pointer-events-none" style={{ zIndex: 9999 }}>
               <motion.div
                   initial={{ x: hiddenCartX }} animate={{ x: isCartOpen ? 0 : hiddenCartX }} exit={{ x: hiddenCartX }}
                   transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }}
-                  className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl flex flex-col relative"
-                  style={{ zIndex: 9999 }}
+                  className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl flex flex-col relative pointer-events-auto"
               >
                 <AnimatePresence>
                 {isClearConfirmOpen && (
