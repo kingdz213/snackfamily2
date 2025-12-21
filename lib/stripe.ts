@@ -2,8 +2,28 @@
 
 export interface CheckoutItem {
   name: string;
-  price: number; // cents (integer)
+  price: number; // ✅ cents (integer) côté front (ex: 1450)
   quantity: number;
+}
+
+export type DeliveryMode = "delivery" | "pickup";
+
+export interface CheckoutCustomer {
+  name?: string;
+  phone?: string;
+}
+
+export interface CheckoutAddress {
+  line1: string;
+  postalCode: string;
+  city: string;
+  country?: string; // ex: "BE"
+}
+
+export interface CheckoutOptions {
+  deliveryMode?: DeliveryMode;
+  customer?: CheckoutCustomer;
+  address?: CheckoutAddress;
 }
 
 // Worker prod par défaut (fallback en DEV seulement)
@@ -27,19 +47,23 @@ function normalizeEndpoint(baseOrEndpoint: string): string {
   return `${trimmed}/create-checkout-session`;
 }
 
+/**
+ * ✅ Retourne soit:
+ * - un endpoint complet .../create-checkout-session (si VITE_CHECKOUT_API_URL)
+ * - soit une base ...workers.dev (si VITE_WORKER_BASE_URL)
+ */
 export function resolveWorkerBaseUrl(): string {
-  // 1) Si tu mets directement l’endpoint complet (recommandé si tu veux)
   const checkoutApiUrl = (import.meta.env.VITE_CHECKOUT_API_URL as string | undefined)?.trim();
   if (checkoutApiUrl) return normalizeEndpoint(checkoutApiUrl);
 
-  // 2) Sinon base URL du worker
   const base = (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.trim();
   if (base) return normalizeBaseUrl(base);
 
-  // 3) Fallback DEV uniquement
   if (import.meta.env.DEV) return normalizeBaseUrl(DEFAULT_WORKER_BASE_URL);
 
-  throw new Error("MISSING_WORKER_BASE_URL: VITE_WORKER_BASE_URL (ou VITE_CHECKOUT_API_URL) est manquant.");
+  throw new Error(
+    "MISSING_WORKER_BASE_URL: VITE_WORKER_BASE_URL (ou VITE_CHECKOUT_API_URL) est manquant."
+  );
 }
 
 export function resolvePublicOrigin(): string {
@@ -48,35 +72,45 @@ export function resolvePublicOrigin(): string {
   return window.location.origin;
 }
 
-export async function startCheckout(items: CheckoutItem[]): Promise<void> {
-  logDevGroup("🧾 startCheckout");
+function validateItems(items: CheckoutItem[]) {
+  if (!Array.isArray(items) || items.length === 0) throw new Error("CART_EMPTY: Panier vide.");
 
-  if (!Array.isArray(items) || items.length === 0) {
-    logDevGroupEnd();
-    throw new Error("CART_EMPTY: Panier vide.");
-  }
-
-  const validatedItems = items.map((item, index) => {
+  return items.map((item, index) => {
     const name = String(item?.name ?? "").trim();
     const price = Number(item?.price);
     const quantity = Number(item?.quantity);
 
     if (!name) throw new Error(`Item ${index} missing name`);
-    if (!Number.isInteger(price) || price <= 0) throw new Error(`Item ${index} invalid price`);
+    if (!Number.isInteger(price) || price <= 0) throw new Error(`Item ${index} invalid price (cents int)`);
     if (!Number.isInteger(quantity) || quantity < 1) throw new Error(`Item ${index} invalid quantity`);
 
     return { name, price, quantity };
   });
+}
 
+// ✅ Overload: compatible ancien usage + nouveau usage
+export async function startCheckout(items: CheckoutItem[]): Promise<void>;
+export async function startCheckout(items: CheckoutItem[], options?: CheckoutOptions): Promise<void>;
+export async function startCheckout(items: CheckoutItem[], options?: CheckoutOptions): Promise<void> {
+  logDevGroup("🧾 startCheckout");
+
+  const validatedItems = validateItems(items);
   const origin = resolvePublicOrigin();
 
-  // Endpoint final
   const baseOrEndpoint = resolveWorkerBaseUrl();
   const endpoint = baseOrEndpoint.includes("/create-checkout-session")
     ? baseOrEndpoint
     : `${baseOrEndpoint}/create-checkout-session`;
 
-  const payload = { items: validatedItems, origin };
+  const payload = {
+    items: validatedItems,
+    origin,
+
+    // ✅ Optionnel (si tu veux envoyer au Worker)
+    deliveryMode: options?.deliveryMode,
+    customer: options?.customer,
+    address: options?.address,
+  };
 
   logDev("endpoint:", endpoint);
   logDev("payload:", payload);
@@ -84,7 +118,7 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
 
-  let response: Response;
+  let response: Response | null = null;
   let raw = "";
 
   try {
@@ -139,7 +173,7 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
   window.location.assign(url);
 }
 
-// Petit test DEV (à appeler depuis la console si besoin)
+// Petit test DEV
 export function runDevTest() {
-  return startCheckout([{ name: "Test", price: 100, quantity: 1 }]);
+  return startCheckout([{ name: "Test", price: 100, quantity: 1 }], { deliveryMode: "pickup" });
 }
