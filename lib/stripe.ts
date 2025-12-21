@@ -6,7 +6,11 @@ export interface CheckoutItem {
   quantity: number;
 }
 
-const STRIPE_KEY = (import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined)?.trim();
+const STRIPE_KEY = (
+  (import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined) ||
+  (import.meta.env.VITE_STRIPE_PUBLIC_KEY as string | undefined)
+)
+  ?.trim();
 
 function normalizeEndpoint(base: string) {
   const trimmed = base.replace(/\/+$/, "");
@@ -74,7 +78,7 @@ export async function startCheckout(items: CheckoutItem[]) {
   console.log("Origin:", origin);
 
   if (!STRIPE_KEY) {
-    console.error("Missing VITE_STRIPE_PUBLIC_KEY");
+    console.error("Missing VITE_STRIPE_PUBLIC_KEY / VITE_STRIPE_PUBLISHABLE_KEY");
     console.groupEnd();
     throw new Error("MISSING_STRIPE_KEY: Clé Stripe manquante sur cette version (Preview/Prod).");
   }
