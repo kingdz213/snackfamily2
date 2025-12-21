@@ -40,6 +40,15 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [screenW, setScreenW] = useState(
+    () => (typeof window !== 'undefined' ? window.innerWidth : 1200)
+  );
+
+  useEffect(() => {
+    const handleResize = () => setScreenW(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     if (isOrderModalOpen) {
@@ -271,7 +280,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                   onClick={closeCart}
               />
               <motion.div
-                  initial={{ x: '100%' }} animate={{ x: '0%' }} exit={{ x: '100%' }}
+                  initial={{ x: screenW }} animate={{ x: 0 }} exit={{ x: screenW }}
                   transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }}
                   className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl flex flex-col relative"
                   style={{ zIndex: 9999 }}

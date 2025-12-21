@@ -70,6 +70,9 @@ function App() {
     }
 
     setCurrentPage(page);
+    setIsOrderModalOpen(false);
+    setSelectedItem(null);
+    setSelectedCategory(null);
 
     // Si on va sur la page Commander, on s'assure que le panier est fermé initialement
     if (page === 'commander') {
