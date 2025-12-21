@@ -2,6 +2,7 @@
 
 ## Variables d'environnement (Front Vite)
 - `VITE_STRIPE_PUBLIC_KEY` : clé publique Stripe (pk_live... ou pk_test...).
+- `VITE_STRIPE_PUBLISHABLE_KEY` : alias moderne si vous ne souhaitez pas utiliser `VITE_STRIPE_PUBLIC_KEY`.
 - `VITE_CHECKOUT_API_URL` : endpoint HTTP direct qui crée la session Stripe (prioritaire si défini).
 - `VITE_WORKER_URL` : URL complète du backend checkout (peut déjà contenir `/create-checkout-session`).
 - `VITE_WORKER_BASE_URL` : alias legacy si la prod utilise encore l'ancien nom (la librairie ajoute automatiquement `/create-checkout-session`).
@@ -21,6 +22,25 @@ VITE_WORKER_BASE_URL=https://payments.snackfamily2.eu
 VITE_PUBLIC_ORIGIN=https://snackfamily2.eu
 VITE_FIREBASE_VAPID_KEY=BOGUS_PUBLIC_VAPID_KEY
 ```
+
+## Config env Vercel (frontend) & Worker Cloudflare
+
+```
+# Front Vercel (Environment Variables)
+VITE_WORKER_BASE_URL=https://<your-worker>.workers.dev
+VITE_PUBLIC_ORIGIN=https://snackfamily2.eu
+# Optionnel si vous chargez Stripe côté front :
+VITE_STRIPE_PUBLISHABLE_KEY=pk_live_xxx
+
+# Cloudflare Worker (Vars → Text)
+STRIPE_SECRET_KEY=sk_live_xxx
+ALLOWED_ORIGIN=https://snackfamily2.eu
+DEFAULT_ORIGIN=https://snackfamily2.eu
+```
+
+- Le front n'accepte que des variables préfixées `VITE_` et ne doit jamais contenir de secrets.
+- Si une clé `sk_live` a fuité, révoquez-la immédiatement dans le dashboard Stripe puis générez une nouvelle clé secrète.
+- Ne committez jamais de secrets (`sk_live`, webhook secret, etc.) dans le dépôt ou dans les historiques de PR.
 
 ## Routage SPA (success / cancel)
 - Les routes `/success` et `/cancel` sont gérées côté SPA (`App.tsx`).
