@@ -4,7 +4,15 @@ export interface CheckoutItem {
   quantity: number;
 }
 
-const DEFAULT_WORKER_BASE_URL = "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
+const DEFAULT_WORKER_BASE_URL =
+  "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
+
+// Logs DEV (sans casser la prod)
+const dev = import.meta.env.DEV;
+const logDev = (...args: any[]) => dev && console.log(...args);
+const logDevGroup = (label: string) => dev && console.group(label);
+const logDevGroupEnd = () => dev && console.groupEnd();
+const logDevWarn = (...args: any[]) => dev && console.warn(...args);
 
 function normalizeBaseUrl(base: string): string {
   return base.replace(/\/+$/, "");
@@ -24,8 +32,11 @@ export function resolvePublicOrigin(): string {
 }
 
 export async function startCheckout(items: CheckoutItem[]): Promise<void> {
+  logDevGroup("🧾 startCheckout");
+
   if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("No checkout items provided");
+    logDevGroupEnd();
+    throw new Error("CART_EMPTY: Panier vide.");
   }
 
   const validatedItems = items.map((item, index) => {
@@ -40,9 +51,6 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
     return { name, price, quantity };
   });
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-
   const payload = {
     items: validatedItems,
     origin: resolvePublicOrigin(),
@@ -50,10 +58,11 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
 
   const endpoint = `${resolveWorkerBaseUrl()}/create-checkout-session`;
 
-  if (import.meta.env.DEV) {
-    console.log("[startCheckout] endpoint", endpoint);
-    console.log("[startCheckout] payload", payload);
-  }
+  logDev("endpoint:", endpoint);
+  logDev("payload:", payload);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
 
   let response: Response;
   try {
@@ -63,34 +72,49 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-  } catch (error) {
+  } catch (err) {
     clearTimeout(timeout);
-    throw new Error(`Checkout request failed: ${(error as Error)?.message ?? error}`);
+    logDevGroupEnd();
+    throw new Error(`WORKER_FETCH: ${(err as Error)?.message ?? err}`);
   }
 
   clearTimeout(timeout);
 
+  const contentType = response.headers.get("content-type") || "";
+  const raw = await response.text().catch(() => "");
+
+  logDev("status:", response.status);
+  logDev("content-type:", contentType);
+  logDev("raw:", raw);
+
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Checkout request failed (${response.status}): ${text}`);
+    let detail = raw;
+    try {
+      const parsed = raw ? JSON.parse(raw) : null;
+      detail = parsed?.error || parsed?.message || raw;
+    } catch (e) {
+      logDevWarn("Worker error body not JSON", e);
+    }
+    logDevGroupEnd();
+    throw new Error(`WORKER_${response.status}: ${detail || "Réponse vide"}`);
   }
 
-  let data: unknown;
+  let data: any;
   try {
-    data = await response.json();
-  } catch (error) {
-    throw new Error(`Invalid JSON response: ${(error as Error)?.message ?? error}`);
+    data = raw ? JSON.parse(raw) : null;
+  } catch {
+    logDevGroupEnd();
+    throw new Error("WORKER_NON_JSON: Le Worker doit renvoyer du JSON.");
   }
 
-  const url = (data as { url?: string })?.url;
+  const url = data?.url;
   if (!url) {
-    throw new Error("Checkout url missing");
+    logDevGroupEnd();
+    throw new Error("WORKER_EMPTY: aucune url retournée.");
   }
 
-  if (import.meta.env.DEV) {
-    console.log("[startCheckout] redirecting to", url);
-  }
-
+  logDev("redirecting to:", url);
+  logDevGroupEnd();
   window.location.assign(url);
 }
 
