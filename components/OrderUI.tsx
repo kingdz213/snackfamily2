@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -42,6 +42,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const bodyStyleRestoreRef = useRef<null | { overflow: string; filter: string }>(null);
 
   const dev = import.meta.env.DEV;
   const logDev = (...args: any[]) => dev && console.log(...args);
@@ -65,16 +66,42 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   useEffect(() => {
     logDev('[OrderUI] state', { isCartOpen, isOrderModalOpen, screenW, overlayOpen });
-
-    // nettoyage body quand il n’y a plus d’overlay
-    if (!overlayOpen) {
-      document.body.style.removeProperty('overflow');
-      document.body.style.removeProperty('filter');
-    } else {
-      // optionnel : empêche scroll derrière
-      document.body.style.overflow = 'hidden';
-    }
   }, [isCartOpen, isOrderModalOpen, screenW, overlayOpen]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const restore = () => {
+      const prev = bodyStyleRestoreRef.current;
+      if (!prev) {
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('filter');
+        return;
+      }
+
+      if (prev.overflow) document.body.style.overflow = prev.overflow;
+      else document.body.style.removeProperty('overflow');
+
+      if (prev.filter) document.body.style.filter = prev.filter;
+      else document.body.style.removeProperty('filter');
+
+      bodyStyleRestoreRef.current = null;
+    };
+
+    if (overlayOpen) {
+      if (!bodyStyleRestoreRef.current) {
+        bodyStyleRestoreRef.current = {
+          overflow: document.body.style.overflow || '',
+          filter: document.body.style.filter || '',
+        };
+      }
+      document.body.style.overflow = 'hidden';
+    } else {
+      restore();
+    }
+
+    return restore;
+  }, [overlayOpen]);
 
   useEffect(() => {
     if (!overlayOpen && dev) {
@@ -204,20 +231,20 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   return (
     <>
-      {/* ✅ OVERLAY (toujours monté, jamais “fantôme”) */}
-      <Portal>
-        <motion.div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm"
-          style={{
-            zIndex: 9998,
-            pointerEvents: overlayOpen ? 'auto' : 'none',
-          }}
-          initial={false}
-          animate={{ opacity: overlayOpen ? 1 : 0 }}
-          transition={{ duration: 0.2 }}
-          onClick={handleOverlayClick}
-        />
-      </Portal>
+      <AnimatePresence>
+        {overlayOpen && (
+          <Portal>
+            <motion.div
+              className="fixed inset-0 bg-black/70 backdrop-blur-sm"
+              style={{ zIndex: 9998 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0 } }}
+              onClick={handleOverlayClick}
+            />
+          </Portal>
+        )}
+      </AnimatePresence>
 
       {/* --- ORDER MODAL --- */}
       <AnimatePresence>
