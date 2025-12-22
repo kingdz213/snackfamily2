@@ -7,13 +7,13 @@ export interface CheckoutItem {
 }
 
 export type StartCheckoutParams = {
-  origin?: string;
+  origin: string;
   items: CheckoutItem[];
 
   // livraison obligatoire
   deliveryAddress: string;
-  deliveryLat?: number;
-  deliveryLng?: number;
+  deliveryLat: number;
+  deliveryLng: number;
 };
 
 const DEFAULT_WORKER_BASE_URL =
@@ -101,7 +101,13 @@ export async function startCheckout(params: StartCheckoutParams): Promise<void> 
     throw new Error(`WORKER_${response.status}: ${detail || "Réponse vide"}`);
   }
 
-  const data = raw ? JSON.parse(raw) : null;
+  let data: any = null;
+  try {
+    data = raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    throw new Error(`WORKER_PARSE: ${(err as Error)?.message ?? err}`);
+  }
+
   const url = data?.url;
   if (!url) throw new Error("WORKER_EMPTY: aucune url retournée.");
 

@@ -240,7 +240,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setCheckoutInfo(null);
 
     if (!navigator.geolocation) {
-      setCheckoutError("La géolocalisation n'est pas disponible sur cet appareil/navigateur.");
+      setCheckoutError("Erreur géoloc: la géolocalisation n'est pas disponible sur cet appareil/navigateur.");
       return;
     }
 
@@ -254,24 +254,47 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       },
       (err) => {
         setIsLocating(false);
-        setCheckoutError(`Impossible d'obtenir la position. (${err.message})`);
+        setCheckoutError(`Erreur géoloc: ${err.message}. Pense à autoriser la localisation.`);
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
+  const validateBeforeCheckout = (): boolean => {
+    if (cartItems.length === 0) {
+      setCheckoutError('Votre panier est vide.');
+      return false;
+    }
+    if (!minOk) {
+      setCheckoutError('Il faut commander un minimum de 20€ (hors livraison).');
+      return false;
+    }
+    if (!hasAddress) {
+      setCheckoutError('Adresse de livraison obligatoire.');
+      return false;
+    }
+    if (!hasGeo) {
+      setCheckoutError('Position obligatoire. Cliquez sur « Utiliser ma position ».');
+      return false;
+    }
+    if (!inRange) {
+      setCheckoutError(`Livraison disponible uniquement dans un rayon de ${MAX_DELIVERY_KM} km.`);
+      return false;
+    }
+
+    setCheckoutError(null);
+    return true;
+  };
+
   const handleStripeCheckout = async () => {
-    setIsCheckingOut(true);
     setCheckoutError(null);
     setCheckoutInfo(null);
 
-    try {
-      if (cartItems.length === 0) throw new Error('Votre panier est vide.');
-      if (!minOk) throw new Error('Il faut commander un minimum de 20€ (hors livraison).');
-      if (!hasAddress) throw new Error('Adresse de livraison obligatoire.');
-      if (!hasGeo) throw new Error('Veuillez cliquer sur « Utiliser ma position ».');
-      if (!inRange) throw new Error(`Livraison disponible uniquement dans un rayon de ${MAX_DELIVERY_KM} km.`);
+    if (!validateBeforeCheckout()) return;
 
+    setIsCheckingOut(true);
+
+    try {
       const items = cartItems.map((item) => ({
         name: buildLineItemName(item),
         price: Number(item.price), // EUROS (le worker gère la conversion)
@@ -282,8 +305,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         origin: window.location.origin,
         items,
         deliveryAddress: deliveryAddress.trim(),
-        deliveryLat,
-        deliveryLng,
+        deliveryLat: Number(deliveryLat),
+        deliveryLng: Number(deliveryLng),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
@@ -294,17 +317,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   };
 
   const handleCashCheckout = async () => {
-    setIsCheckingOut(true);
     setCheckoutError(null);
     setCheckoutInfo(null);
 
-    try {
-      if (cartItems.length === 0) throw new Error('Votre panier est vide.');
-      if (!minOk) throw new Error('Il faut commander un minimum de 20€ (hors livraison).');
-      if (!hasAddress) throw new Error('Adresse de livraison obligatoire.');
-      if (!hasGeo) throw new Error('Veuillez cliquer sur « Utiliser ma position ».');
-      if (!inRange) throw new Error(`Livraison disponible uniquement dans un rayon de ${MAX_DELIVERY_KM} km.`);
+    if (!validateBeforeCheckout()) return;
 
+    setIsCheckingOut(true);
+
+    try {
       const lines = cartItems
         .map((it) => `- ${buildLineItemName(it)} x${it.quantity} = ${(it.price * it.quantity).toFixed(2)}€`)
         .join('\n');
@@ -721,7 +741,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                             <AlertTriangle className="mt-0.5" />
                             <div className="text-sm text-gray-700">
-                              Clique sur <b>« Utiliser ma position »</b> pour vérifier la zone (10 km).
+                              Position obligatoire. Cliquez sur <b>« Utiliser ma position »</b>.
                             </div>
                           </div>
                         )}
@@ -777,13 +797,33 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       <div className="text-3xl font-display font-bold text-snack-black">{totalWithDelivery.toFixed(2)} €</div>
                     </div>
 
+                    {/* Warnings visibles même si le bouton reste cliquable */}
+                    {!minOk && (
+                      <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                        <AlertTriangle className="mt-0.5" />
+                        <div className="text-sm text-gray-700">Il faut commander un minimum de 20€ (hors livraison).</div>
+                      </div>
+                    )}
+                    {!hasAddress && (
+                      <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                        <AlertTriangle className="mt-0.5" />
+                        <div className="text-sm text-gray-700">Adresse de livraison obligatoire.</div>
+                      </div>
+                    )}
+                    {!hasGeo && (
+                      <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                        <AlertTriangle className="mt-0.5" />
+                        <div className="text-sm text-gray-700">Position obligatoire. Cliquez sur « Utiliser ma position ».</div>
+                      </div>
+                    )}
+
                     {/* Bouton payer */}
                     <button
                       id="checkout-btn"
                       onClick={paymentMethod === 'stripe' ? handleStripeCheckout : handleCashCheckout}
-                      disabled={isCheckingOut || !minOk || !deliveryOk}
+                      disabled={isCheckingOut}
                       className={`w-full bg-snack-gold text-snack-black py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group ${
-                        isCheckingOut || !minOk || !deliveryOk ? 'opacity-75 cursor-not-allowed' : 'hover:bg-white hover:border-snack-black hover:border-gray-200'
+                        isCheckingOut ? 'opacity-75 cursor-not-allowed' : 'hover:bg-white hover:border-snack-black hover:border-gray-200'
                       }`}
                     >
                       {isCheckingOut ? (
