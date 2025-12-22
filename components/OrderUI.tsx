@@ -1,20 +1,10 @@
 // components/OrderUI.tsx
-import React, { useState, useEffect, useRef, useMemo } from "react";
-import {
-  X,
-  Minus,
-  Plus,
-  ShoppingBag,
-  Trash2,
-  CreditCard,
-  AlertTriangle,
-  MapPin,
-  Banknote,
-} from "lucide-react";
-import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from "../types";
-import { motion, AnimatePresence } from "framer-motion";
-import { startCheckout } from "../lib/stripe";
-import { Portal } from "./Portal";
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, MapPin, Banknote } from 'lucide-react';
+import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
+import { motion, AnimatePresence } from 'framer-motion';
+import { startCheckout } from '../lib/stripe';
+import { Portal } from './Portal';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -35,19 +25,20 @@ const MIN_ORDER_EUR = 20;
 const DELIVERY_FEE_EUR = 2.5;
 const MAX_DELIVERY_KM = 10;
 
-// Coordonnées snack (comme dans le Worker)
-const SNACK_LAT = 50.4099;
-const SNACK_LNG = 3.8459;
+// ⚠️ Coordonnées approx du snack (ajuste si besoin)
+const SHOP_LAT = 50.425226;
+const SHOP_LNG = 3.846433;
 
-function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const R = 6371;
-  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toRad = (v: number) => (v * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
+  const dLng = toRad(lng2 - lng1);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
 export const OrderUI: React.FC<OrderUIProps> = ({
@@ -64,10 +55,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   screenW,
 }) => {
   const [quantity, setQuantity] = useState(1);
-  const [selectedSauce, setSelectedSauce] = useState<string>("Sans sauce");
+  const [selectedSauce, setSelectedSauce] = useState<string>('Sans sauce');
   const [selectedSupplements, setSelectedSupplements] = useState<string[]>([]);
   const [selectedVeggies, setSelectedVeggies] = useState<string[]>([]);
-  const [variant, setVariant] = useState<"Menu/Frites" | "Solo">("Menu/Frites");
+  const [variant, setVariant] = useState<'Menu/Frites' | 'Solo'>('Menu/Frites');
 
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
@@ -75,10 +66,13 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [checkoutInfo, setCheckoutInfo] = useState<string | null>(null);
 
   // Paiement
-  const [paymentMethod, setPaymentMethod] = useState<"stripe" | "cash">("stripe");
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cash'>('stripe');
 
-  // Livraison (obligatoire)
-  const [deliveryAddress, setDeliveryAddress] = useState("");
+  // LIVRAISON UNIQUEMENT
+  const deliveryEnabled = true;
+
+  // Adresse + position obligatoires
+  const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryLat, setDeliveryLat] = useState<number | undefined>(undefined);
   const [deliveryLng, setDeliveryLng] = useState<number | undefined>(undefined);
   const [isLocating, setIsLocating] = useState(false);
@@ -87,40 +81,38 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   const dev = import.meta.env.DEV;
   const logDev = (...args: any[]) => dev && console.log(...args);
+  const warnDev = (...args: any[]) => dev && console.warn(...args);
 
   const safeW =
-    Number.isFinite(screenW) && screenW > 0
-      ? screenW
-      : typeof window !== "undefined"
-      ? window.innerWidth
-      : 0;
+    Number.isFinite(screenW) && screenW > 0 ? screenW : typeof window !== 'undefined' ? window.innerWidth : 0;
 
-  const safeH =
-    typeof window !== "undefined" && Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
+  const safeH = typeof window !== 'undefined' && Number.isFinite(window.innerHeight) ? window.innerHeight : 0;
 
   const hiddenCartX = Math.max(safeW, 480);
   const hiddenModalY = Math.max(safeH, 900);
 
-  // Overlay réellement affiché
   const overlayOpen = isCartOpen || (isOrderModalOpen && !!selectedItem && !!selectedCategory);
 
-  // Lock scroll + restore
   useEffect(() => {
-    if (typeof document === "undefined") return;
+    logDev('[OrderUI] state', { isCartOpen, isOrderModalOpen, screenW, overlayOpen });
+  }, [isCartOpen, isOrderModalOpen, screenW, overlayOpen]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
 
     const restore = () => {
       const prev = bodyStyleRestoreRef.current;
       if (!prev) {
-        document.body.style.removeProperty("overflow");
-        document.body.style.removeProperty("filter");
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('filter');
         return;
       }
 
       if (prev.overflow) document.body.style.overflow = prev.overflow;
-      else document.body.style.removeProperty("overflow");
+      else document.body.style.removeProperty('overflow');
 
       if (prev.filter) document.body.style.filter = prev.filter;
-      else document.body.style.removeProperty("filter");
+      else document.body.style.removeProperty('filter');
 
       bodyStyleRestoreRef.current = null;
     };
@@ -128,11 +120,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     if (overlayOpen) {
       if (!bodyStyleRestoreRef.current) {
         bodyStyleRestoreRef.current = {
-          overflow: document.body.style.overflow || "",
-          filter: document.body.style.filter || "",
+          overflow: document.body.style.overflow || '',
+          filter: document.body.style.filter || '',
         };
       }
-      document.body.style.overflow = "hidden";
+      document.body.style.overflow = 'hidden';
     } else {
       restore();
     }
@@ -140,29 +132,33 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     return restore;
   }, [overlayOpen]);
 
-  // Reset modal state
+  useEffect(() => {
+    if (!overlayOpen && dev) {
+      const hasOverflow = document.body.style.overflow;
+      if (hasOverflow) {
+        warnDev('[OrderUI][DEV] Body overflow should be cleared when overlay is hidden', { overflow: hasOverflow });
+      }
+    }
+  }, [overlayOpen, dev]);
+
   useEffect(() => {
     if (isOrderModalOpen) {
       setQuantity(1);
-      setSelectedSauce("Sans sauce");
+      setSelectedSauce('Sans sauce');
       setSelectedSupplements([]);
       setSelectedVeggies([]);
-      setVariant("Menu/Frites");
+      setVariant('Menu/Frites');
       setCheckoutError(null);
       setCheckoutInfo(null);
     }
   }, [isOrderModalOpen, selectedItem]);
 
   const handleSupplementToggle = (suppName: string) => {
-    setSelectedSupplements((prev) =>
-      prev.includes(suppName) ? prev.filter((s) => s !== suppName) : [...prev, suppName]
-    );
+    setSelectedSupplements((prev) => (prev.includes(suppName) ? prev.filter((s) => s !== suppName) : [...prev, suppName]));
   };
 
   const handleVeggieToggle = (vegName: string) => {
-    setSelectedVeggies((prev) =>
-      prev.includes(vegName) ? prev.filter((v) => v !== vegName) : [...prev, vegName]
-    );
+    setSelectedVeggies((prev) => (prev.includes(vegName) ? prev.filter((v) => v !== vegName) : [...prev, vegName]));
   };
 
   const getSupplementPrice = (name: string) => SUPPLEMENTS.find((sup) => sup.name === name)?.price ?? 0;
@@ -176,9 +172,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const getCurrentItemPrice = () => {
     if (!selectedItem) return 0;
     const base =
-      variant === "Solo" && selectedItem.priceSecondary
-        ? Number(selectedItem.priceSecondary)
-        : Number(selectedItem.price);
+      variant === 'Solo' && selectedItem.priceSecondary ? Number(selectedItem.priceSecondary) : Number(selectedItem.price);
 
     const suppsCost = selectedSupplements.reduce((total, name) => total + getSupplementPrice(name), 0);
     return base + suppsCost;
@@ -192,19 +186,35 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     const newItem: CartItem = {
       id: Math.random().toString(36).substr(2, 9),
       name: selectedItem.name,
-      price: itemTotal, // ✅ EUROS
-      quantity,
+      price: itemTotal, // EUROS
+      quantity: quantity,
       selectedSauce: selectedCategory?.hasSauces ? selectedSauce : undefined,
       selectedSupplements: selectedCategory?.hasSupplements ? selectedSupplements : undefined,
       selectedVeggies: selectedCategory?.hasVeggies ? selectedVeggies : undefined,
       variant: selectedItem.priceSecondary ? variant : undefined,
     };
 
-    if (dev) console.log("[Cart][DEV] Ajout", newItem);
-
     addToCart(newItem);
     closeOrderModal();
   };
+
+  const itemsSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const totalWithDelivery = itemsSubtotal + DELIVERY_FEE_EUR;
+
+  // Minimum 20€ hors livraison
+  const minOk = itemsSubtotal + 1e-9 >= MIN_ORDER_EUR;
+
+  // Livraison obligatoire: adresse + position + distance <= 10km
+  const hasAddress = deliveryAddress.trim().length > 0;
+  const hasGeo = Number.isFinite(deliveryLat) && Number.isFinite(deliveryLng);
+
+  const km =
+    hasGeo && deliveryLat != null && deliveryLng != null
+      ? distanceKm(SHOP_LAT, SHOP_LNG, deliveryLat, deliveryLng)
+      : null;
+
+  const inRange = km == null ? false : km <= MAX_DELIVERY_KM;
+  const deliveryOk = hasAddress && hasGeo && inRange;
 
   const buildLineItemName = (item: CartItem) => {
     let description = item.name;
@@ -213,35 +223,17 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     if (item.selectedVeggies) {
       const vegTxt =
         item.selectedVeggies.length === VEGGIES.length
-          ? "Tout"
+          ? 'Tout'
           : item.selectedVeggies.length === 0
-          ? "Aucune"
-          : item.selectedVeggies.join(", ");
+          ? 'Aucune'
+          : item.selectedVeggies.join(', ');
       description += ` - Crudités: ${vegTxt}`;
     }
     if (item.selectedSupplements && item.selectedSupplements.length > 0) {
-      description += ` + ${item.selectedSupplements.join(", ")}`;
+      description += ` + ${item.selectedSupplements.join(', ')}`;
     }
     return description;
   };
-
-  const itemsSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const totalWithDelivery = cartItems.length > 0 ? itemsSubtotal + DELIVERY_FEE_EUR : 0;
-
-  const minOk = itemsSubtotal + 1e-9 >= MIN_ORDER_EUR;
-
-  const hasCoords = Number.isFinite(deliveryLat) && Number.isFinite(deliveryLng);
-  const addressOk = deliveryAddress.trim().length > 0;
-
-  const distanceKm = useMemo(() => {
-    if (!hasCoords) return undefined;
-    return haversineKm(SNACK_LAT, SNACK_LNG, deliveryLat as number, deliveryLng as number);
-  }, [hasCoords, deliveryLat, deliveryLng]);
-
-  const zoneOk = typeof distanceKm === "number" ? distanceKm <= MAX_DELIVERY_KM : false;
-
-  // Livraison obligatoire => on bloque si manque adresse / coords / zone
-  const deliveryOk = addressOk && hasCoords && zoneOk;
 
   const requestGeolocation = () => {
     setCheckoutError(null);
@@ -258,7 +250,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         setIsLocating(false);
         setDeliveryLat(pos.coords.latitude);
         setDeliveryLng(pos.coords.longitude);
-        setCheckoutInfo("Position détectée ✅ (zone 10 km vérifiée)");
+        setCheckoutInfo('Position détectée ✅');
       },
       (err) => {
         setIsLocating(false);
@@ -268,56 +260,74 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     );
   };
 
-  const handleCheckout = async () => {
+  const handleStripeCheckout = async () => {
     setIsCheckingOut(true);
     setCheckoutError(null);
     setCheckoutInfo(null);
 
     try {
-      if (cartItems.length === 0) throw new Error("Votre panier est vide.");
-
-      if (!minOk) {
-        throw new Error("Il faut commander un minimum de 20€.");
-      }
-
-      if (!addressOk) {
-        throw new Error("Adresse de livraison obligatoire.");
-      }
-
-      if (!hasCoords) {
-        throw new Error("Clique sur « Utiliser ma position » pour vérifier les 10 km.");
-      }
-
-      if (!zoneOk) {
-        throw new Error("Zone de livraison limitée à 10 km autour du snack.");
-      }
+      if (cartItems.length === 0) throw new Error('Votre panier est vide.');
+      if (!minOk) throw new Error('Il faut commander un minimum de 20€ (hors livraison).');
+      if (!hasAddress) throw new Error('Adresse de livraison obligatoire.');
+      if (!hasGeo) throw new Error('Veuillez cliquer sur « Utiliser ma position ».');
+      if (!inRange) throw new Error(`Livraison disponible uniquement dans un rayon de ${MAX_DELIVERY_KM} km.`);
 
       const items = cartItems.map((item) => ({
         name: buildLineItemName(item),
-        price: Number(item.price), // ✅ EUROS
+        price: Number(item.price), // EUROS (le worker gère la conversion)
         quantity: Math.max(1, Math.trunc(item.quantity)),
       }));
 
-      logDev("[Checkout] sending", { paymentMethod, items, deliveryAddress, deliveryLat, deliveryLng });
-
-      const result = await startCheckout({
+      await startCheckout({
         origin: window.location.origin,
         items,
-        paymentMethod,
         deliveryAddress: deliveryAddress.trim(),
-        deliveryLat: Number(deliveryLat),
-        deliveryLng: Number(deliveryLng),
+        deliveryLat,
+        deliveryLng,
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
+      setCheckoutError(message);
+    } finally {
+      setIsCheckingOut(false);
+    }
+  };
 
-      // Stripe => redirect déjà fait dans startCheckout
-      if (result.ok && result.method === "cash") {
-        setCheckoutInfo(`✅ Commande CASH enregistrée. N° ${result.orderId}`);
-      } else if (!result.ok) {
-        throw new Error(result.message || "Erreur lors du paiement.");
+  const handleCashCheckout = async () => {
+    setIsCheckingOut(true);
+    setCheckoutError(null);
+    setCheckoutInfo(null);
+
+    try {
+      if (cartItems.length === 0) throw new Error('Votre panier est vide.');
+      if (!minOk) throw new Error('Il faut commander un minimum de 20€ (hors livraison).');
+      if (!hasAddress) throw new Error('Adresse de livraison obligatoire.');
+      if (!hasGeo) throw new Error('Veuillez cliquer sur « Utiliser ma position ».');
+      if (!inRange) throw new Error(`Livraison disponible uniquement dans un rayon de ${MAX_DELIVERY_KM} km.`);
+
+      const lines = cartItems
+        .map((it) => `- ${buildLineItemName(it)} x${it.quantity} = ${(it.price * it.quantity).toFixed(2)}€`)
+        .join('\n');
+
+      const summary =
+        `🧾 Commande (CASH - Livraison)\n\n` +
+        `${lines}\n\n` +
+        `Sous-total: ${itemsSubtotal.toFixed(2)}€\n` +
+        `Livraison: +${DELIVERY_FEE_EUR.toFixed(2)}€\n` +
+        `Total: ${totalWithDelivery.toFixed(2)}€\n\n` +
+        `Adresse: ${deliveryAddress.trim()}\n` +
+        (km != null ? `Distance: ${km.toFixed(1)} km\n` : '');
+
+      const canClipboard = typeof navigator !== 'undefined' && (navigator as any).clipboard?.writeText;
+      if (canClipboard) {
+        await (navigator as any).clipboard.writeText(summary);
+        setCheckoutInfo('Commande CASH copiée ✅ (tu peux la coller/envoyer)');
+      } else {
+        setCheckoutInfo('Commande CASH prête ✅ (copie manuelle nécessaire)');
+        console.log(summary);
       }
     } catch (error) {
-      console.error("Checkout failed", error);
-      const message = error instanceof Error ? error.message : "Impossible de finaliser la commande.";
+      const message = error instanceof Error ? error.message : 'Impossible de valider la commande.';
       setCheckoutError(message);
     } finally {
       setIsCheckingOut(false);
@@ -351,7 +361,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                 initial={{ y: hiddenModalY }}
                 animate={{ y: 0 }}
                 exit={{ y: hiddenModalY }}
-                transition={{ type: "tween", duration: 0.35, ease: "easeOut" }}
+                transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }}
                 className="relative bg-white w-full md:w-[600px] max-h-[90vh] md:rounded-xl shadow-2xl flex flex-col overflow-hidden pointer-events-auto"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -373,25 +383,25 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       </h4>
                       <div className="grid grid-cols-2 gap-4">
                         <button
-                          onClick={() => setVariant("Menu/Frites")}
+                          onClick={() => setVariant('Menu/Frites')}
                           className={`p-3 rounded border-2 text-sm font-bold uppercase flex flex-col items-center justify-center gap-1 transition-all ${
-                            variant === "Menu/Frites"
-                              ? "border-snack-gold bg-snack-gold/10 text-black"
-                              : "border-gray-200 text-gray-400 hover:border-gray-300"
+                            variant === 'Menu/Frites'
+                              ? 'border-snack-gold bg-snack-gold/10 text-black'
+                              : 'border-gray-200 text-gray-400 hover:border-gray-300'
                           }`}
                         >
-                          <span>{selectedCategory.id === "mitraillettes" ? "Mitraillette (+Frites)" : "Menu / Frites"}</span>
+                          <span>{selectedCategory.id === 'mitraillettes' ? 'Mitraillette (+Frites)' : 'Menu / Frites'}</span>
                           <span className="text-lg">{Number(selectedItem.price).toFixed(2)} €</span>
                         </button>
                         <button
-                          onClick={() => setVariant("Solo")}
+                          onClick={() => setVariant('Solo')}
                           className={`p-3 rounded border-2 text-sm font-bold uppercase flex flex-col items-center justify-center gap-1 transition-all ${
-                            variant === "Solo"
-                              ? "border-snack-gold bg-snack-gold/10 text-black"
-                              : "border-gray-200 text-gray-400 hover:border-gray-300"
+                            variant === 'Solo'
+                              ? 'border-snack-gold bg-snack-gold/10 text-black'
+                              : 'border-gray-200 text-gray-400 hover:border-gray-300'
                           }`}
                         >
-                          <span>{selectedCategory.id === "mitraillettes" ? "Pain Seul" : "Seul / Pain"}</span>
+                          <span>{selectedCategory.id === 'mitraillettes' ? 'Pain Seul' : 'Seul / Pain'}</span>
                           <span className="text-lg">{Number(selectedItem.priceSecondary).toFixed(2)} €</span>
                         </button>
                       </div>
@@ -435,12 +445,26 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         {VEGGIES.map((veg) => (
-                          <label key={veg} className="flex items-center space-x-2 cursor-pointer select-none p-2 rounded hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-colors">
-                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${selectedVeggies.includes(veg) ? "bg-snack-black border-snack-black" : "border-gray-300"}`}>
+                          <label
+                            key={veg}
+                            className="flex items-center space-x-2 cursor-pointer select-none p-2 rounded hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-colors"
+                          >
+                            <div
+                              className={`w-4 h-4 rounded border flex items-center justify-center ${
+                                selectedVeggies.includes(veg) ? 'bg-snack-black border-snack-black' : 'border-gray-300'
+                              }`}
+                            >
                               {selectedVeggies.includes(veg) && <div className="w-2 h-2 bg-snack-gold rounded-full"></div>}
                             </div>
-                            <input type="checkbox" checked={selectedVeggies.includes(veg)} onChange={() => handleVeggieToggle(veg)} className="hidden" />
-                            <span className={`text-sm ${selectedVeggies.includes(veg) ? "text-snack-black font-bold" : "text-gray-500"}`}>{veg}</span>
+                            <input
+                              type="checkbox"
+                              checked={selectedVeggies.includes(veg)}
+                              onChange={() => handleVeggieToggle(veg)}
+                              className="hidden"
+                            />
+                            <span className={`text-sm ${selectedVeggies.includes(veg) ? 'text-snack-black font-bold' : 'text-gray-500'}`}>
+                              {veg}
+                            </span>
                           </label>
                         ))}
                       </div>
@@ -457,13 +481,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           <label
                             key={sup.name}
                             className={`flex items-center justify-between cursor-pointer select-none p-3 border rounded transition-all ${
-                              selectedSupplements.includes(sup.name)
-                                ? "border-snack-gold bg-yellow-50/50"
-                                : "border-gray-200 hover:border-gray-300"
+                              selectedSupplements.includes(sup.name) ? 'border-snack-gold bg-yellow-50/50' : 'border-gray-200 hover:border-gray-300'
                             }`}
                           >
                             <div className="flex items-center space-x-2">
-                              <input type="checkbox" checked={selectedSupplements.includes(sup.name)} onChange={() => handleSupplementToggle(sup.name)} className="accent-snack-gold w-4 h-4" />
+                              <input
+                                type="checkbox"
+                                checked={selectedSupplements.includes(sup.name)}
+                                onChange={() => handleSupplementToggle(sup.name)}
+                                className="accent-snack-gold w-4 h-4"
+                              />
                               <span className="text-sm font-bold text-snack-black">{sup.name}</span>
                             </div>
                             <span className="text-xs font-bold text-snack-gold bg-black px-1.5 py-0.5 rounded">+{sup.price.toFixed(2)}€</span>
@@ -476,11 +503,17 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
                 <div className="p-5 border-t border-gray-200 bg-white flex items-center gap-4 shadow-up-lg">
                   <div className="flex items-center border-2 border-gray-200 rounded-lg bg-white h-12">
-                    <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="w-10 h-full flex items-center justify-center hover:bg-gray-100 text-gray-500">
+                    <button
+                      onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                      className="w-10 h-full flex items-center justify-center hover:bg-gray-100 text-gray-500"
+                    >
                       <Minus size={18} />
                     </button>
                     <span className="w-10 text-center font-bold text-lg text-snack-black">{quantity}</span>
-                    <button onClick={() => setQuantity(quantity + 1)} className="w-10 h-full flex items-center justify-center hover:bg-gray-100 text-gray-500">
+                    <button
+                      onClick={() => setQuantity(quantity + 1)}
+                      className="w-10 h-full flex items-center justify-center hover:bg-gray-100 text-gray-500"
+                    >
                       <Plus size={18} />
                     </button>
                   </div>
@@ -508,7 +541,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                 initial={{ x: hiddenCartX }}
                 animate={{ x: 0 }}
                 exit={{ x: hiddenCartX }}
-                transition={{ type: "tween", duration: 0.35, ease: "easeOut" }}
+                transition={{ type: 'tween', duration: 0.35, ease: 'easeOut' }}
                 className="fixed top-0 right-0 h-full w-full md:w-[450px] bg-white shadow-2xl flex flex-col relative pointer-events-auto"
                 onClick={(e) => e.stopPropagation()}
               >
@@ -528,7 +561,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         <h3 className="font-display font-bold text-xl uppercase text-snack-black mb-2">Vider le panier ?</h3>
                         <p className="text-gray-500 text-sm mb-6">Cette action supprimera tous les articles de votre commande.</p>
                         <div className="grid grid-cols-2 gap-3">
-                          <button onClick={() => setIsClearConfirmOpen(false)} className="py-2 rounded-lg border border-gray-200 font-bold text-gray-600 hover:bg-gray-50 transition-colors">
+                          <button
+                            onClick={() => setIsClearConfirmOpen(false)}
+                            className="py-2 rounded-lg border border-gray-200 font-bold text-gray-600 hover:bg-gray-50 transition-colors"
+                          >
                             Annuler
                           </button>
                           <button
@@ -553,7 +589,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                   </div>
                   <div className="flex items-center gap-4">
                     {cartItems.length > 0 && (
-                      <button onClick={() => setIsClearConfirmOpen(true)} className="text-xs font-bold text-gray-400 hover:text-red-500 uppercase tracking-wider transition-colors">
+                      <button
+                        onClick={() => setIsClearConfirmOpen(true)}
+                        className="text-xs font-bold text-gray-400 hover:text-red-500 uppercase tracking-wider transition-colors"
+                      >
                         Vider
                       </button>
                     )}
@@ -574,8 +613,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     </div>
                   ) : (
                     cartItems.map((item) => (
-                      <div key={item.id} className="border border-gray-200 rounded-lg p-4 shadow-sm bg-white relative group hover:border-snack-gold transition-colors">
-                        <button onClick={() => removeFromCart(item.id)} className="absolute top-3 right-3 text-gray-300 hover:text-red-500 transition-colors p-1">
+                      <div
+                        key={item.id}
+                        className="border border-gray-200 rounded-lg p-4 shadow-sm bg-white relative group hover:border-snack-gold transition-colors"
+                      >
+                        <button
+                          onClick={() => removeFromCart(item.id)}
+                          className="absolute top-3 right-3 text-gray-300 hover:text-red-500 transition-colors p-1"
+                        >
                           <Trash2 size={18} />
                         </button>
 
@@ -583,7 +628,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           <h4 className="font-bold text-snack-black text-lg">{item.name}</h4>
                           {item.variant && (
                             <span className="text-[10px] font-bold text-black uppercase bg-snack-gold px-1.5 py-0.5 rounded mr-2">
-                              {item.variant === "Menu/Frites" ? "Menu/Frites" : "Seul"}
+                              {item.variant === 'Menu/Frites' ? 'Menu/Frites' : 'Seul'}
                             </span>
                           )}
                         </div>
@@ -596,16 +641,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           )}
                           {item.selectedVeggies && (
                             <p>
-                              <span className="font-bold text-xs uppercase">Crudités:</span>{" "}
+                              <span className="font-bold text-xs uppercase">Crudités:</span>{' '}
                               {item.selectedVeggies.length === VEGGIES.length
-                                ? "Tout"
+                                ? 'Tout'
                                 : item.selectedVeggies.length === 0
-                                ? "Aucune"
-                                : item.selectedVeggies.join(", ")}
+                                ? 'Aucune'
+                                : item.selectedVeggies.join(', ')}
                             </p>
                           )}
                           {item.selectedSupplements && item.selectedSupplements.length > 0 && (
-                            <p className="text-snack-black font-bold">+ {item.selectedSupplements.join(", ")}</p>
+                            <p className="text-snack-black font-bold">+ {item.selectedSupplements.join(', ')}</p>
                           )}
                         </div>
 
@@ -634,59 +679,61 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     )}
 
                     {/* Livraison obligatoire */}
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                       <div className="font-bold text-snack-black uppercase text-sm tracking-wider">
                         Livraison <span className="text-gray-500 normal-case">( +{DELIVERY_FEE_EUR.toFixed(2)}€ )</span>
                       </div>
 
-                      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Adresse de livraison</label>
-                      <input
-                        value={deliveryAddress}
-                        onChange={(e) => setDeliveryAddress(e.target.value)}
-                        placeholder="Ex: Rue..., numéro, ville"
-                        className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
-                      />
+                      <div className="mt-3 space-y-2">
+                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Adresse de livraison</label>
+                        <input
+                          value={deliveryAddress}
+                          onChange={(e) => setDeliveryAddress(e.target.value)}
+                          placeholder="Ex: Rue..., numéro, ville"
+                          className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                        />
 
-                      <button
-                        onClick={requestGeolocation}
-                        disabled={isLocating}
-                        className={`w-full flex items-center justify-center gap-2 py-2 rounded border font-bold ${
-                          isLocating ? "opacity-70 cursor-not-allowed" : "hover:bg-white"
-                        }`}
-                      >
-                        <MapPin />
-                        {isLocating ? "Détection..." : "Utiliser ma position (10 km)"}
-                      </button>
+                        <button
+                          onClick={requestGeolocation}
+                          disabled={isLocating}
+                          className={`w-full flex items-center justify-center gap-2 py-2 rounded border font-bold ${
+                            isLocating ? 'opacity-70 cursor-not-allowed' : 'hover:bg-white'
+                          }`}
+                        >
+                          <MapPin />
+                          {isLocating ? 'Détection...' : 'Utiliser ma position (10 km)'}
+                        </button>
 
-                      {/* ⚠️ Adresse/Position */}
-                      {!addressOk && (
-                        <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                          <AlertTriangle className="mt-0.5" />
-                          <div className="text-sm text-gray-700">❗ Adresse obligatoire.</div>
-                        </div>
-                      )}
-
-                      {!hasCoords && (
-                        <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                          <AlertTriangle className="mt-0.5" />
-                          <div className="text-sm text-gray-700">
-                            ❗ Clique sur <b>« Utiliser ma position »</b> pour vérifier les 10 km.
+                        {hasGeo && km != null && (
+                          <div className="text-xs text-gray-600">
+                            Distance estimée: <b>{km.toFixed(1)} km</b> (max {MAX_DELIVERY_KM} km)
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      {hasCoords && typeof distanceKm === "number" && (
-                        <div className={`text-sm font-semibold ${zoneOk ? "text-green-700" : "text-red-600"}`}>
-                          Distance estimée: {distanceKm.toFixed(1)} km {zoneOk ? "✅" : "❌ (max 10 km)"}
-                        </div>
-                      )}
-
-                      {!zoneOk && hasCoords && (
-                        <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg p-3">
-                          <AlertTriangle className="mt-0.5 text-red-600" />
-                          <div className="text-sm text-red-700">❗ Zone de livraison limitée à 10 km autour du snack.</div>
-                        </div>
-                      )}
+                        {/* erreurs livraison */}
+                        {!hasAddress && (
+                          <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                            <AlertTriangle className="mt-0.5" />
+                            <div className="text-sm text-gray-700">Adresse de livraison obligatoire.</div>
+                          </div>
+                        )}
+                        {!hasGeo && (
+                          <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                            <AlertTriangle className="mt-0.5" />
+                            <div className="text-sm text-gray-700">
+                              Clique sur <b>« Utiliser ma position »</b> pour vérifier la zone (10 km).
+                            </div>
+                          </div>
+                        )}
+                        {hasGeo && !inRange && (
+                          <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg p-3">
+                            <AlertTriangle className="mt-0.5" />
+                            <div className="text-sm text-red-700">
+                              Livraison disponible uniquement dans un rayon de <b>{MAX_DELIVERY_KM} km</b>.
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     {/* Paiement */}
@@ -694,11 +741,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       <div className="font-bold text-snack-black uppercase text-sm tracking-wider mb-2">Moyen de paiement</div>
                       <div className="grid grid-cols-2 gap-2">
                         <button
-                          onClick={() => setPaymentMethod("stripe")}
+                          onClick={() => setPaymentMethod('stripe')}
                           className={`py-2 rounded-lg border font-bold flex items-center justify-center gap-2 ${
-                            paymentMethod === "stripe"
-                              ? "border-snack-gold bg-snack-gold/10 text-black"
-                              : "border-gray-200 text-gray-500 hover:border-gray-300"
+                            paymentMethod === 'stripe'
+                              ? 'border-snack-gold bg-snack-gold/10 text-black'
+                              : 'border-gray-200 text-gray-500 hover:border-gray-300'
                           }`}
                         >
                           <CreditCard />
@@ -706,15 +753,15 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         </button>
 
                         <button
-                          onClick={() => setPaymentMethod("cash")}
+                          onClick={() => setPaymentMethod('cash')}
                           className={`py-2 rounded-lg border font-bold flex items-center justify-center gap-2 ${
-                            paymentMethod === "cash"
-                              ? "border-snack-gold bg-snack-gold/10 text-black"
-                              : "border-gray-200 text-gray-500 hover:border-gray-300"
+                            paymentMethod === 'cash'
+                              ? 'border-snack-gold bg-snack-gold/10 text-black'
+                              : 'border-gray-200 text-gray-500 hover:border-gray-300'
                           }`}
                         >
                           <Banknote />
-                          Cash
+                          Cash (livraison)
                         </button>
                       </div>
                     </div>
@@ -733,30 +780,27 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     {/* Bouton payer */}
                     <button
                       id="checkout-btn"
-                      onClick={handleCheckout}
+                      onClick={paymentMethod === 'stripe' ? handleStripeCheckout : handleCashCheckout}
                       disabled={isCheckingOut || !minOk || !deliveryOk}
                       className={`w-full bg-snack-gold text-snack-black py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group ${
-                        isCheckingOut || !minOk || !deliveryOk
-                          ? "opacity-75 cursor-not-allowed"
-                          : "hover:bg-white hover:border-snack-black hover:border-gray-200"
+                        isCheckingOut || !minOk || !deliveryOk ? 'opacity-75 cursor-not-allowed' : 'hover:bg-white hover:border-snack-black hover:border-gray-200'
                       }`}
                     >
                       {isCheckingOut ? (
                         <span>Chargement...</span>
-                      ) : paymentMethod === "stripe" ? (
+                      ) : paymentMethod === 'stripe' ? (
                         <>
                           <CreditCard size={24} className="group-hover:scale-110 transition-transform" />
-                          <span>Payer avec Stripe</span>
+                          <span>Payer en ligne</span>
                         </>
                       ) : (
                         <>
                           <Banknote size={24} className="group-hover:scale-110 transition-transform" />
-                          <span>Valider (Cash)</span>
+                          <span>Valider (Cash livraison)</span>
                         </>
                       )}
                     </button>
 
-                    {/* Messages */}
                     {checkoutError && <p className="text-sm text-red-600 text-center font-semibold">{checkoutError}</p>}
                     {checkoutInfo && <p className="text-sm text-green-700 text-center font-semibold">{checkoutInfo}</p>}
                   </div>
