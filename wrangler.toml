@@ -1,4 +1,4 @@
-name = "snackfamily2-worker"
+name = "delicate-meadow-9436snackfamily2payments"
 main = "cloudflare-worker.ts"
 compatibility_date = "2025-12-21"
 
