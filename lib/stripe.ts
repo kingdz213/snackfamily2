@@ -32,31 +32,40 @@ export function resolveWorkerEndpoint(): string {
 
 export async function startCheckout(params: {
   items: CheckoutItem[];
+  origin: string;
   deliveryEnabled: boolean;
-  deliveryAddress: string; // requis si deliveryEnabled=true
+  deliveryAddress: string;
+  deliveryLat?: number;
+  deliveryLng?: number;
 }): Promise<void> {
-  const { items, deliveryEnabled, deliveryAddress } = params;
+  const { items, origin, deliveryEnabled, deliveryAddress, deliveryLat, deliveryLng } = params;
 
   if (!Array.isArray(items) || items.length === 0) throw new Error("CART_EMPTY: Panier vide.");
 
-  // Validation côté front (simple)
   const validatedItems = items.map((it, i) => {
     const name = String(it?.name ?? "").trim();
-    const price = typeof it?.price === "string" ? Number(String(it.price).replace(",", ".")) : Number(it?.price);
+    const price =
+      typeof (it as any)?.price === "string"
+        ? Number(String((it as any).price).replace(",", "."))
+        : Number(it?.price);
     const quantity = Number(it?.quantity);
 
     if (!name) throw new Error(`Item ${i} missing name`);
     if (!Number.isFinite(price) || price <= 0) throw new Error(`Item ${i} invalid price`);
     if (!Number.isInteger(quantity) || quantity < 1) throw new Error(`Item ${i} invalid quantity`);
+
     return { name, price, quantity };
   });
 
   const endpoint = resolveWorkerEndpoint();
 
   const payload = {
+    origin,
     items: validatedItems,
     deliveryEnabled,
     deliveryAddress: deliveryEnabled ? deliveryAddress : "",
+    deliveryLat: deliveryEnabled ? deliveryLat : undefined,
+    deliveryLng: deliveryEnabled ? deliveryLng : undefined,
   };
 
   const controller = new AbortController();
