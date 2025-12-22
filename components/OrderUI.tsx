@@ -68,14 +68,12 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   // Paiement
   const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cash'>('stripe');
 
-  // LIVRAISON UNIQUEMENT
-  const deliveryEnabled = true;
-
   // Adresse + position obligatoires
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryLat, setDeliveryLat] = useState<number | undefined>(undefined);
   const [deliveryLng, setDeliveryLng] = useState<number | undefined>(undefined);
   const [isLocating, setIsLocating] = useState(false);
+  const geoRequestLockRef = useRef(false);
 
   const bodyStyleRestoreRef = useRef<null | { overflow: string; filter: string }>(null);
 
@@ -237,10 +235,12 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   const requestGeolocation = () => {
     setCheckoutError(null);
-    setCheckoutInfo(null);
+    setCheckoutInfo('Demande de localisation…');
 
     if (!navigator.geolocation) {
-      setCheckoutError("Erreur géoloc: la géolocalisation n'est pas disponible sur cet appareil/navigateur.");
+      setIsLocating(false);
+      setCheckoutInfo(null);
+      setCheckoutError('La géolocalisation n’est pas disponible sur ce navigateur.');
       return;
     }
 
@@ -254,10 +254,29 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       },
       (err) => {
         setIsLocating(false);
-        setCheckoutError(`Erreur géoloc: ${err.message}. Pense à autoriser la localisation.`);
+        let msg = err.message;
+        if (err.code === err.PERMISSION_DENIED) {
+          msg = 'Permission de localisation refusée.';
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          msg = 'Position indisponible.';
+        } else if (err.code === err.TIMEOUT) {
+          msg = 'La demande de localisation a expiré.';
+        }
+        setCheckoutInfo(null);
+        setCheckoutError(`Erreur géoloc: ${msg}`);
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
+  };
+
+  const handleGeoButton = (event: React.PointerEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    if (geoRequestLockRef.current) return;
+    geoRequestLockRef.current = true;
+    setTimeout(() => {
+      geoRequestLockRef.current = false;
+    }, 800);
+    requestGeolocation();
   };
 
   const validateBeforeCheckout = (): boolean => {
@@ -266,7 +285,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       return false;
     }
     if (!minOk) {
-      setCheckoutError('Il faut commander un minimum de 20€ (hors livraison).');
+      setCheckoutError('Il faut commander un minimum de 20€.');
       return false;
     }
     if (!hasAddress) {
@@ -714,7 +733,9 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         />
 
                         <button
-                          onClick={requestGeolocation}
+                          type="button"
+                          onPointerUp={handleGeoButton}
+                          onTouchEnd={handleGeoButton}
                           disabled={isLocating}
                           className={`w-full flex items-center justify-center gap-2 py-2 rounded border font-bold ${
                             isLocating ? 'opacity-70 cursor-not-allowed' : 'hover:bg-white'

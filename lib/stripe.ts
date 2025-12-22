@@ -93,12 +93,12 @@ export async function startCheckout(params: StartCheckoutParams): Promise<void> 
   }
 
   if (!response.ok) {
-    let detail = raw;
+    let message = raw;
     try {
       const parsed = raw ? JSON.parse(raw) : null;
-      detail = parsed?.message || parsed?.error || raw;
+      message = parsed?.message || parsed?.details || parsed?.error || raw;
     } catch {}
-    throw new Error(`WORKER_${response.status}: ${detail || "Réponse vide"}`);
+    throw new Error(message || `WORKER_${response.status}`);
   }
 
   let data: any = null;
