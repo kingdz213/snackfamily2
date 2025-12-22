@@ -7,22 +7,14 @@ export interface CheckoutItem {
 }
 
 export type StartCheckoutParams = {
-  origin?: string; // optionnel
+  origin?: string;
   items: CheckoutItem[];
 
-  // Livraison obligatoire (car ton Worker impose adresse + 10km)
+  // livraison obligatoire
   deliveryAddress: string;
-  deliveryLat: number;
-  deliveryLng: number;
-
-  // Paiement
-  paymentMethod: "stripe" | "cash";
+  deliveryLat?: number;
+  deliveryLng?: number;
 };
-
-export type StartCheckoutResult =
-  | { ok: true; method: "stripe"; url: string; sessionId?: string; orderId?: string }
-  | { ok: true; method: "cash"; orderId: string; message?: string; totalCents?: number }
-  | { ok: false; error: string; message?: string; details?: any };
 
 const DEFAULT_WORKER_BASE_URL =
   "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
@@ -45,19 +37,17 @@ export function resolveWorkerEndpoint(): string {
 
   if (import.meta.env.DEV) return `${normalizeBaseUrl(DEFAULT_WORKER_BASE_URL)}/create-checkout-session`;
 
-  throw new Error(
-    "MISSING_WORKER_BASE_URL: VITE_WORKER_BASE_URL (ou VITE_CHECKOUT_API_URL) est manquant."
-  );
+  throw new Error("MISSING_WORKER_BASE_URL: VITE_WORKER_BASE_URL (ou VITE_CHECKOUT_API_URL) est manquant.");
 }
 
-export async function startCheckout(params: StartCheckoutParams): Promise<StartCheckoutResult> {
-  const { items, deliveryAddress, deliveryLat, deliveryLng, paymentMethod } = params;
+export async function startCheckout(params: StartCheckoutParams): Promise<void> {
+  const origin = (params.origin || window.location.origin).trim();
+  const endpoint = resolveWorkerEndpoint();
 
-  if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("CART_EMPTY: Panier vide.");
-  }
+  const deliveryAddress = String(params.deliveryAddress || "").trim();
+  if (!deliveryAddress) throw new Error("Adresse de livraison obligatoire.");
 
-  const validatedItems = items.map((it, i) => {
+  const validatedItems = params.items.map((it, i) => {
     const name = String(it?.name ?? "").trim();
     const price =
       typeof (it as any)?.price === "string"
@@ -69,19 +59,16 @@ export async function startCheckout(params: StartCheckoutParams): Promise<StartC
     if (!Number.isFinite(price) || price <= 0) throw new Error(`Item ${i} invalid price`);
     if (!Number.isInteger(quantity) || quantity < 1) throw new Error(`Item ${i} invalid quantity`);
 
-    return { name, price, quantity }; // ✅ EUROS
+    return { name, price, quantity };
   });
 
-  const endpoint = resolveWorkerEndpoint();
-
   const payload = {
+    origin,
     items: validatedItems,
-    origin: params.origin || window.location.origin,
-
-    paymentMethod,
-    deliveryAddress: String(deliveryAddress ?? "").trim(),
-    deliveryLat: Number(deliveryLat),
-    deliveryLng: Number(deliveryLng),
+    // le worker est livraison-only, donc on envoie forcément ces champs
+    deliveryAddress,
+    deliveryLat: params.deliveryLat,
+    deliveryLng: params.deliveryLng,
   };
 
   const controller = new AbortController();
@@ -105,35 +92,18 @@ export async function startCheckout(params: StartCheckoutParams): Promise<StartC
     clearTimeout(timeout);
   }
 
-  let data: any = null;
-  try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    // si le worker renvoie pas du json
-  }
-
   if (!response.ok) {
-    const msg =
-      data?.message || data?.error || raw || `Erreur Worker (${response.status})`;
-    return { ok: false, error: `WORKER_${response.status}`, message: msg, details: data };
+    let detail = raw;
+    try {
+      const parsed = raw ? JSON.parse(raw) : null;
+      detail = parsed?.message || parsed?.error || raw;
+    } catch {}
+    throw new Error(`WORKER_${response.status}: ${detail || "Réponse vide"}`);
   }
 
-  // Stripe -> redirect
-  if (data?.url) {
-    window.location.assign(data.url);
-    return { ok: true, method: "stripe", url: data.url, sessionId: data.sessionId, orderId: data.orderId };
-  }
+  const data = raw ? JSON.parse(raw) : null;
+  const url = data?.url;
+  if (!url) throw new Error("WORKER_EMPTY: aucune url retournée.");
 
-  // Cash -> pas d’URL
-  if (data?.ok && data?.method === "cash") {
-    return {
-      ok: true,
-      method: "cash",
-      orderId: data.orderId,
-      message: data.message,
-      totalCents: data.totalCents,
-    };
-  }
-
-  return { ok: false, error: "WORKER_BAD_RESPONSE", message: "Réponse Worker inattendue.", details: data };
+  window.location.assign(url);
 }
