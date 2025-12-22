@@ -1,25 +1,41 @@
-import Stripe from "stripe";
+// cloudflare-worker.ts
+// Cloudflare Worker (NO SDK, NO import) -> Stripe Checkout via fetch
+// Règles: minimum 20€ (hors livraison) + livraison 2.50€ + livraison max 10km + adresse + position obligatoires
+// Paiement CASH = géré côté front (pas besoin du Worker). Le Worker sert uniquement pour Stripe.
 
 interface Env {
   STRIPE_SECRET_KEY: string;
-  ALLOWED_ORIGIN?: string;
   DEFAULT_ORIGIN?: string;
 }
 
-const SAFE_FALLBACK_ORIGIN = "https://snackfamily2.eu";
+const FALLBACK_ORIGIN = "https://snackfamily2.eu";
 
-const ALLOWED_ORIGINS = [
+// Business rules
+const MIN_ORDER_CENTS = 2000; // 20.00€ hors livraison
+const DELIVERY_FEE_CENTS = 250; // 2.50€
+const MAX_DELIVERY_KM = 10;
+
+// Snack address: "Pl. de Wasmes 7 7340 Colfontaine"
+// Coord approximatives (ok pour rayon 10km). Tu peux affiner plus tard.
+const SHOP_LAT = 50.425226;
+const SHOP_LNG = 3.846433;
+
+const EXACT_ALLOWED_ORIGINS = new Set([
   "https://snackfamily2.eu",
+  "https://www.snackfamily2.eu",
   "http://localhost:5173",
-];
+  "http://localhost:3000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:3000",
+]);
 
-function normalizeOrigin(origin?: string | null) {
-  const value = typeof origin === "string" ? origin.trim() : "";
-  if (!value) return "";
+const VERCEL_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+
+function normalizeOrigin(raw: string | null) {
+  if (!raw || typeof raw !== "string") return "";
   try {
-    const url = new URL(value.startsWith("http") ? value : `https://${value}`);
-    const protocol = url.protocol === "http:" || url.protocol === "https:" ? url.protocol : "https:";
-    return `${protocol}//${url.host}`;
+    const u = new URL(raw);
+    return `${u.protocol}//${u.host}`;
   } catch {
     return "";
   }
@@ -27,131 +43,251 @@ function normalizeOrigin(origin?: string | null) {
 
 function isAllowedOrigin(origin: string) {
   if (!origin) return false;
-  if (ALLOWED_ORIGINS.includes(origin)) return true;
-  const vercelPattern = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
-  return vercelPattern.test(origin);
+  if (EXACT_ALLOWED_ORIGINS.has(origin)) return true;
+  if (VERCEL_PREVIEW_REGEX.test(origin)) return true;
+  return false;
 }
 
-function buildCorsHeaders(requestOrigin: string) {
-  const allowed = isAllowedOrigin(requestOrigin) ? requestOrigin : "null";
+function corsHeadersFor(origin: string) {
+  const allowed = isAllowedOrigin(origin) ? origin : FALLBACK_ORIGIN;
   return {
     "Access-Control-Allow-Origin": allowed,
-    "Access-Control-Allow-Methods": "POST,OPTIONS",
+    "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
-  } as const;
+  } as Record<string, string>;
 }
 
-function jsonResponse(status: number, data: Record<string, unknown>, requestOrigin: string) {
+function json(data: any, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
-      "Content-Type": "application/json",
-      ...buildCorsHeaders(requestOrigin),
+      "Content-Type": "application/json; charset=utf-8",
+      ...headers,
     },
   });
 }
 
-function validateItems(raw: unknown) {
-  if (!Array.isArray(raw) || raw.length === 0) {
-    return { error: "INVALID_ITEMS", message: "items doit être un tableau non vide" } as const;
-  }
-
-  const items = raw.map((item, idx) => {
-    const name = typeof (item as any)?.name === "string" ? (item as any).name.trim() : "";
-    const price = Number((item as any)?.price);
-    const quantity = Number((item as any)?.quantity);
-
-    if (!name) {
-      throw { code: "ITEM_NAME", message: `items[${idx}].name est requis` };
-    }
-
-    if (!Number.isInteger(price) || price <= 0) {
-      throw { code: "ITEM_PRICE", message: `items[${idx}].price doit être un entier > 0 (centimes)` };
-    }
-
-    if (!Number.isInteger(quantity) || quantity < 1) {
-      throw { code: "ITEM_QUANTITY", message: `items[${idx}].quantity doit être un entier >= 1` };
-    }
-
-    return { name, price, quantity };
+function text(data: string, status = 200, headers: Record<string, string> = {}) {
+  return new Response(data, {
+    status,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      ...headers,
+    },
   });
-
-  return { items } as const;
 }
 
-async function handlePost(request: Request, env: Env, requestOrigin: string) {
-  if (!env.STRIPE_SECRET_KEY) {
-    return jsonResponse(500, { error: "SERVER_MISCONFIGURED", details: "STRIPE_SECRET_KEY manquant" }, requestOrigin);
+// Accepte EUROS (14.50) OU CENTIMES (1450)
+function toCentsSmart(price: unknown): number | null {
+  const n = Number(price);
+  if (!Number.isFinite(n) || n <= 0) return null;
+
+  if (Number.isInteger(n) && n >= 100) return n; // déjà centimes
+  return Math.round(n * 100); // euros -> centimes
+}
+
+type NormalizedItem = { name: string; quantity: number; cents: number };
+
+function validateItems(items: any): { items: NormalizedItem[] } | { error: string; message: string } {
+  if (!Array.isArray(items) || items.length === 0) {
+    return { error: "ITEMS_INVALID", message: "items must be a non-empty array" };
   }
 
-  let body: any;
-  try {
-    body = await request.json();
-  } catch {
-    return jsonResponse(400, { error: "INVALID_JSON" }, requestOrigin);
+  const normalized: NormalizedItem[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const name = String(it?.name ?? "").trim();
+    const quantity = Number(it?.quantity ?? 1);
+    const cents = toCentsSmart(it?.price);
+
+    if (!name) return { error: "ITEM_NAME_MISSING", message: `items[${i}].name missing` };
+    if (!Number.isInteger(quantity) || quantity <= 0)
+      return { error: "ITEM_QTY_INVALID", message: `items[${i}].quantity must be integer > 0` };
+    if (!Number.isInteger(cents) || cents <= 0)
+      return { error: "ITEM_PRICE_INVALID", message: `items[${i}].price must be > 0 (euros or cents)` };
+
+    normalized.push({ name, quantity, cents });
   }
 
-  const originFromBody = normalizeOrigin(body?.origin);
-  const headerOrigin = normalizeOrigin(request.headers.get("Origin"));
-  const requestedOrigin = originFromBody || headerOrigin;
-  const checkoutOrigin = isAllowedOrigin(requestedOrigin) ? requestedOrigin : SAFE_FALLBACK_ORIGIN;
+  return { items: normalized };
+}
 
-  let items: { name: string; price: number; quantity: number }[];
-  try {
-    const result = validateItems(body?.items);
-    if ("error" in result) {
-      return jsonResponse(400, { error: result.error, details: result.message }, requestOrigin);
-    }
-    items = result.items;
-  } catch (err: any) {
-    return jsonResponse(400, { error: err?.code || "ITEM_VALIDATION", details: err?.message }, requestOrigin);
+function subtotalCents(items: NormalizedItem[]) {
+  return items.reduce((sum, it) => sum + it.cents * it.quantity, 0);
+}
+
+// Haversine (km)
+function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const R = 6371;
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+async function createCheckoutSession(params: {
+  items: NormalizedItem[];
+  origin: string;
+  stripeSecretKey: string;
+  deliveryAddress: string;
+  deliveryLat: number;
+  deliveryLng: number;
+  distance: number;
+}) {
+  const { items, origin, stripeSecretKey, deliveryAddress, deliveryLat, deliveryLng, distance } = params;
+
+  const form = new URLSearchParams();
+  form.set("mode", "payment");
+  form.set("success_url", `${origin}/success?session_id={CHECKOUT_SESSION_ID}`);
+  form.set("cancel_url", `${origin}/cancel`);
+
+  // Adresse demandée dans Stripe Checkout (en plus de ce que tu collectes côté site)
+  form.append("shipping_address_collection[allowed_countries][]", "BE");
+  form.append("shipping_address_collection[allowed_countries][]", "FR");
+  form.set("phone_number_collection[enabled]", "true");
+
+  // Metadata (utile pour retrouver l'adresse/zone côté Stripe)
+  form.set("metadata[min_order_cents]", String(MIN_ORDER_CENTS));
+  form.set("metadata[delivery_fee_cents]", String(DELIVERY_FEE_CENTS));
+  form.set("metadata[delivery_address]", deliveryAddress);
+  form.set("metadata[delivery_lat]", String(deliveryLat));
+  form.set("metadata[delivery_lng]", String(deliveryLng));
+  form.set("metadata[delivery_distance_km]", distance.toFixed(3));
+
+  // Items
+  let idx = 0;
+  for (const item of items) {
+    form.set(`line_items[${idx}][quantity]`, String(item.quantity));
+    form.set(`line_items[${idx}][price_data][currency]`, "eur");
+    form.set(`line_items[${idx}][price_data][unit_amount]`, String(item.cents));
+    form.set(`line_items[${idx}][price_data][product_data][name]`, item.name);
+    idx++;
   }
 
-  const stripeClient = new Stripe(env.STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" });
+  // Livraison (2.50€) toujours ajoutée
+  form.set(`line_items[${idx}][quantity]`, "1");
+  form.set(`line_items[${idx}][price_data][currency]`, "eur");
+  form.set(`line_items[${idx}][price_data][unit_amount]`, String(DELIVERY_FEE_CENTS));
+  form.set(`line_items[${idx}][price_data][product_data][name]`, "Livraison");
 
-  const line_items: Stripe.Checkout.SessionCreateParams.LineItem[] = items.map((item) => ({
-    price_data: {
-      currency: "eur",
-      product_data: { name: item.name },
-      unit_amount: item.price,
+  const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${stripeSecretKey}`,
+      "Content-Type": "application/x-www-form-urlencoded",
     },
-    quantity: item.quantity,
-  }));
+    body: form.toString(),
+  });
 
+  const bodyText = await res.text();
+  let bodyJson: any = null;
   try {
-    const session = await stripeClient.checkout.sessions.create({
-      mode: "payment",
-      line_items,
-      success_url: `${checkoutOrigin}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${checkoutOrigin}/cancel`,
-    });
+    bodyJson = JSON.parse(bodyText);
+  } catch {}
 
-    return jsonResponse(200, { url: session.url, sessionId: session.id }, requestOrigin);
-  } catch (err: any) {
-    const message = err?.message || "Impossible de créer la session";
-    return jsonResponse(500, { error: "STRIPE_ERROR", details: message }, requestOrigin);
+  if (!res.ok) {
+    return { ok: false, status: res.status, stripe: bodyJson ?? bodyText };
   }
+  return { ok: true, session: bodyJson };
 }
 
 export default {
   async fetch(request: Request, env: Env) {
-    const url = new URL(request.url);
-    const headerOrigin = normalizeOrigin(request.headers.get("Origin"));
+    const requestOrigin = normalizeOrigin(request.headers.get("Origin"));
+    const cors = corsHeadersFor(requestOrigin);
 
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: buildCorsHeaders(headerOrigin) });
+      return new Response(null, { status: 204, headers: cors });
+    }
+
+    const url = new URL(request.url);
+
+    if (request.method === "GET" && url.pathname === "/health") {
+      return text("OK", 200, cors);
     }
 
     if (url.pathname !== "/create-checkout-session") {
-      return jsonResponse(404, { error: "NOT_FOUND" }, headerOrigin);
+      return json({ error: "NOT_FOUND" }, 404, cors);
     }
 
     if (request.method !== "POST") {
-      return jsonResponse(405, { error: "METHOD_NOT_ALLOWED" }, headerOrigin);
+      return json({ error: "METHOD_NOT_ALLOWED" }, 405, cors);
     }
 
-    return handlePost(request, env, headerOrigin);
+    try {
+      if (!env.STRIPE_SECRET_KEY) {
+        return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_SECRET_KEY" }, 500, cors);
+      }
+
+      const body: any = await request.json().catch(() => null);
+      if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+
+      const validation = validateItems(body.items);
+      if ("error" in validation) return json(validation, 400, cors);
+
+      // Minimum 20€ hors livraison
+      const sub = subtotalCents(validation.items);
+      if (sub < MIN_ORDER_CENTS) {
+        return json(
+          { error: "MIN_ORDER_NOT_MET", message: "Il faut commander un minimum de 20€ (hors livraison)." },
+          400,
+          cors
+        );
+      }
+
+      // Livraison obligatoire: adresse + coords
+      const deliveryAddress = String(body.deliveryAddress ?? "").trim();
+      const deliveryLat = Number(body.deliveryLat);
+      const deliveryLng = Number(body.deliveryLng);
+
+      if (!deliveryAddress) {
+        return json({ error: "DELIVERY_ADDRESS_REQUIRED", message: "Adresse de livraison obligatoire." }, 400, cors);
+      }
+      if (!Number.isFinite(deliveryLat) || !Number.isFinite(deliveryLng)) {
+        return json({ error: "DELIVERY_POSITION_REQUIRED", message: "Position obligatoire (géolocalisation)." }, 400, cors);
+      }
+
+      // Zone 10km
+      const km = distanceKm(SHOP_LAT, SHOP_LNG, deliveryLat, deliveryLng);
+      if (km > MAX_DELIVERY_KM) {
+        return json(
+          { error: "DELIVERY_OUT_OF_RANGE", message: `Livraison uniquement dans un rayon de ${MAX_DELIVERY_KM} km.` },
+          400,
+          cors
+        );
+      }
+
+      const checkoutOrigin = isAllowedOrigin(requestOrigin)
+        ? requestOrigin
+        : (env.DEFAULT_ORIGIN || FALLBACK_ORIGIN);
+
+      const result = await createCheckoutSession({
+        items: validation.items,
+        origin: checkoutOrigin,
+        stripeSecretKey: String(env.STRIPE_SECRET_KEY),
+        deliveryAddress,
+        deliveryLat,
+        deliveryLng,
+        distance: km,
+      });
+
+      if (!result.ok) {
+        return json({ error: "STRIPE_API_ERROR", status: result.status, details: result.stripe }, 502, cors);
+      }
+
+      if (!result.session?.url) {
+        return json({ error: "STRIPE_NO_URL", details: result.session }, 502, cors);
+      }
+
+      return json({ url: result.session.url, sessionId: result.session.id }, 200, cors);
+    } catch (e: any) {
+      return json({ error: "WORKER_ERROR", details: e?.message ?? String(e) }, 500, cors);
+    }
   },
 };
