@@ -361,30 +361,54 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     if (!navigator.geolocation) {
       setIsLocating(false);
       setCheckoutInfo(null);
-      setCheckoutError('La géolocalisation n’est pas disponible sur ce navigateur.');
+      setCheckoutError('Erreur géoloc: La géolocalisation n’est pas disponible sur ce navigateur.');
       return;
     }
 
     setIsLocating(true);
+
+    const getGeoErrorMessage = (code?: number, fallback?: string) => {
+      if (code === 1) {
+        return 'Permission de localisation refusée. Autorisez la localisation pour ce site dans les réglages du navigateur.';
+      }
+      if (code === 2) {
+        return 'Position indisponible. Activez le GPS et réessayez.';
+      }
+      if (code === 3) {
+        return 'La demande de localisation a expiré. Placez-vous près d’une fenêtre et réessayez.';
+      }
+      return fallback || 'Impossible de récupérer votre position.';
+    };
+
+    let resolved = false;
+
+    const handleSuccess = (pos: GeolocationPosition) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeoutId);
+      setIsLocating(false);
+      setDeliveryLat(pos.coords.latitude);
+      setDeliveryLng(pos.coords.longitude);
+      setCheckoutInfo('Position détectée ✅');
+    };
+
+    const handleError = (code?: number, message?: string) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeoutId);
+      setIsLocating(false);
+      setCheckoutInfo(null);
+      setCheckoutError(`Erreur géoloc: ${getGeoErrorMessage(code, message)}`);
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      handleError(3, 'La demande de localisation a expiré.');
+    }, 10000);
+
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setIsLocating(false);
-        setDeliveryLat(pos.coords.latitude);
-        setDeliveryLng(pos.coords.longitude);
-        setCheckoutInfo('Position détectée ✅');
-      },
+      (pos) => handleSuccess(pos),
       (err) => {
-        setIsLocating(false);
-        let msg = err.message;
-        if (err.code === err.PERMISSION_DENIED) {
-          msg = 'Permission de localisation refusée.';
-        } else if (err.code === err.POSITION_UNAVAILABLE) {
-          msg = 'Position indisponible.';
-        } else if (err.code === err.TIMEOUT) {
-          msg = 'La demande de localisation a expiré.';
-        }
-        setCheckoutInfo(null);
-        setCheckoutError(`Erreur géoloc: ${msg}`);
+        handleError(err.code, err.message);
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
