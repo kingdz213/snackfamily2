@@ -347,7 +347,13 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         quantity: Math.max(1, Math.trunc(item.quantity)),
       }));
 
-      await startCheckout(items);
+      await startCheckout({
+        origin: window.location.origin,
+        items,
+        deliveryAddress: deliveryAddress.trim(),
+        deliveryLat: Number(deliveryLat),
+        deliveryLng: Number(deliveryLng),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
       setCheckoutError(message);
