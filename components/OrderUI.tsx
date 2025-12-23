@@ -24,6 +24,7 @@ interface OrderUIProps {
 const MIN_ORDER_EUR = 20;
 const DELIVERY_FEE_EUR = 2.5;
 const MAX_DELIVERY_KM = 10;
+const TEN_KM_ACK_KEY = 'sf2_10km_ack';
 
 // ⚠️ Coordonnées approx du snack (ajuste si besoin)
 const SHOP_LAT = 50.425226;
@@ -64,6 +65,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutInfo, setCheckoutInfo] = useState<string | null>(null);
+  const [has10kmAck, setHas10kmAck] = useState(false);
 
   // Paiement
   const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cash'>('stripe');
@@ -94,6 +96,12 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   useEffect(() => {
     logDev('[OrderUI] state', { isCartOpen, isOrderModalOpen, screenW, overlayOpen });
   }, [isCartOpen, isOrderModalOpen, screenW, overlayOpen]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = window.localStorage.getItem(TEN_KM_ACK_KEY);
+    setHas10kmAck(stored === '1');
+  }, []);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -194,6 +202,13 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
     addToCart(newItem);
     closeOrderModal();
+  };
+
+  const handleAck10km = () => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(TEN_KM_ACK_KEY, '1');
+    }
+    setHas10kmAck(true);
   };
 
   const itemsSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -704,6 +719,22 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
                 {cartItems.length > 0 && (
                   <div className="p-6 border-t border-gray-200 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)] space-y-4">
+                    {!has10kmAck && (
+                      <div className="flex items-center gap-3 bg-snack-black text-white border border-snack-gold/40 rounded-lg p-3">
+                        <MapPin className="text-snack-gold" />
+                        <div className="flex-1 text-sm">
+                          <div className="font-bold uppercase tracking-wider text-snack-gold">Livraison</div>
+                          <div>Livraison dans un rayon de 10km.</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleAck10km}
+                          className="px-3 py-1 rounded-md bg-snack-gold text-snack-black font-bold uppercase text-xs tracking-wider hover:bg-white transition-colors"
+                        >
+                          OK
+                        </button>
+                      </div>
+                    )}
                     {/* ⚠️ Minimum commande */}
                     {!minOk && (
                       <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
