@@ -192,11 +192,12 @@ function App() {
       )}
 
       {/* Interface Modale Commande + Panier */}
-      <OrderUI 
+      <OrderUI
         isOrderModalOpen={isOrderModalOpen}
         selectedItem={selectedItem}
         selectedCategory={selectedCategory}
         closeOrderModal={closeOrderModal}
+        openOrderModal={openOrderModal}
         addToCart={addToCart}
         
         isCartOpen={isCartOpen}
