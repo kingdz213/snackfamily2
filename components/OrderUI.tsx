@@ -343,17 +343,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     try {
       const items = cartItems.map((item) => ({
         name: buildLineItemName(item),
-        price: Number(item.price), // EUROS (le worker gère la conversion)
+        price: Math.round(Number(item.price) * 100),
         quantity: Math.max(1, Math.trunc(item.quantity)),
       }));
 
-      await startCheckout({
-        origin: window.location.origin,
-        items,
-        deliveryAddress: deliveryAddress.trim(),
-        deliveryLat: Number(deliveryLat),
-        deliveryLng: Number(deliveryLng),
-      });
+      await startCheckout(items);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
       setCheckoutError(message);
