@@ -443,16 +443,18 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-      const items = cartItems.map((item) => ({
-        name: buildLineItemName(item),
-        price: Math.round(Number(item.price) * 100),
-        quantity: Math.max(1, Math.trunc(item.quantity)),
+      const deliveryAddress = formattedDeliveryAddress;
+
+      const items = cartItems.map((it) => ({
+        name: buildLineItemName(it),
+        price: Math.round(Number(it.price) * 100),
+        quantity: Math.max(1, Math.trunc(it.quantity)),
       }));
 
       await startCheckout({
         origin: window.location.origin,
         items,
-        deliveryAddress: formattedDeliveryAddress.trim(),
+        deliveryAddress: deliveryAddress.trim(),
         deliveryLat: Number(deliveryLat),
         deliveryLng: Number(deliveryLng),
       });
