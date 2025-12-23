@@ -25,11 +25,11 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
   };
 
   return (
-    <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg min-h-[88px] sm:min-h-[96px]">
-      <div className="container mx-auto px-4 py-3 sm:py-0 h-full flex justify-between items-center">
+    <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg min-h-[96px] sm:min-h-[104px]">
+      <div className="container mx-auto px-4 py-4 h-full flex items-center justify-between gap-4 sm:gap-6">
         
         {/* LOGO */}
-        <button onClick={() => handleNav('home')} className="flex flex-col group text-left">
+        <button onClick={() => handleNav('home')} className="flex flex-col group text-left shrink-0">
             <h1 className="font-display font-bold text-white text-4xl tracking-tighter uppercase group-hover:text-snack-gold transition-colors leading-none">
                 Snack Family <span className="text-snack-gold">2</span>
             </h1>
@@ -55,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
             </button>
           ))}
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 shrink-0">
               {/* Cart Toggle Icon */}
               <button 
                 onClick={toggleCart}
@@ -85,7 +85,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
         </nav>
 
         {/* Mobile Menu Controls */}
-        <div className="flex lg:hidden items-center gap-6">
+        <div className="flex lg:hidden items-center gap-6 shrink-0">
             <button
               onClick={toggleCart}
               className="relative text-snack-gold p-2 hover:text-white transition-colors"
