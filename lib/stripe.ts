@@ -1,10 +1,18 @@
 // src/lib/stripe.ts
 
-export interface CheckoutItem {
+export type CheckoutItem = {
   name: string;
-  price: number; // CENTIMES (ex: 750 => 7,50€)
+  price: number;
   quantity: number;
-}
+};
+
+export type CheckoutPayload = {
+  items: CheckoutItem[];
+  deliveryAddress: string;
+  deliveryLat: number;
+  deliveryLng: number;
+  origin?: string;
+};
 
 const DEFAULT_WORKER_BASE_URL =
   "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
@@ -28,13 +36,12 @@ export function resolvePublicOrigin(): string {
   throw new Error("PUBLIC_ORIGIN_UNAVAILABLE");
 }
 
-export async function startCheckout(items: CheckoutItem[]): Promise<void> {
-  const dev = import.meta.env.DEV;
-  const logDev = (...args: unknown[]) => {
-    if (dev) console.log(...args);
-  };
+function sanitizeItems(items: CheckoutItem[]): CheckoutItem[] {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("At least one item is required");
+  }
 
-  const sanitizedItems = items.map((item, index) => {
+  return items.map((item, index) => {
     const name = String(item?.name ?? "").trim();
     const price = Number(item?.price);
     const quantity = Number(item?.quantity);
@@ -45,11 +52,37 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
 
     return { name, price, quantity };
   });
+}
+
+function sanitizeCoordinates(value: number, label: string): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    throw new Error(`${label} is required`);
+  }
+  return num;
+}
+
+export async function startCheckout(payload: CheckoutPayload): Promise<void> {
+  const dev = import.meta.env.DEV;
+  const logDev = (...args: unknown[]) => {
+    if (dev) console.log(...args);
+  };
+
+  const deliveryAddress = String(payload?.deliveryAddress ?? "").trim();
+  if (!deliveryAddress) throw new Error("Delivery address is required");
+
+  const deliveryLat = sanitizeCoordinates(payload?.deliveryLat, "Delivery latitude");
+  const deliveryLng = sanitizeCoordinates(payload?.deliveryLng, "Delivery longitude");
+
+  const sanitizedItems = sanitizeItems(payload?.items ?? []);
 
   const endpoint = `${resolveWorkerBaseUrl()}/create-checkout-session`;
-  const payload = {
+  const body: CheckoutPayload = {
     items: sanitizedItems,
-    origin: resolvePublicOrigin(),
+    deliveryAddress,
+    deliveryLat,
+    deliveryLng,
+    origin: payload?.origin ?? resolvePublicOrigin(),
   };
 
   const controller = new AbortController();
@@ -59,11 +92,11 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
   let text = "";
 
   try {
-    logDev("[stripe] POST", endpoint, payload);
+    logDev("[stripe] POST", endpoint, body);
     response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     text = await response.text();
@@ -93,5 +126,10 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
 }
 
 export async function runDevTest() {
-  return startCheckout([{ name: "Test", price: 100, quantity: 1 }]);
+  return startCheckout({
+    items: [{ name: "Test", price: 100, quantity: 1 }],
+    deliveryAddress: "test address",
+    deliveryLat: 0,
+    deliveryLng: 0,
+  });
 }
