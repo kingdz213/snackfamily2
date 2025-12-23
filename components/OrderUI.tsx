@@ -123,7 +123,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
     try {
       const ack = localStorage.getItem('sf2_10km_ack');
-      setShowDistanceBanner(!ack);
+      setShowDistanceBanner(ack !== '1');
     } catch (error) {
       warnDev('[OrderUI] Failed to read distance banner ack', error);
       setShowDistanceBanner(false);
@@ -1010,20 +1010,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         </div>
                       </div>
 
-                        {showDistanceBanner && (
-                          <div className="bg-black text-white rounded-lg p-3 flex items-center justify-between gap-3">
-                            <div className="text-sm font-medium">
-                              Livraison disponible dans un rayon de 10 km autour du snack.
-                            </div>
-                            <button
-                              onClick={handleDistanceBannerAck}
-                              className="bg-snack-gold text-black px-3 py-1 rounded font-bold uppercase text-xs hover:bg-white transition-colors"
-                            >
-                              OK
-                            </button>
-                          </div>
-                        )}
-
                         {/* Paiement */}
                         <div className="bg-white border border-gray-200 rounded-lg p-3">
                           <div className="font-bold text-snack-black uppercase text-sm tracking-wider mb-2">Moyen de paiement</div>
@@ -1079,6 +1065,18 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {showDistanceBanner && (
+                    <div className="mx-6 mb-3 bg-black text-white rounded-lg p-3 flex items-center justify-between gap-3 shadow-lg">
+                      <div className="text-sm font-bold">Livraison max 10 km</div>
+                      <button
+                        onClick={handleDistanceBannerAck}
+                        className="bg-snack-gold text-black px-3 py-1 rounded font-bold uppercase text-xs hover:bg-white transition-colors"
+                      >
+                        OK
+                      </button>
+                    </div>
+                  )}
 
                   {cartItems.length > 0 && (
                     <div
