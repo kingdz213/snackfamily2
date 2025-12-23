@@ -25,15 +25,15 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
   };
 
   return (
-    <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg h-24">
-      <div className="container mx-auto px-4 h-full flex justify-between items-center">
+    <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg min-h-[88px] sm:min-h-[96px]">
+      <div className="container mx-auto px-4 py-3 sm:py-0 h-full flex justify-between items-center">
         
         {/* LOGO */}
         <button onClick={() => handleNav('home')} className="flex flex-col group text-left">
             <h1 className="font-display font-bold text-white text-4xl tracking-tighter uppercase group-hover:text-snack-gold transition-colors leading-none">
                 Snack Family <span className="text-snack-gold">2</span>
             </h1>
-            <span className="text-gray-400 text-[10px] font-bold tracking-[0.4em] uppercase mt-1 group-hover:text-white transition-colors">
+            <span className="text-gray-400 text-[11px] font-bold tracking-[0.4em] uppercase mt-1 group-hover:text-white transition-colors">
                 Colfontaine
             </span>
         </button>
@@ -86,12 +86,12 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
 
         {/* Mobile Menu Controls */}
         <div className="flex lg:hidden items-center gap-6">
-            <button 
+            <button
               onClick={toggleCart}
-              className="relative text-snack-gold p-1 hover:text-white transition-colors"
+              className="relative text-snack-gold p-2 hover:text-white transition-colors"
               aria-label="Voir le panier"
             >
-               <ShoppingBag size={28} />
+               <ShoppingBag size={30} />
                {cartCount > 0 && (
                    <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center border border-snack-black">
                      {cartCount}
