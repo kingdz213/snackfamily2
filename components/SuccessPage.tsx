@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle, Home, MessageCircle } from 'lucide-react';
 import { Page } from '../types';
 import { LAST_ORDER_STORAGE_KEY, WhatsAppOrderParams, openWhatsAppOrder } from '../lib/whatsapp';
@@ -9,8 +9,9 @@ interface SuccessPageProps {
 
 export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
   const [whatsAppError, setWhatsAppError] = useState<string | null>(null);
+  const hasAutoSentRef = useRef(false);
 
-  const handleSendWhatsApp = () => {
+  const handleSendWhatsApp = useCallback(() => {
     setWhatsAppError(null);
 
     try {
@@ -32,7 +33,13 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
       console.error('[SuccessPage] Failed to open WhatsApp', error);
       setWhatsAppError("Impossible de préparer le message WhatsApp.");
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (hasAutoSentRef.current) return;
+    hasAutoSentRef.current = true;
+    handleSendWhatsApp();
+  }, [handleSendWhatsApp]);
 
   return (
     <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-4 py-20 bg-gray-50">

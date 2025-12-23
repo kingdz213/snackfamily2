@@ -240,6 +240,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const handleAddToCart = () => {
     if (!selectedItem) return;
 
+    if (selectedItem.unavailable) {
+      setCheckoutError('Cet article est indisponible pour le moment.');
+      return;
+    }
+
     const itemTotal = getCurrentItemPrice();
 
     const newItem: CartItem = {
@@ -259,6 +264,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   const itemsSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalWithDelivery = itemsSubtotal + DELIVERY_FEE_EUR;
+  const isSelectedItemUnavailable = selectedItem?.unavailable ?? false;
   const recommendations = useMemo(() => getRecommendations(cartItems, MENU_CATEGORIES), [cartItems]);
   const recommendationMissing = recommendations.missing;
   const hasCompletionSuggestions = recommendationMissing > 0 && recommendations.suggestions.length > 0;
@@ -336,6 +342,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   };
 
   const handleSuggestionAdd = (item: MenuItem, category: MenuCategory) => {
+    if (item.unavailable) return;
+
     const basePrice = Number(item.price);
     const hasOptions = category.hasSauces || category.hasSupplements || category.hasVeggies || item.priceSecondary !== undefined;
 
@@ -580,6 +588,9 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     <h3 className="font-display font-bold text-2xl uppercase tracking-wide">{selectedItem.name}</h3>
                     <span className="text-snack-gold text-sm font-medium uppercase tracking-wider">{selectedCategory.title}</span>
                   </div>
+                  {selectedItem.unavailable && (
+                    <span className="bg-red-100 text-red-600 text-[10px] font-bold uppercase px-2 py-1 rounded">Indisponible</span>
+                  )}
                   <button onClick={closeOrderModal} className="p-2 hover:bg-white/20 rounded-full transition-colors">
                     <X size={24} />
                   </button>
@@ -730,9 +741,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
                   <button
                     onClick={handleAddToCart}
-                    className="flex-1 bg-snack-gold text-snack-black h-14 rounded-lg font-display font-bold text-lg uppercase tracking-wide hover:bg-black hover:text-snack-gold transition-all duration-200 flex items-center justify-between px-6 shadow-lg active:scale-95 active:bg-green-600 active:text-white"
+                    disabled={isSelectedItemUnavailable}
+                    className={`flex-1 bg-snack-gold text-snack-black h-14 rounded-lg font-display font-bold text-lg uppercase tracking-wide transition-all duration-200 flex items-center justify-between px-6 shadow-lg active:scale-95 active:bg-green-600 active:text-white ${
+                      isSelectedItemUnavailable
+                        ? 'opacity-60 cursor-not-allowed'
+                        : 'hover:bg-black hover:text-snack-gold'
+                    }`}
                   >
-                    <span>Ajouter</span>
+                    <span>{isSelectedItemUnavailable ? 'Indisponible' : 'Ajouter'}</span>
                     <span>{(getCurrentItemPrice() * quantity).toFixed(2)} €</span>
                   </button>
                 </div>
@@ -1060,7 +1076,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                               }`}
                             >
                               <CreditCard />
-                              Stripe
+                              Payer en ligne
                             </button>
 
                             <button

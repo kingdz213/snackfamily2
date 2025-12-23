@@ -34,20 +34,26 @@ function formatTimestamp(timestampIso?: string) {
 }
 
 function sanitizePhone(phone: string) {
-  return phone.replace(/\s+/g, '').replace(/[^+\d]/g, '');
+  return phone.replace(/\s+/g, '').replace(/[^+\d]/g, '').replace(/^\+/, '');
 }
 
 export function getWhatsAppPhone(): string {
-  return import.meta.env.VITE_ORDER_WHATSAPP_PHONE || '';
+  // VITE_WHATSAPP_ORDER_PHONE = wa.me format (no plus/space). Legacy fallback kept for safety.
+  return import.meta.env.VITE_WHATSAPP_ORDER_PHONE || import.meta.env.VITE_ORDER_WHATSAPP_PHONE || '';
 }
 
 export function buildOrderWhatsAppMessage(params: WhatsAppOrderParams): string {
   const paymentLabel =
-    params.paymentStatus === 'stripe' ? 'PAYÉ (Stripe)' : 'À PAYER (Cash à la livraison)';
+    params.paymentStatus === 'stripe'
+      ? 'PAYÉ EN LIGNE'
+      : 'PAIEMENT CASH (À LA LIVRAISON)';
 
   const itemsLines = params.items.length
     ? params.items
-        .map((item) => `- ${item.quantity}x ${item.label} — ${formatCurrency(item.unitPrice * item.quantity)}`)
+        .map((item) => {
+          const lineTotal = formatCurrency(item.unitPrice * item.quantity);
+          return `- ${item.quantity}x ${item.label} • ${lineTotal}`;
+        })
         .join('\n')
     : '- (aucun article)';
 
@@ -58,21 +64,23 @@ export function buildOrderWhatsAppMessage(params: WhatsAppOrderParams): string {
       : '';
 
   const header = '🧾 NOUVELLE COMMANDE — Snack Family 2';
+  const addressLine = `${params.address || '-'}`;
+  const cityLine = `${params.postalCode} ${params.city}`.trim();
 
   return (
     `${header}\n` +
-    `Statut paiement: ${paymentLabel}\n` +
-    `Nom: ${params.customerName || 'Inconnu'}\n` +
-    `Téléphone: ${params.customerPhone || '-'}\n` +
-    `Adresse: ${params.address || '-'}\n` +
-    `Ville: ${params.postalCode} ${params.city}` +
-    (distanceLine ? `\n${distanceLine}` : '\n') +
-    `Articles:\n${itemsLines}\n` +
-    `Sous-total: ${formatCurrency(params.subtotal)}\n` +
-    `Livraison: ${formatCurrency(params.deliveryFee)}\n` +
-    `Total: ${formatCurrency(params.total)}\n` +
-    `Notes: ${notes}\n` +
-    `Heure: ${formatTimestamp(params.timestampIso)}`
+    `Statut : ${paymentLabel}\n` +
+    `Date/heure : ${formatTimestamp(params.timestampIso)}\n` +
+    `Nom : ${params.customerName || 'Inconnu'}\n` +
+    `Téléphone : ${params.customerPhone || '-'}\n` +
+    `Adresse : ${addressLine}\n` +
+    `Ville : ${cityLine || '-'}\n` +
+    distanceLine +
+    `Articles :\n${itemsLines}\n` +
+    `Sous-total : ${formatCurrency(params.subtotal)}\n` +
+    `Livraison : ${formatCurrency(params.deliveryFee)}\n` +
+    `Total : ${formatCurrency(params.total)}\n` +
+    `Notes : ${notes}`
   );
 }
 
