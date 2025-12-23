@@ -29,6 +29,15 @@ const MAX_DELIVERY_KM = 10;
 const SHOP_LAT = 50.425226;
 const SHOP_LNG = 3.846433;
 
+type DeliveryInfo = {
+  name: string;
+  phone: string;
+  address: string;
+  postalCode: string;
+  city: string;
+  note: string;
+};
+
 function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const R = 6371;
   const toRad = (v: number) => (v * Math.PI) / 180;
@@ -63,17 +72,26 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [checkoutInfo, setCheckoutInfo] = useState<string | null>(null);
 
   // Paiement
   const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cash'>('stripe');
 
   // Adresse + position obligatoires
-  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryInfo, setDeliveryInfo] = useState<DeliveryInfo>({
+    name: '',
+    phone: '',
+    address: '',
+    postalCode: '',
+    city: '',
+    note: '',
+  });
   const [deliveryLat, setDeliveryLat] = useState<number | undefined>(undefined);
   const [deliveryLng, setDeliveryLng] = useState<number | undefined>(undefined);
   const [isLocating, setIsLocating] = useState(false);
   const geoRequestLockRef = useRef(false);
+  const checkoutFormRef = useRef<HTMLFormElement | null>(null);
 
   const bodyStyleRestoreRef = useRef<null | { overflow: string; filter: string }>(null);
 
@@ -90,6 +108,32 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const hiddenModalY = Math.max(safeH, 900);
 
   const overlayOpen = isCartOpen || (isOrderModalOpen && !!selectedItem && !!selectedCategory);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      const stored = window.localStorage.getItem('sf2_delivery');
+      if (stored) {
+        const parsed = JSON.parse(stored) as Partial<DeliveryInfo>;
+        setDeliveryInfo((prev) => ({
+          ...prev,
+          ...parsed,
+        }));
+      }
+    } catch (error) {
+      warnDev('[OrderUI] Impossible de charger sf2_delivery', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem('sf2_delivery', JSON.stringify(deliveryInfo));
+    } catch (error) {
+      warnDev('[OrderUI] Impossible de sauvegarder sf2_delivery', error);
+    }
+  }, [deliveryInfo]);
 
   useEffect(() => {
     logDev('[OrderUI] state', { isCartOpen, isOrderModalOpen, screenW, overlayOpen });
@@ -167,6 +211,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     if (isOrderModalOpen) closeOrderModal();
   };
 
+  const handleDeliveryInfoChange = (field: keyof DeliveryInfo, value: string) => {
+    setDeliveryError(null);
+    setDeliveryInfo((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
   const getCurrentItemPrice = () => {
     if (!selectedItem) return 0;
     const base =
@@ -203,7 +255,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const minOk = itemsSubtotal + 1e-9 >= MIN_ORDER_EUR;
 
   // Livraison obligatoire: adresse + position + distance <= 10km
-  const hasAddress = deliveryAddress.trim().length > 0;
+  const hasAddress = deliveryInfo.address.trim().length > 0;
   const hasGeo = Number.isFinite(deliveryLat) && Number.isFinite(deliveryLng);
 
   const km =
@@ -279,7 +331,30 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     requestGeolocation();
   };
 
+  const scrollToDeliveryForm = () => {
+    if (checkoutFormRef.current) {
+      checkoutFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+
+  const validateDeliveryForm = () => {
+    const { name, phone, address, city, postalCode } = deliveryInfo;
+    const requiredFieldsFilled = [name, phone, address, city, postalCode].every((value) => value.trim().length > 0);
+
+    if (!requiredFieldsFilled) {
+      setDeliveryError('Merci de renseigner nom, téléphone, adresse, ville et code postal.');
+      scrollToDeliveryForm();
+      return false;
+    }
+
+    setDeliveryError(null);
+    return true;
+  };
+
   const validateBeforeCheckout = (): boolean => {
+    if (!validateDeliveryForm()) {
+      return false;
+    }
     if (cartItems.length === 0) {
       setCheckoutError('Votre panier est vide.');
       return false;
@@ -323,7 +398,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       await startCheckout({
         origin: window.location.origin,
         items,
-        deliveryAddress: deliveryAddress.trim(),
+        deliveryAddress: deliveryInfo.address.trim(),
         deliveryLat: Number(deliveryLat),
         deliveryLng: Number(deliveryLng),
       });
@@ -354,7 +429,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         `Sous-total: ${itemsSubtotal.toFixed(2)}€\n` +
         `Livraison: +${DELIVERY_FEE_EUR.toFixed(2)}€\n` +
         `Total: ${totalWithDelivery.toFixed(2)}€\n\n` +
-        `Adresse: ${deliveryAddress.trim()}\n` +
+        `Adresse: ${deliveryInfo.address.trim()}\n` +
         (km != null ? `Distance: ${km.toFixed(1)} km\n` : '');
 
       const canClipboard = typeof navigator !== 'undefined' && (navigator as any).clipboard?.writeText;
@@ -370,6 +445,20 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       setCheckoutError(message);
     } finally {
       setIsCheckingOut(false);
+    }
+  };
+
+  const handleCheckoutSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCheckoutError(null);
+    setCheckoutInfo(null);
+
+    if (!validateDeliveryForm()) return;
+
+    if (paymentMethod === 'stripe') {
+      handleStripeCheckout();
+    } else {
+      handleCashCheckout();
     }
   };
 
@@ -703,7 +792,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                 </div>
 
                 {cartItems.length > 0 && (
-                  <div className="p-6 border-t border-gray-200 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)] space-y-4">
+                  <form
+                    ref={checkoutFormRef}
+                    onSubmit={handleCheckoutSubmit}
+                    className="p-6 border-t border-gray-200 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)] space-y-4"
+                  >
                     {/* ⚠️ Minimum commande */}
                     {!minOk && (
                       <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
@@ -717,21 +810,84 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       </div>
                     )}
 
-                    {/* Livraison obligatoire */}
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    {/* Infos livraison */}
+                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-3">
                       <div className="font-bold text-snack-black uppercase text-sm tracking-wider">
-                        Livraison <span className="text-gray-500 normal-case">( +{DELIVERY_FEE_EUR.toFixed(2)}€ )</span>
+                        Infos livraison <span className="text-gray-500 normal-case">(+{DELIVERY_FEE_EUR.toFixed(2)}€)</span>
                       </div>
 
-                      <div className="mt-3 space-y-2">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nom et prénom</label>
+                          <input
+                            value={deliveryInfo.name}
+                            onChange={(e) => handleDeliveryInfoChange('name', e.target.value)}
+                            placeholder="Ex: Amel Ben"
+                            autoComplete="name"
+                            className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Téléphone</label>
+                          <input
+                            type="tel"
+                            inputMode="tel"
+                            autoComplete="tel"
+                            value={deliveryInfo.phone}
+                            onChange={(e) => handleDeliveryInfoChange('phone', e.target.value)}
+                            placeholder="Ex: 0612..."
+                            className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
                         <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Adresse de livraison</label>
                         <input
-                          value={deliveryAddress}
-                          onChange={(e) => setDeliveryAddress(e.target.value)}
-                          placeholder="Ex: Rue..., numéro, ville"
+                          value={deliveryInfo.address}
+                          onChange={(e) => handleDeliveryInfoChange('address', e.target.value)}
+                          placeholder="Ex: Rue..., numéro"
+                          autoComplete="street-address"
                           className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
                         />
+                      </div>
 
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Code postal</label>
+                          <input
+                            value={deliveryInfo.postalCode}
+                            onChange={(e) => handleDeliveryInfoChange('postalCode', e.target.value)}
+                            placeholder="Code postal"
+                            autoComplete="postal-code"
+                            className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Ville</label>
+                          <input
+                            value={deliveryInfo.city}
+                            onChange={(e) => handleDeliveryInfoChange('city', e.target.value)}
+                            placeholder="Ville"
+                            autoComplete="address-level2"
+                            className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Note pour le livreur (optionnel)</label>
+                        <textarea
+                          value={deliveryInfo.note}
+                          onChange={(e) => handleDeliveryInfoChange('note', e.target.value)}
+                          placeholder="Code porte, étage, etc."
+                          className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                          rows={2}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
                         <button
                           type="button"
                           onPointerUp={handleGeoButton}
@@ -751,13 +907,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           </div>
                         )}
 
-                        {/* erreurs livraison */}
-                        {!hasAddress && (
-                          <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                            <AlertTriangle className="mt-0.5" />
-                            <div className="text-sm text-gray-700">Adresse de livraison obligatoire.</div>
-                          </div>
-                        )}
                         {!hasGeo && (
                           <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                             <AlertTriangle className="mt-0.5" />
@@ -775,6 +924,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           </div>
                         )}
                       </div>
+
+                      {deliveryError && <p className="text-sm text-red-600 font-semibold text-center">{deliveryError}</p>}
                     </div>
 
                     {/* Paiement */}
@@ -782,6 +933,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       <div className="font-bold text-snack-black uppercase text-sm tracking-wider mb-2">Moyen de paiement</div>
                       <div className="grid grid-cols-2 gap-2">
                         <button
+                          type="button"
                           onClick={() => setPaymentMethod('stripe')}
                           className={`py-2 rounded-lg border font-bold flex items-center justify-center gap-2 ${
                             paymentMethod === 'stripe'
@@ -794,6 +946,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => setPaymentMethod('cash')}
                           className={`py-2 rounded-lg border font-bold flex items-center justify-center gap-2 ${
                             paymentMethod === 'cash'
@@ -825,12 +978,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         <div className="text-sm text-gray-700">Il faut commander un minimum de 20€ (hors livraison).</div>
                       </div>
                     )}
-                    {!hasAddress && (
-                      <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                        <AlertTriangle className="mt-0.5" />
-                        <div className="text-sm text-gray-700">Adresse de livraison obligatoire.</div>
-                      </div>
-                    )}
                     {!hasGeo && (
                       <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                         <AlertTriangle className="mt-0.5" />
@@ -841,7 +988,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     {/* Bouton payer */}
                     <button
                       id="checkout-btn"
-                      onClick={paymentMethod === 'stripe' ? handleStripeCheckout : handleCashCheckout}
+                      type={paymentMethod === 'stripe' ? 'submit' : 'button'}
+                      onClick={paymentMethod === 'cash' ? handleCashCheckout : undefined}
                       disabled={isCheckingOut}
                       className={`w-full bg-snack-gold text-snack-black py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group ${
                         isCheckingOut ? 'opacity-75 cursor-not-allowed' : 'hover:bg-white hover:border-snack-black hover:border-gray-200'
@@ -864,7 +1012,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
                     {checkoutError && <p className="text-sm text-red-600 text-center font-semibold">{checkoutError}</p>}
                     {checkoutInfo && <p className="text-sm text-green-700 text-center font-semibold">{checkoutInfo}</p>}
-                  </div>
+                  </form>
                 )}
               </motion.div>
             </div>
