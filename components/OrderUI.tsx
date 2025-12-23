@@ -31,6 +31,15 @@ const MAX_DELIVERY_KM = 10;
 const SHOP_LAT = 50.425226;
 const SHOP_LNG = 3.846433;
 
+type DeliveryInfo = {
+  name: string;
+  phone: string;
+  address: string;
+  postalCode: string;
+  city: string;
+  note: string;
+};
+
 function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const R = 6371;
   const toRad = (v: number) => (v * Math.PI) / 180;
@@ -67,16 +76,26 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutInfo, setCheckoutInfo] = useState<string | null>(null);
+  const [deliveryFormError, setDeliveryFormError] = useState<string | null>(null);
 
   // Paiement
   const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cash'>('stripe');
 
   // Adresse + position obligatoires
-  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryInfo, setDeliveryInfo] = useState<DeliveryInfo>({
+    name: '',
+    phone: '',
+    address: '',
+    postalCode: '',
+    city: '',
+    note: '',
+  });
   const [deliveryLat, setDeliveryLat] = useState<number | undefined>(undefined);
   const [deliveryLng, setDeliveryLng] = useState<number | undefined>(undefined);
   const [isLocating, setIsLocating] = useState(false);
   const geoRequestLockRef = useRef(false);
+
+  const checkoutFormRef = useRef<HTMLDivElement | null>(null);
 
   const bodyStyleRestoreRef = useRef<null | { overflow: string; filter: string }>(null);
 
@@ -97,6 +116,30 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   useEffect(() => {
     logDev('[OrderUI] state', { isCartOpen, isOrderModalOpen, screenW, overlayOpen });
   }, [isCartOpen, isOrderModalOpen, screenW, overlayOpen]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const saved = localStorage.getItem('sf2_delivery');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          setDeliveryInfo((prev) => ({ ...prev, ...parsed }));
+        }
+      }
+    } catch (error) {
+      warnDev('[OrderUI] Failed to load delivery info', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem('sf2_delivery', JSON.stringify(deliveryInfo));
+    } catch (error) {
+      warnDev('[OrderUI] Failed to save delivery info', error);
+    }
+  }, [deliveryInfo]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -206,13 +249,25 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const hasCompletionSuggestions = recommendationMissing > 0 && recommendations.suggestions.length > 0;
   const hasUpsellSuggestions = recommendationMissing <= 0 && recommendations.suggestions.length > 0;
 
+  const formattedDeliveryAddress = useMemo(() => {
+    const addressPart = deliveryInfo.address.trim();
+    const cityPart = `${deliveryInfo.postalCode.trim()} ${deliveryInfo.city.trim()}`.trim();
+    if (addressPart && cityPart) return `${addressPart}, ${cityPart}`;
+    return addressPart || cityPart;
+  }, [deliveryInfo]);
+
   // Minimum 20€ hors livraison
   const minOk = itemsSubtotal + 1e-9 >= MIN_ORDER_EUR;
   const disableStripeCheckout = paymentMethod === 'stripe' && !minOk;
 
   // Livraison obligatoire: adresse + position + distance <= 10km
-  const hasAddress = deliveryAddress.trim().length > 0;
+  const hasName = deliveryInfo.name.trim().length > 0;
+  const hasPhone = deliveryInfo.phone.trim().length > 0;
+  const hasAddress = deliveryInfo.address.trim().length > 0;
+  const hasPostalCode = deliveryInfo.postalCode.trim().length > 0;
+  const hasCity = deliveryInfo.city.trim().length > 0;
   const hasGeo = Number.isFinite(deliveryLat) && Number.isFinite(deliveryLng);
+  const hasRequiredDelivery = hasName && hasPhone && hasAddress && hasPostalCode && hasCity;
 
   const km =
     hasGeo && deliveryLat != null && deliveryLng != null
@@ -220,7 +275,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       : null;
 
   const inRange = km == null ? false : km <= MAX_DELIVERY_KM;
-  const deliveryOk = hasAddress && hasGeo && inRange;
+  const deliveryOk = hasRequiredDelivery && hasGeo && inRange;
 
   const buildLineItemName = (item: CartItem) => {
     let description = item.name;
@@ -306,17 +361,39 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     requestGeolocation();
   };
 
+  const handleDeliveryChange = (field: keyof DeliveryInfo) => (value: string) => {
+    setDeliveryInfo((prev) => ({ ...prev, [field]: value }));
+    setDeliveryFormError(null);
+  };
+
+  const validateDeliveryForm = (): boolean => {
+    const missing: string[] = [];
+    if (!hasName) missing.push('Nom/prénom');
+    if (!hasPhone) missing.push('Téléphone');
+    if (!hasAddress) missing.push('Adresse');
+    if (!hasPostalCode) missing.push('Code postal');
+    if (!hasCity) missing.push('Ville');
+
+    if (missing.length > 0) {
+      setDeliveryFormError(`Merci de compléter : ${missing.join(', ')}.`);
+      checkoutFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return false;
+    }
+
+    setDeliveryFormError(null);
+    return true;
+  };
+
   const validateBeforeCheckout = (): boolean => {
+    if (!validateDeliveryForm()) {
+      return false;
+    }
     if (cartItems.length === 0) {
       setCheckoutError('Votre panier est vide.');
       return false;
     }
     if (!minOk) {
       setCheckoutError('Il faut commander un minimum de 20€.');
-      return false;
-    }
-    if (!hasAddress) {
-      setCheckoutError('Adresse de livraison obligatoire.');
       return false;
     }
     if (!hasGeo) {
@@ -350,7 +427,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       await startCheckout({
         origin: window.location.origin,
         items,
-        deliveryAddress: deliveryAddress.trim(),
+        deliveryAddress: formattedDeliveryAddress.trim(),
         deliveryLat: Number(deliveryLat),
         deliveryLng: Number(deliveryLng),
       });
@@ -381,7 +458,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         `Sous-total: ${itemsSubtotal.toFixed(2)}€\n` +
         `Livraison: +${DELIVERY_FEE_EUR.toFixed(2)}€\n` +
         `Total: ${totalWithDelivery.toFixed(2)}€\n\n` +
-        `Adresse: ${deliveryAddress.trim()}\n` +
+        `Client: ${deliveryInfo.name.trim()} (${deliveryInfo.phone.trim()})\n` +
+        `Adresse: ${formattedDeliveryAddress}\n` +
+        `Code postal / Ville: ${deliveryInfo.postalCode.trim()} ${deliveryInfo.city.trim()}\n` +
+        (deliveryInfo.note.trim() ? `Note: ${deliveryInfo.note.trim()}\n` : '') +
         (km != null ? `Distance: ${km.toFixed(1)} km\n` : '');
 
       const canClipboard = typeof navigator !== 'undefined' && (navigator as any).clipboard?.writeText;
@@ -786,64 +866,118 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     )}
 
                     {/* Livraison obligatoire */}
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                      <div className="font-bold text-snack-black uppercase text-sm tracking-wider">
-                        Livraison <span className="text-gray-500 normal-case">( +{DELIVERY_FEE_EUR.toFixed(2)}€ )</span>
+                  <div ref={checkoutFormRef} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <div className="font-bold text-snack-black uppercase text-sm tracking-wider">
+                      Livraison <span className="text-gray-500 normal-case">( +{DELIVERY_FEE_EUR.toFixed(2)}€ )</span>
+                    </div>
+
+                    <div className="mt-3 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Nom / Prénom *</label>
+                          <input
+                            value={deliveryInfo.name}
+                            onChange={(e) => handleDeliveryChange('name')(e.target.value)}
+                            placeholder="Ex: Jean Dupont"
+                            className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Téléphone *</label>
+                          <input
+                            value={deliveryInfo.phone}
+                            onChange={(e) => handleDeliveryChange('phone')(e.target.value)}
+                            placeholder="Ex: 06..."
+                            className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                          />
+                        </div>
                       </div>
 
-                      <div className="mt-3 space-y-2">
-                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Adresse de livraison</label>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Adresse *</label>
                         <input
-                          value={deliveryAddress}
-                          onChange={(e) => setDeliveryAddress(e.target.value)}
-                          placeholder="Ex: Rue..., numéro, ville"
+                          value={deliveryInfo.address}
+                          onChange={(e) => handleDeliveryChange('address')(e.target.value)}
+                          placeholder="Rue, numéro"
                           className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
                         />
-
-                        <button
-                          type="button"
-                          onPointerUp={handleGeoButton}
-                          onTouchEnd={handleGeoButton}
-                          disabled={isLocating}
-                          className={`w-full flex items-center justify-center gap-2 py-2 rounded border font-bold ${
-                            isLocating ? 'opacity-70 cursor-not-allowed' : 'hover:bg-white'
-                          }`}
-                        >
-                          <MapPin />
-                          {isLocating ? 'Détection...' : 'Utiliser ma position (10 km)'}
-                        </button>
-
-                        {hasGeo && km != null && (
-                          <div className="text-xs text-gray-600">
-                            Distance estimée: <b>{km.toFixed(1)} km</b> (max {MAX_DELIVERY_KM} km)
-                          </div>
-                        )}
-
-                        {/* erreurs livraison */}
-                        {!hasAddress && (
-                          <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                            <AlertTriangle className="mt-0.5" />
-                            <div className="text-sm text-gray-700">Adresse de livraison obligatoire.</div>
-                          </div>
-                        )}
-                        {!hasGeo && (
-                          <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                            <AlertTriangle className="mt-0.5" />
-                            <div className="text-sm text-gray-700">
-                              Position obligatoire. Cliquez sur <b>« Utiliser ma position »</b>.
-                            </div>
-                          </div>
-                        )}
-                        {hasGeo && !inRange && (
-                          <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg p-3">
-                            <AlertTriangle className="mt-0.5" />
-                            <div className="text-sm text-red-700">
-                              Livraison disponible uniquement dans un rayon de <b>{MAX_DELIVERY_KM} km</b>.
-                            </div>
-                          </div>
-                        )}
                       </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Code postal *</label>
+                          <input
+                            value={deliveryInfo.postalCode}
+                            onChange={(e) => handleDeliveryChange('postalCode')(e.target.value)}
+                            placeholder="Ex: 59000"
+                            className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Ville *</label>
+                          <input
+                            value={deliveryInfo.city}
+                            onChange={(e) => handleDeliveryChange('city')(e.target.value)}
+                            placeholder="Ex: Valenciennes"
+                            className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Note (porte, étage...)</label>
+                        <textarea
+                          value={deliveryInfo.note}
+                          onChange={(e) => handleDeliveryChange('note')(e.target.value)}
+                          placeholder="Infos complémentaires"
+                          className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium min-h-[80px]"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onPointerUp={handleGeoButton}
+                        onTouchEnd={handleGeoButton}
+                        disabled={isLocating}
+                        className={`w-full flex items-center justify-center gap-2 py-2 rounded border font-bold ${
+                          isLocating ? 'opacity-70 cursor-not-allowed' : 'hover:bg-white'
+                        }`}
+                      >
+                        <MapPin />
+                        {isLocating ? 'Détection...' : 'Utiliser ma position (10 km)'}
+                      </button>
+
+                      {hasGeo && km != null && (
+                        <div className="text-xs text-gray-600">
+                          Distance estimée: <b>{km.toFixed(1)} km</b> (max {MAX_DELIVERY_KM} km)
+                        </div>
+                      )}
+
+                      {/* erreurs livraison */}
+                      {deliveryFormError && (
+                        <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                          <AlertTriangle className="mt-0.5" />
+                          <div className="text-sm text-gray-700">{deliveryFormError}</div>
+                        </div>
+                      )}
+                      {!hasGeo && (
+                        <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                          <AlertTriangle className="mt-0.5" />
+                          <div className="text-sm text-gray-700">
+                            Position obligatoire. Cliquez sur <b>« Utiliser ma position »</b>.
+                          </div>
+                        </div>
+                      )}
+                      {hasGeo && !inRange && (
+                        <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg p-3">
+                          <AlertTriangle className="mt-0.5" />
+                          <div className="text-sm text-red-700">
+                            Livraison disponible uniquement dans un rayon de <b>{MAX_DELIVERY_KM} km</b>.
+                          </div>
+                        </div>
+                      )}
                     </div>
+                  </div>
 
                     {/* Paiement */}
                     <div className="bg-white border border-gray-200 rounded-lg p-3">
