@@ -4,6 +4,7 @@ import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, MapPin,
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { startCheckout } from '../lib/stripe';
+import { LAST_ORDER_STORAGE_KEY, WhatsAppOrderParams, openWhatsAppOrder } from '../lib/whatsapp';
 import { Portal } from './Portal';
 import { getRecommendations, MIN_ORDER_EUR } from '../lib/recommendations';
 import { MENU_CATEGORIES } from '../data/menuData';
@@ -78,6 +79,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [checkoutInfo, setCheckoutInfo] = useState<string | null>(null);
   const [deliveryFormError, setDeliveryFormError] = useState<string | null>(null);
   const [showDistanceBanner, setShowDistanceBanner] = useState(false);
+  const [lastCashOrder, setLastCashOrder] = useState<WhatsAppOrderParams | null>(null);
 
   // Paiement
   const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cash'>('stripe');
@@ -309,6 +311,30 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     return description;
   };
 
+  const buildWhatsAppOrderParams = (paymentStatus: WhatsAppOrderParams['paymentStatus']): WhatsAppOrderParams => {
+    const timestampIso = new Date().toISOString();
+
+    return {
+      paymentStatus,
+      customerName: deliveryInfo.name.trim(),
+      customerPhone: deliveryInfo.phone.trim(),
+      address: deliveryInfo.address.trim(),
+      postalCode: deliveryInfo.postalCode.trim(),
+      city: deliveryInfo.city.trim(),
+      distanceKm: km ?? undefined,
+      items: cartItems.map((item) => ({
+        label: buildLineItemName(item),
+        quantity: Math.max(1, Math.trunc(item.quantity)),
+        unitPrice: Number.isFinite(item.price) ? item.price : 0,
+      })),
+      subtotal: itemsSubtotal,
+      deliveryFee: DELIVERY_FEE_EUR,
+      total: totalWithDelivery,
+      notes: deliveryInfo.note.trim() || undefined,
+      timestampIso,
+    };
+  };
+
   const handleSuggestionAdd = (item: MenuItem, category: MenuCategory) => {
     const basePrice = Number(item.price);
     const hasOptions = category.hasSauces || category.hasSupplements || category.hasVeggies || item.priceSecondary !== undefined;
@@ -451,6 +477,13 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         quantity: Math.max(1, Math.trunc(it.quantity)),
       }));
 
+      const orderPayload = buildWhatsAppOrderParams('stripe');
+      try {
+        localStorage.setItem(LAST_ORDER_STORAGE_KEY, JSON.stringify(orderPayload));
+      } catch (error) {
+        warnDev('[OrderUI] Failed to persist last order payload', error);
+      }
+
       await startCheckout({
         origin: window.location.origin,
         items,
@@ -475,30 +508,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-      const lines = cartItems
-        .map((it) => `- ${buildLineItemName(it)} x${it.quantity} = ${(it.price * it.quantity).toFixed(2)}€`)
-        .join('\n');
-
-      const summary =
-        `🧾 Commande (CASH - Livraison)\n\n` +
-        `${lines}\n\n` +
-        `Sous-total: ${itemsSubtotal.toFixed(2)}€\n` +
-        `Livraison: +${DELIVERY_FEE_EUR.toFixed(2)}€\n` +
-        `Total: ${totalWithDelivery.toFixed(2)}€\n\n` +
-        `Client: ${deliveryInfo.name.trim()} (${deliveryInfo.phone.trim()})\n` +
-        `Adresse: ${formattedDeliveryAddress}\n` +
-        `Code postal / Ville: ${deliveryInfo.postalCode.trim()} ${deliveryInfo.city.trim()}\n` +
-        (deliveryInfo.note.trim() ? `Note: ${deliveryInfo.note.trim()}\n` : '') +
-        (km != null ? `Distance: ${km.toFixed(1)} km\n` : '');
-
-      const canClipboard = typeof navigator !== 'undefined' && (navigator as any).clipboard?.writeText;
-      if (canClipboard) {
-        await (navigator as any).clipboard.writeText(summary);
-        setCheckoutInfo('Commande CASH copiée ✅ (tu peux la coller/envoyer)');
-      } else {
-        setCheckoutInfo('Commande CASH prête ✅ (copie manuelle nécessaire)');
-        console.log(summary);
-      }
+      const payload = buildWhatsAppOrderParams('cash');
+      setLastCashOrder(payload);
+      openWhatsAppOrder(payload);
+      setCheckoutInfo("Votre commande est prête. Cliquez sur ‘Envoyer sur WhatsApp’ pour la transmettre.");
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de valider la commande.';
       setCheckoutError(message);
@@ -1062,6 +1075,17 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
                         {checkoutError && <p className="text-sm text-red-600 text-center font-semibold">{checkoutError}</p>}
                         {checkoutInfo && <p className="text-sm text-green-700 text-center font-semibold">{checkoutInfo}</p>}
+                        {lastCashOrder && (
+                          <div className="flex justify-center">
+                            <button
+                              type="button"
+                              onClick={() => openWhatsAppOrder(lastCashOrder)}
+                              className="mt-2 inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-green-700"
+                            >
+                              Envoyer sur WhatsApp
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
