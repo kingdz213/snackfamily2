@@ -14,12 +14,9 @@ function normalizeBaseUrl(base: string): string {
 }
 
 export function resolveWorkerBaseUrl(): string {
-  const base = (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.trim();
-  if (base) return normalizeBaseUrl(base);
-
-  if (import.meta.env.DEV) return normalizeBaseUrl(DEFAULT_WORKER_BASE_URL);
-
-  throw new Error("MISSING_WORKER_BASE_URL: VITE_WORKER_BASE_URL est manquant.");
+  const fromEnv = (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.trim();
+  const base = fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_WORKER_BASE_URL;
+  return normalizeBaseUrl(base);
 }
 
 export function resolvePublicOrigin(): string {
@@ -37,29 +34,29 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
     if (dev) console.log(...args);
   };
 
-  const validatedItems = items.map((it, i) => {
-    const name = String(it?.name ?? "").trim();
-    const price = Number(it?.price);
-    const quantity = Number(it?.quantity);
+  const sanitizedItems = items.map((item, index) => {
+    const name = String(item?.name ?? "").trim();
+    const price = Number(item?.price);
+    const quantity = Number(item?.quantity);
 
-    if (!name) throw new Error(`Item ${i} missing name`);
-    if (!Number.isInteger(price) || price <= 0) throw new Error(`Item ${i} invalid price`);
-    if (!Number.isInteger(quantity) || quantity < 1) throw new Error(`Item ${i} invalid quantity`);
+    if (!name) throw new Error(`Item ${index} missing name`);
+    if (!Number.isInteger(price) || price <= 0) throw new Error(`Item ${index} invalid price`);
+    if (!Number.isInteger(quantity) || quantity < 1) throw new Error(`Item ${index} invalid quantity`);
 
     return { name, price, quantity };
   });
 
+  const endpoint = `${resolveWorkerBaseUrl()}/create-checkout-session`;
   const payload = {
-    items: validatedItems,
+    items: sanitizedItems,
     origin: resolvePublicOrigin(),
   };
 
-  const endpoint = `${resolveWorkerBaseUrl()}/create-checkout-session`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
 
   let response: Response;
-  let raw = "";
+  let text = "";
 
   try {
     logDev("[stripe] POST", endpoint, payload);
@@ -69,33 +66,32 @@ export async function startCheckout(items: CheckoutItem[]): Promise<void> {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-    raw = await response.text().catch(() => "");
-    logDev("[stripe] response", response.status, raw);
-  } catch (err) {
+    text = await response.text();
+    logDev("[stripe] response", response.status, text);
+  } catch (error) {
     clearTimeout(timeout);
-    throw new Error(`WORKER_FETCH: ${(err as Error)?.message ?? err}`);
+    throw error instanceof Error ? error : new Error(String(error));
   } finally {
     clearTimeout(timeout);
   }
 
   if (!response.ok) {
-    let message = raw;
-    try {
-      const parsed = raw ? JSON.parse(raw) : null;
-      message = parsed?.message || parsed?.details || parsed?.error || raw;
-    } catch {}
-    throw new Error(message || `WORKER_${response.status}`);
+    throw new Error(`Stripe worker ${response.status}: ${text || response.statusText}`);
   }
 
-  let data: any = null;
+  let data: unknown;
   try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch (err) {
-    throw new Error(`WORKER_PARSE: ${(err as Error)?.message ?? err}`);
+    data = text ? JSON.parse(text) : {};
+  } catch (error) {
+    throw error instanceof Error ? error : new Error(String(error));
   }
 
-  const url = data?.url;
-  if (!url) throw new Error("WORKER_EMPTY: aucune url retournée.");
+  const url = (data as { url?: string })?.url;
+  if (!url) throw new Error("Checkout url missing");
 
   window.location.assign(url);
+}
+
+export async function runDevTest() {
+  return startCheckout([{ name: "Test", price: 100, quantity: 1 }]);
 }
