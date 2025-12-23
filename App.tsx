@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { Home } from './components/Home';
 import { MenuPage } from './components/MenuPage';
@@ -52,6 +52,8 @@ function App() {
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<MenuCategory | null>(null);
   const [screenW, setScreenW] = useState<number>(() => getWindowWidth());
+  const toastTimeoutRef = useRef<number | null>(null);
+  const [showCartToast, setShowCartToast] = useState(false);
 
   // Scroll en haut à chaque changement de page
   useEffect(() => {
@@ -115,7 +117,15 @@ function App() {
 
   const addToCart = (item: CartItem) => {
     setCartItems(prev => [...prev, item]);
-    setIsCartOpen(true); // Ouvre le panier automatiquement après ajout
+    setShowCartToast(true);
+
+    if (toastTimeoutRef.current) {
+      window.clearTimeout(toastTimeoutRef.current);
+    }
+
+    toastTimeoutRef.current = window.setTimeout(() => {
+      setShowCartToast(false);
+    }, 1500);
   };
 
   const toggleCart = () => {
@@ -153,6 +163,14 @@ function App() {
       document.body.style.removeProperty('filter');
     }
   }, [isCartOpen, isOrderModalOpen, screenW]);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        window.clearTimeout(toastTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Rendu conditionnel des pages
   const renderPage = () => {
@@ -207,6 +225,12 @@ function App() {
         clearCart={clearCart}
         screenW={screenW}
       />
+
+      {showCartToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 transform rounded-full bg-snack-dark px-4 py-2 text-sm text-white shadow-lg">
+          Ajouté au panier
+        </div>
+      )}
 
     </div>
   );
