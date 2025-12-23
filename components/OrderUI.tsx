@@ -1075,8 +1075,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                                   : 'border-gray-200 text-gray-500 hover:border-gray-300'
                               }`}
                             >
-                              <CreditCard />
-                              Payer en ligne
+                              <div className="flex items-center justify-center gap-2 whitespace-nowrap">
+                                <CreditCard className="w-5 h-5 flex-shrink-0" />
+                                <span>Payer en ligne</span>
+                              </div>
                             </button>
 
                             <button
@@ -1087,8 +1089,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                                   : 'border-gray-200 text-gray-500 hover:border-gray-300'
                               }`}
                             >
-                              <Banknote />
-                              Cash (livraison)
+                              <div className="flex items-center justify-center gap-2 whitespace-nowrap">
+                                <Banknote className="w-5 h-5 flex-shrink-0" />
+                                <span>Payer en cash</span>
+                              </div>
                             </button>
                           </div>
                         </div>
