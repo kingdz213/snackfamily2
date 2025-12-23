@@ -77,6 +77,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutInfo, setCheckoutInfo] = useState<string | null>(null);
   const [deliveryFormError, setDeliveryFormError] = useState<string | null>(null);
+  const [showDistanceBanner, setShowDistanceBanner] = useState(false);
 
   // Paiement
   const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cash'>('stripe');
@@ -116,6 +117,18 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   useEffect(() => {
     logDev('[OrderUI] state', { isCartOpen, isOrderModalOpen, screenW, overlayOpen });
   }, [isCartOpen, isOrderModalOpen, screenW, overlayOpen]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      const ack = localStorage.getItem('sf2_10km_ack');
+      setShowDistanceBanner(!ack);
+    } catch (error) {
+      warnDev('[OrderUI] Failed to read distance banner ack', error);
+      setShowDistanceBanner(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -364,6 +377,18 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const handleDeliveryChange = (field: keyof DeliveryInfo) => (value: string) => {
     setDeliveryInfo((prev) => ({ ...prev, [field]: value }));
     setDeliveryFormError(null);
+  };
+
+  const handleDistanceBannerAck = () => {
+    setShowDistanceBanner(false);
+
+    if (typeof window === 'undefined') return;
+
+    try {
+      localStorage.setItem('sf2_10km_ack', '1');
+    } catch (error) {
+      warnDev('[OrderUI] Failed to save distance banner ack', error);
+    }
   };
 
   const validateDeliveryForm = (): boolean => {
@@ -866,7 +891,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     )}
 
                     {/* Livraison obligatoire */}
-                  <div ref={checkoutFormRef} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <div ref={checkoutFormRef} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                     <div className="font-bold text-snack-black uppercase text-sm tracking-wider">
                       Livraison <span className="text-gray-500 normal-case">( +{DELIVERY_FEE_EUR.toFixed(2)}€ )</span>
                     </div>
@@ -978,6 +1003,20 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       )}
                     </div>
                   </div>
+
+                    {showDistanceBanner && (
+                      <div className="bg-black text-white rounded-lg p-3 flex items-center justify-between gap-3">
+                        <div className="text-sm font-medium">
+                          Livraison disponible dans un rayon de 10 km autour du snack.
+                        </div>
+                        <button
+                          onClick={handleDistanceBannerAck}
+                          className="bg-snack-gold text-black px-3 py-1 rounded font-bold uppercase text-xs hover:bg-white transition-colors"
+                        >
+                          OK
+                        </button>
+                      </div>
+                    )}
 
                     {/* Paiement */}
                     <div className="bg-white border border-gray-200 rounded-lg p-3">
