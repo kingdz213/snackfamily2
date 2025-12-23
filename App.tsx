@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { Header } from './components/Header';
 import { Home } from './components/Home';
 import { MenuPage } from './components/MenuPage';
@@ -207,6 +208,8 @@ function App() {
         clearCart={clearCart}
         screenW={screenW}
       />
+
+      <Analytics />
     </div>
   );
 }
