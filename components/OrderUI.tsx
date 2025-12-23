@@ -668,7 +668,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50">
+                <div
+                  className="flex-1 overflow-y-auto p-5 pb-40 space-y-4 bg-gray-50"
+                  style={{ paddingBottom: 'calc(160px + env(safe-area-inset-bottom))' }}
+                >
                   {cartItems.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-gray-400">
                       <ShoppingBag size={64} className="mb-4 opacity-20" />
@@ -691,7 +694,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         </button>
 
                         <div>
-                          <h4 className="font-bold text-snack-black text-lg">{item.name}</h4>
+                          <h4 className="font-bold text-snack-black text-base md:text-lg leading-snug break-words whitespace-normal pr-10">{item.name}</h4>
                           {item.variant && (
                             <span className="text-[10px] font-bold text-black uppercase bg-snack-gold px-1.5 py-0.5 rounded mr-2">
                               {item.variant === 'Menu/Frites' ? 'Menu/Frites' : 'Seul'}
@@ -730,7 +733,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                 </div>
 
                 {cartItems.length > 0 && (
-                  <div className="p-6 border-t border-gray-200 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)] space-y-4">
+                  <div
+                    className="p-6 border-t border-gray-200 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)] space-y-4"
+                    style={{ paddingBottom: 'calc(24px + env(safe-area-inset-bottom))' }}
+                  >
                     {/* ⚠️ Minimum commande */}
                     {!minOk && (
                       <div className="flex items-start gap-3 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
