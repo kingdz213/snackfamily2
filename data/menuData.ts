@@ -8,6 +8,20 @@ function parsePrice(v: string | number | undefined | null): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+const FALLBACK_DESSERT_CATEGORY: MenuCategory = {
+  id: 'desserts',
+  title: '11. Desserts',
+  description: 'Fait maison.',
+  hasSauces: false,
+  hasVeggies: false,
+  hasSupplements: false,
+  items: [
+    { name: 'Tiramisu Classique', price: 3.00 },
+    { name: 'Tiramisu Spéculoos', price: 3.50 },
+    { name: 'Tiramisu Fraise', price: 3.50 },
+  ],
+};
+
 const RAW_MENU_CATEGORIES: MenuCategory[] = [
   {
     id: 'assiettes',
@@ -243,7 +257,11 @@ const sanitizeItem = (item: MenuItem, categoryTitle: string): MenuItem => {
   };
 };
 
-export const MENU_CATEGORIES: MenuCategory[] = RAW_MENU_CATEGORIES.map((category) => ({
+const MENU_CATEGORY_SOURCE = RAW_MENU_CATEGORIES.some((category) => category.id === 'desserts')
+  ? RAW_MENU_CATEGORIES
+  : [...RAW_MENU_CATEGORIES, FALLBACK_DESSERT_CATEGORY];
+
+export const MENU_CATEGORIES: MenuCategory[] = MENU_CATEGORY_SOURCE.map((category) => ({
   ...category,
   items: category.items.map((item) => sanitizeItem(item, category.title)),
 }));
