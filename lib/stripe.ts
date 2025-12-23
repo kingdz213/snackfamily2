@@ -2,18 +2,13 @@
 
 export interface CheckoutItem {
   name: string;
-  price: number; // EUROS (ex: 14.50)
+  price: number; // CENTIMES (ex: 1450 = 14,50€)
   quantity: number;
 }
 
 export type StartCheckoutParams = {
-  origin: string;
   items: CheckoutItem[];
-
-  // livraison obligatoire
-  deliveryAddress: string;
-  deliveryLat: number;
-  deliveryLng: number;
+  [key: string]: unknown;
 };
 
 const DEFAULT_WORKER_BASE_URL =
@@ -22,94 +17,108 @@ const DEFAULT_WORKER_BASE_URL =
 function normalizeBaseUrl(base: string): string {
   return base.replace(/\/+$/, "");
 }
-function normalizeEndpoint(baseOrEndpoint: string): string {
-  const trimmed = baseOrEndpoint.replace(/\/+$/, "");
-  if (trimmed.endsWith("/create-checkout-session")) return trimmed;
-  return `${trimmed}/create-checkout-session`;
-}
 
-export function resolveWorkerEndpoint(): string {
+export function resolveWorkerBaseUrl(): string {
   const checkoutApiUrl = (import.meta.env.VITE_CHECKOUT_API_URL as string | undefined)?.trim();
-  if (checkoutApiUrl) return normalizeEndpoint(checkoutApiUrl);
+  if (checkoutApiUrl) return normalizeBaseUrl(checkoutApiUrl);
 
   const base = (import.meta.env.VITE_WORKER_BASE_URL as string | undefined)?.trim();
-  if (base) return `${normalizeBaseUrl(base)}/create-checkout-session`;
+  if (base) return normalizeBaseUrl(base);
 
-  if (import.meta.env.DEV) return `${normalizeBaseUrl(DEFAULT_WORKER_BASE_URL)}/create-checkout-session`;
+  if (import.meta.env.DEV) return normalizeBaseUrl(DEFAULT_WORKER_BASE_URL);
 
-  throw new Error("MISSING_WORKER_BASE_URL: VITE_WORKER_BASE_URL (ou VITE_CHECKOUT_API_URL) est manquant.");
+  throw new Error(
+    "MISSING_WORKER_BASE_URL: VITE_WORKER_BASE_URL (ou VITE_CHECKOUT_API_URL) est manquant.",
+  );
 }
 
-export async function startCheckout(params: StartCheckoutParams): Promise<void> {
-  const origin = (params.origin || window.location.origin).trim();
-  const endpoint = resolveWorkerEndpoint();
+export function resolvePublicOrigin(): string {
+  const envOrigin = (import.meta.env.VITE_PUBLIC_ORIGIN as string | undefined)?.trim();
+  if (envOrigin) return envOrigin.replace(/\/+$/, "");
+  return "https://snackfamily2.eu";
+}
 
-  const deliveryAddress = String(params.deliveryAddress || "").trim();
-  if (!deliveryAddress) throw new Error("Adresse de livraison obligatoire.");
+function validateItems(items: CheckoutItem[]): CheckoutItem[] {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("No checkout items provided");
+  }
 
-  const validatedItems = params.items.map((it, i) => {
-    const name = String(it?.name ?? "").trim();
-    const price =
-      typeof (it as any)?.price === "string"
-        ? Number(String((it as any).price).replace(",", "."))
-        : Number(it?.price);
-    const quantity = Number(it?.quantity);
+  return items.map((item, index) => {
+    const name = String(item?.name ?? "").trim();
+    const price = Number(item?.price);
+    const quantity = Number(item?.quantity);
 
-    if (!name) throw new Error(`Item ${i} missing name`);
-    if (!Number.isFinite(price) || price <= 0) throw new Error(`Item ${i} invalid price`);
-    if (!Number.isInteger(quantity) || quantity < 1) throw new Error(`Item ${i} invalid quantity`);
+    if (!name) throw new Error(`Item ${index} missing name`);
+    if (!Number.isInteger(price) || price <= 0) throw new Error(`Item ${index} invalid price`);
+    if (!Number.isInteger(quantity) || quantity < 1)
+      throw new Error(`Item ${index} invalid quantity`);
 
-    return { name, price, quantity };
+    return { name, price, quantity } satisfies CheckoutItem;
   });
+}
+
+export async function startCheckout(itemsOrParams: CheckoutItem[] | StartCheckoutParams): Promise<void> {
+  const itemsInput = Array.isArray(itemsOrParams) ? itemsOrParams : itemsOrParams?.items;
+  const items = validateItems(itemsInput ?? []);
 
   const payload = {
-    origin,
-    items: validatedItems,
-    // le worker est livraison-only, donc on envoie forcément ces champs
-    deliveryAddress,
-    deliveryLat: params.deliveryLat,
-    deliveryLng: params.deliveryLng,
+    items,
+    origin: resolvePublicOrigin(),
   };
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
 
-  let response: Response;
-  let raw = "";
+  const endpoint = `${resolveWorkerBaseUrl()}/create-checkout-session`;
 
+  let response: Response;
   try {
+    if (import.meta.env.DEV) {
+      console.info("[stripe] POST", endpoint, payload);
+    }
+
     response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
-    raw = await response.text().catch(() => "");
   } catch (err) {
-    clearTimeout(timeout);
-    throw new Error(`WORKER_FETCH: ${(err as Error)?.message ?? err}`);
+    if (import.meta.env.DEV) console.error("[stripe] fetch error", err);
+    throw err instanceof Error ? err : new Error(String(err));
   } finally {
     clearTimeout(timeout);
   }
 
+  const raw = await response.text().catch(() => "");
+
   if (!response.ok) {
-    let message = raw;
-    try {
-      const parsed = raw ? JSON.parse(raw) : null;
-      message = parsed?.message || parsed?.details || parsed?.error || raw;
-    } catch {}
-    throw new Error(message || `WORKER_${response.status}`);
+    const message = raw || `${response.status} ${response.statusText}`.trim();
+    throw new Error(message.trim());
   }
 
-  let data: any = null;
+  let data: any;
   try {
-    data = raw ? JSON.parse(raw) : null;
+    data = raw ? JSON.parse(raw) : {};
   } catch (err) {
-    throw new Error(`WORKER_PARSE: ${(err as Error)?.message ?? err}`);
+    throw new Error("Invalid JSON returned by checkout endpoint");
   }
 
   const url = data?.url;
-  if (!url) throw new Error("WORKER_EMPTY: aucune url retournée.");
+  if (!url) throw new Error("Checkout url missing");
 
+  if (import.meta.env.DEV) console.info("[stripe] redirect", url);
   window.location.assign(url);
+}
+
+export async function runDevTest(): Promise<void> {
+  const items: CheckoutItem[] = [
+    {
+      name: "Test Panini",
+      price: 750,
+      quantity: 1,
+    },
+  ];
+
+  return startCheckout(items);
 }
