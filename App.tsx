@@ -11,6 +11,7 @@ import { Footer } from './components/Footer';
 import { OrderingCTA } from './components/OrderingCTA';
 import { OrderUI } from './components/OrderUI';
 import { AdminPage } from './components/AdminPage';
+import { OrderStatusPage } from './components/OrderStatusPage';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
 
 const pageToPath: Record<Page, string> = {
@@ -22,21 +23,32 @@ const pageToPath: Record<Page, string> = {
   admin: '/admin',
   success: '/success',
   cancel: '/cancel',
+  'order-status': '/order',
 };
 
-const getPageFromLocation = (): Page => {
+type RouteState = {
+  page: Page;
+  orderId?: string | null;
+};
+
+const getRouteFromLocation = (): RouteState => {
   try {
     const { pathname, search } = window.location;
 
-    if (search.includes('success=true')) return 'success';
-    if (search.includes('canceled=true')) return 'cancel';
+    const orderMatch = pathname.match(/^\/order\/([^/]+)\/?$/);
+    if (orderMatch) {
+      return { page: 'order-status', orderId: decodeURIComponent(orderMatch[1]) };
+    }
+
+    if (search.includes('success=true')) return { page: 'success' };
+    if (search.includes('canceled=true')) return { page: 'cancel' };
 
     const matchedEntry = Object.entries(pageToPath).find(([, path]) => path === pathname);
-    if (matchedEntry) return matchedEntry[0] as Page;
+    if (matchedEntry) return { page: matchedEntry[0] as Page };
   } catch (e) {
     console.warn("Navigation warning: could not determine initial page", e);
   }
-  return 'home';
+  return { page: 'home' };
 };
 
 const getWindowWidth = () => {
@@ -45,7 +57,7 @@ const getWindowWidth = () => {
 };
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>(getPageFromLocation());
+  const [route, setRoute] = useState<RouteState>(getRouteFromLocation());
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
@@ -58,7 +70,7 @@ function App() {
   // Scroll en haut à chaque changement de page
   useEffect(() => {
     window.scrollTo(0, 0);
-  }, [currentPage]);
+  }, [route.page]);
 
   useEffect(() => {
     const updateSize = () => {
@@ -79,7 +91,7 @@ function App() {
 
   useEffect(() => {
     const handlePopstate = () => {
-      setCurrentPage(getPageFromLocation());
+      setRoute(getRouteFromLocation());
     };
 
     window.addEventListener('popstate', handlePopstate);
@@ -94,7 +106,7 @@ function App() {
       console.warn("Navigation warning: could not push state", e);
     }
 
-    setCurrentPage(page);
+    setRoute({ page, orderId: null });
     setIsOrderModalOpen(false);
     setSelectedItem(null);
     setSelectedCategory(null);
@@ -174,7 +186,7 @@ function App() {
 
   // Rendu conditionnel des pages
   const renderPage = () => {
-    switch (currentPage) {
+    switch (route.page) {
       case 'home': return <Home navigateTo={navigateTo} />;
       case 'menu': return <MenuPage openOrderModal={openOrderModal} />;
       case 'infos': return <InfoPage />;
@@ -183,6 +195,7 @@ function App() {
       case 'success': return <SuccessPage navigateTo={navigateTo} />;
       case 'cancel': return <CancelPage navigateTo={navigateTo} />;
       case 'admin': return <AdminPage navigateTo={navigateTo} />;
+      case 'order-status': return <OrderStatusPage orderId={route.orderId ?? ''} />;
       default: return <Home navigateTo={navigateTo} />;
     }
   };
@@ -190,7 +203,7 @@ function App() {
   return (
     <div className="min-h-screen bg-snack-light flex flex-col font-sans text-snack-black">
       <Header
-        currentPage={currentPage}
+        currentPage={route.page}
         navigateTo={navigateTo}
         cartCount={cartItems.reduce((acc, item) => acc + item.quantity, 0)}
         toggleCart={toggleCart}
@@ -203,7 +216,7 @@ function App() {
       <Footer navigateTo={navigateTo} />
 
       {/* Bouton flottant Commander (visible sauf sur Checkout/Success/Cancel/Commander) */}
-      {currentPage !== 'success' && currentPage !== 'cancel' && currentPage !== 'commander' && currentPage !== 'admin' && (
+      {route.page !== 'success' && route.page !== 'cancel' && route.page !== 'commander' && route.page !== 'admin' && (
         <OrderingCTA
           navigateTo={navigateTo}
         />

@@ -3,8 +3,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, MapPin, Banknote } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { startCheckout } from '../lib/stripe';
-import { LAST_ORDER_STORAGE_KEY, WhatsAppOrderParams, openWhatsAppOrder } from '../lib/whatsapp';
+import { createOrderCash, createOrderStripe, type CreateOrderPayload } from '../lib/orderApi';
+import { buildOrderVerificationUrl, openWhatsAppOrder, type WhatsAppOrderParams } from '../lib/whatsapp';
 import { Portal } from './Portal';
 import { getRecommendations, MIN_ORDER_EUR } from '../lib/recommendations';
 import { MENU_CATEGORIES } from '../data/menuData';
@@ -270,13 +270,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const hasCompletionSuggestions = recommendationMissing > 0 && recommendations.suggestions.length > 0;
   const hasUpsellSuggestions = recommendationMissing <= 0 && recommendations.suggestions.length > 0;
 
-  const formattedDeliveryAddress = useMemo(() => {
-    const addressPart = deliveryInfo.address.trim();
-    const cityPart = `${deliveryInfo.postalCode.trim()} ${deliveryInfo.city.trim()}`.trim();
-    if (addressPart && cityPart) return `${addressPart}, ${cityPart}`;
-    return addressPart || cityPart;
-  }, [deliveryInfo]);
-
   // Minimum 20€ hors livraison
   const minOk = itemsSubtotal + 1e-9 >= MIN_ORDER_EUR;
   const disableStripeCheckout = paymentMethod === 'stripe' && !minOk;
@@ -317,27 +310,23 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     return description;
   };
 
-  const buildWhatsAppOrderParams = (paymentStatus: WhatsAppOrderParams['paymentStatus']): WhatsAppOrderParams => {
-    const timestampIso = new Date().toISOString();
-
+  const buildOrderPayload = (): CreateOrderPayload => {
     return {
-      paymentStatus,
-      customerName: deliveryInfo.name.trim(),
-      customerPhone: deliveryInfo.phone.trim(),
-      address: deliveryInfo.address.trim(),
-      postalCode: deliveryInfo.postalCode.trim(),
-      city: deliveryInfo.city.trim(),
-      distanceKm: km ?? undefined,
       items: cartItems.map((item) => ({
-        label: buildLineItemName(item),
+        name: buildLineItemName(item),
         quantity: Math.max(1, Math.trunc(item.quantity)),
-        unitPrice: Number.isFinite(item.price) ? item.price : 0,
+        price: Number.isFinite(item.price) ? item.price : 0,
       })),
-      subtotal: itemsSubtotal,
-      deliveryFee: DELIVERY_FEE_EUR,
       total: totalWithDelivery,
-      notes: deliveryInfo.note.trim() || undefined,
-      timestampIso,
+      deliveryFee: DELIVERY_FEE_EUR,
+      customer: {
+        name: deliveryInfo.name.trim(),
+        phone: deliveryInfo.phone.trim(),
+        address: deliveryInfo.address.trim(),
+        postalCode: deliveryInfo.postalCode.trim(),
+        city: deliveryInfo.city.trim(),
+      },
+      note: deliveryInfo.note.trim() || undefined,
     };
   };
 
@@ -501,28 +490,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-      const deliveryAddress = formattedDeliveryAddress;
-
-      const items = cartItems.map((it) => ({
-        name: buildLineItemName(it),
-        price: Math.round(Number(it.price) * 100),
-        quantity: Math.max(1, Math.trunc(it.quantity)),
-      }));
-
-      const orderPayload = buildWhatsAppOrderParams('stripe');
-      try {
-        localStorage.setItem(LAST_ORDER_STORAGE_KEY, JSON.stringify(orderPayload));
-      } catch (error) {
-        warnDev('[OrderUI] Failed to persist last order payload', error);
-      }
-
-      await startCheckout({
-        origin: window.location.origin,
-        items,
-        deliveryAddress: deliveryAddress.trim(),
-        deliveryLat: Number(deliveryLat),
-        deliveryLng: Number(deliveryLng),
+      const orderPayload = buildOrderPayload();
+      const successUrl = `${window.location.origin}/success?session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${window.location.origin}/cancel`;
+      const { url } = await createOrderStripe({
+        ...orderPayload,
+        successUrl,
+        cancelUrl,
       });
+
+      window.location.assign(url);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
       setCheckoutError(message);
@@ -540,9 +517,17 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-      const payload = buildWhatsAppOrderParams('cash');
-      setLastCashOrder(payload);
-      openWhatsAppOrder(payload);
+      const orderPayload = buildOrderPayload();
+      const { orderId } = await createOrderCash(orderPayload);
+      const verificationUrl = buildOrderVerificationUrl(orderId);
+      const messagePayload: WhatsAppOrderParams = {
+        orderId,
+        paymentLabel: 'À la livraison',
+        verificationUrl,
+      };
+
+      setLastCashOrder(messagePayload);
+      openWhatsAppOrder(messagePayload);
       setCheckoutInfo("Votre commande est prête. Cliquez sur ‘Envoyer sur WhatsApp’ pour la transmettre.");
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de valider la commande.';

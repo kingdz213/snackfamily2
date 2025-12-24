@@ -1,6 +1,6 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { setGlobalOptions } from "firebase-functions/v2/options";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore, FieldValue, type DocumentSnapshot, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
 import * as admin from "firebase-admin";
 import Stripe from "stripe";
@@ -14,6 +14,87 @@ const stripe = new Stripe(process.env.STRIPE_API_KEY ?? "", {
 
 const db = getFirestore();
 const messaging = getMessaging();
+
+type OrderItem = {
+  name: string;
+  quantity: number;
+  price: number;
+};
+
+type CustomerInfo = {
+  name: string;
+  phone: string;
+  address: string;
+  postalCode: string;
+  city: string;
+};
+
+type OrderStatus = "PENDING_PAYMENT" | "PAID_ONLINE" | "CASH_ON_DELIVERY";
+
+type OrderPaymentMethod = "STRIPE" | "CASH";
+
+type OrderRecord = {
+  id: string;
+  createdAt: FieldValue;
+  items: OrderItem[];
+  total: number;
+  deliveryFee: number;
+  customer: CustomerInfo;
+  paymentMethod: OrderPaymentMethod;
+  status: OrderStatus;
+  stripeCheckoutSessionId?: string | null;
+  note?: string | null;
+  paidAt?: FieldValue;
+};
+
+function parseOrderPayload(body: any) {
+  const itemsRaw = Array.isArray(body?.items) ? body.items : null;
+  if (!itemsRaw || itemsRaw.length === 0) {
+    return { error: "Missing items" };
+  }
+
+  const items: OrderItem[] = [];
+  for (const raw of itemsRaw) {
+    const name = typeof raw?.name === "string" ? raw.name.trim() : "";
+    const quantity = Number(raw?.quantity);
+    const price = Number(raw?.price);
+
+    if (!name) return { error: "Item name missing" };
+    if (!Number.isFinite(quantity) || quantity <= 0) return { error: "Item quantity invalid" };
+    if (!Number.isFinite(price) || price <= 0) return { error: "Item price invalid" };
+
+    items.push({ name, quantity: Math.trunc(quantity), price });
+  }
+
+  const total = Number(body?.total);
+  const deliveryFee = Number(body?.deliveryFee);
+  if (!Number.isFinite(total) || total <= 0) return { error: "Total invalid" };
+  if (!Number.isFinite(deliveryFee) || deliveryFee < 0) return { error: "Delivery fee invalid" };
+
+  const customerRaw = body?.customer ?? {};
+  const customer: CustomerInfo = {
+    name: String(customerRaw?.name ?? "").trim(),
+    phone: String(customerRaw?.phone ?? "").trim(),
+    address: String(customerRaw?.address ?? "").trim(),
+    postalCode: String(customerRaw?.postalCode ?? "").trim(),
+    city: String(customerRaw?.city ?? "").trim(),
+  };
+
+  if (!customer.name || !customer.phone || !customer.address || !customer.postalCode || !customer.city) {
+    return { error: "Customer info missing" };
+  }
+
+  const note = typeof body?.note === "string" ? body.note.trim() : "";
+
+  return { items, total, deliveryFee, customer, note: note || null };
+}
+
+function formatItemsForNotification(items: OrderItem[]) {
+  return items
+    .filter((i) => i.name)
+    .map((i) => `${i.name} x${i.quantity}`)
+    .join(" • ");
+}
 
 export const createCheckoutSession = onRequest(
   {
@@ -84,22 +165,197 @@ export const createCheckoutSession = onRequest(
   }
 );
 
-function formatItems(items: Stripe.LineItem[]) {
-  return items.map((item) => ({
-    name: item.description ?? item.price?.nickname ?? "Article",
-    qty: item.quantity ?? 1,
-    price: item.amount_total ? item.amount_total / 100 : undefined,
-  }));
-}
+export const createOrderCash = onRequest(
+  {
+    cors: true,
+    maxInstances: 1,
+  },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).send("Method not allowed");
+      return;
+    }
 
-function formatBody(items: { name?: string | null; qty?: number | null }[]) {
-  return items
-    .filter((i) => i.name)
-    .map((i) => `${i.name} x${i.qty ?? 1}`)
-    .join(" • ");
-}
+    let body: any = req.body;
+    try {
+      if (typeof body === "string") {
+        body = JSON.parse(body);
+      }
+    } catch (error) {
+      res.status(400).json({ error: "Invalid JSON body" });
+      return;
+    }
 
-export const stripeWebhook = onRequest({
+    const payload = parseOrderPayload(body);
+    if ("error" in payload) {
+      res.status(400).json({ error: payload.error });
+      return;
+    }
+
+    const orderRef = db.collection("orders").doc();
+    const orderId = orderRef.id;
+
+    const record: OrderRecord = {
+      id: orderId,
+      createdAt: FieldValue.serverTimestamp(),
+      items: payload.items,
+      total: payload.total,
+      deliveryFee: payload.deliveryFee,
+      customer: payload.customer,
+      paymentMethod: "CASH",
+      status: "CASH_ON_DELIVERY",
+      note: payload.note ?? null,
+    };
+
+    await orderRef.set(record);
+
+    res.status(200).json({ orderId });
+  }
+);
+
+export const createOrderStripe = onRequest(
+  {
+    cors: true,
+    maxInstances: 1,
+    secrets: ["STRIPE_API_KEY"],
+  },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).send("Method not allowed");
+      return;
+    }
+
+    if (!process.env.STRIPE_API_KEY) {
+      res.status(500).json({ error: "Missing Stripe API key" });
+      return;
+    }
+
+    let body: any = req.body;
+    try {
+      if (typeof body === "string") {
+        body = JSON.parse(body);
+      }
+    } catch (error) {
+      res.status(400).json({ error: "Invalid JSON body" });
+      return;
+    }
+    const payload = parseOrderPayload(body);
+    if ("error" in payload) {
+      res.status(400).json({ error: payload.error });
+      return;
+    }
+
+    const successUrl = typeof body?.successUrl === "string" ? body.successUrl : "";
+    const cancelUrl = typeof body?.cancelUrl === "string" ? body.cancelUrl : "";
+    if (!successUrl || !cancelUrl) {
+      res.status(400).json({ error: "Missing success or cancel URL" });
+      return;
+    }
+
+    const orderRef = db.collection("orders").doc();
+    const orderId = orderRef.id;
+
+    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = payload.items.map((item) => ({
+      price_data: {
+        currency: "eur",
+        product_data: { name: item.name },
+        unit_amount: Math.round(item.price * 100),
+      },
+      quantity: item.quantity,
+    }));
+
+    if (payload.deliveryFee > 0) {
+      lineItems.push({
+        price_data: {
+          currency: "eur",
+          product_data: { name: "Livraison" },
+          unit_amount: Math.round(payload.deliveryFee * 100),
+        },
+        quantity: 1,
+      });
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: lineItems,
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      client_reference_id: orderId,
+      metadata: {
+        orderId,
+      },
+    });
+
+    const record: OrderRecord = {
+      id: orderId,
+      createdAt: FieldValue.serverTimestamp(),
+      items: payload.items,
+      total: payload.total,
+      deliveryFee: payload.deliveryFee,
+      customer: payload.customer,
+      paymentMethod: "STRIPE",
+      status: "PENDING_PAYMENT",
+      stripeCheckoutSessionId: session.id,
+      note: payload.note ?? null,
+    };
+
+    await orderRef.set(record);
+
+    res.status(200).json({ url: session.url, sessionId: session.id, orderId });
+  }
+);
+
+export const getOrder = onRequest(
+  {
+    cors: true,
+    maxInstances: 1,
+  },
+  async (req, res) => {
+    if (req.method !== "GET") {
+      res.status(405).send("Method not allowed");
+      return;
+    }
+
+    const requiredPin = process.env.ORDER_STATUS_PIN;
+    if (requiredPin) {
+      const providedPin = String(req.query.pin ?? req.header("x-order-pin") ?? "");
+      if (!providedPin || providedPin !== requiredPin) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+    }
+
+    const orderId = typeof req.query.orderId === "string" ? req.query.orderId : "";
+    const sessionId = typeof req.query.sessionId === "string" ? req.query.sessionId : "";
+
+    let docSnap: DocumentSnapshot | QueryDocumentSnapshot | null = null;
+
+    if (orderId) {
+      docSnap = await db.collection("orders").doc(orderId).get();
+    } else if (sessionId) {
+      const match = await db.collection("orders").where("stripeCheckoutSessionId", "==", sessionId).limit(1).get();
+      docSnap = match.empty ? null : match.docs[0];
+    } else {
+      res.status(400).json({ error: "Missing orderId or sessionId" });
+      return;
+    }
+
+    if (!docSnap || !docSnap.exists) {
+      res.status(404).json({ error: "Order not found" });
+      return;
+    }
+
+    const data = docSnap.data() as OrderRecord;
+    res.status(200).json({
+      order: {
+        ...data,
+        createdAt: (data.createdAt as any)?.toDate?.()?.toISOString?.() ?? null,
+      },
+    });
+  }
+);
+
+export const webhookStripeUpdateOrder = onRequest({
   maxInstances: 1,
   cors: true,
   secrets: ["STRIPE_API_KEY", "STRIPE_WEBHOOK_SECRET"],
@@ -133,20 +389,21 @@ export const stripeWebhook = onRequest({
   }
 
   const session = event.data.object as Stripe.Checkout.Session;
-  const lineItems = session.id
-    ? await stripe.checkout.sessions.listLineItems(session.id, { limit: 100 })
-    : { data: [] } as Stripe.ApiList<Stripe.LineItem>;
+  const sessionId = session.id;
 
-  const items = formatItems(lineItems.data);
-  const totalAmount = (session.amount_total ?? 0) / 100;
+  const match = await db.collection("orders").where("stripeCheckoutSessionId", "==", sessionId).limit(1).get();
 
-  await db.collection("orders").add({
-    status: "paid",
-    total: totalAmount,
-    items,
-    createdAt: FieldValue.serverTimestamp(),
-    stripeSessionId: session.id,
-    customerEmail: session.customer_details?.email ?? null,
+  if (match.empty) {
+    res.status(200).send({ received: true, updated: false });
+    return;
+  }
+
+  const orderDoc = match.docs[0];
+  const orderData = orderDoc.data() as OrderRecord;
+
+  await orderDoc.ref.update({
+    status: "PAID_ONLINE",
+    paidAt: FieldValue.serverTimestamp(),
   });
 
   const tokensSnapshot = await db.collection("admin_tokens").get();
@@ -159,8 +416,8 @@ export const stripeWebhook = onRequest({
     return;
   }
 
-  const body = formatBody(items);
-  const title = `🛎️ Nouvelle commande – ${totalAmount.toFixed(2)}€`;
+  const body = formatItemsForNotification(orderData.items);
+  const title = `🛎️ Nouvelle commande – ${orderData.total.toFixed(2)}€`;
 
   await messaging.sendEachForMulticast({
     tokens,
@@ -180,3 +437,5 @@ export const stripeWebhook = onRequest({
 
   res.status(200).send({ received: true, notified: true });
 });
+
+export const stripeWebhook = webhookStripeUpdateOrder;
