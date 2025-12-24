@@ -5,7 +5,9 @@
 
 interface Env {
   STRIPE_SECRET_KEY: string;
+  STRIPE_WEBHOOK_SECRET?: string;
   DEFAULT_ORIGIN?: string;
+  ORDERS_KV: KVNamespace;
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
@@ -14,6 +16,8 @@ const FALLBACK_ORIGIN = "https://snackfamily2.eu";
 const MIN_ORDER_CENTS = 2000; // 20.00€ hors livraison
 const DELIVERY_FEE_CENTS = 250; // 2.50€
 const MAX_DELIVERY_KM = 10;
+const ORDERS_PREFIX = "order:";
+const SESSION_PREFIX = "session:";
 
 // Snack address: "Pl. de Wasmes 7 7340 Colfontaine"
 // Coord approximatives (ok pour rayon 10km). Tu peux affiner plus tard.
@@ -89,6 +93,22 @@ function toCentsSmart(price: unknown): number | null {
 }
 
 type NormalizedItem = { name: string; quantity: number; cents: number };
+type OrderItem = { name: string; quantity: number; price: number };
+type OrderStatus = "PENDING_PAYMENT" | "PAID_ONLINE" | "CASH_ON_DELIVERY";
+type PaymentMethod = "STRIPE" | "CASH";
+
+type Order = {
+  id: string;
+  createdAt: string;
+  items: OrderItem[];
+  total: number;
+  deliveryFee: number;
+  customer: { name: string; phone: string; address: string };
+  paymentMethod: PaymentMethod;
+  status: OrderStatus;
+  stripeCheckoutSessionId?: string;
+  note?: string;
+};
 
 function validateItems(items: any): { items: NormalizedItem[] } | { error: string; message: string } {
   if (!Array.isArray(items) || items.length === 0) {
@@ -118,6 +138,65 @@ function subtotalCents(items: NormalizedItem[]) {
   return items.reduce((sum, it) => sum + it.cents * it.quantity, 0);
 }
 
+function normalizeCustomer(body: any) {
+  const name = String(body?.customer?.name ?? body?.customerName ?? "").trim();
+  const phone = String(body?.customer?.phone ?? body?.customerPhone ?? "").trim();
+  const address = String(body?.customer?.address ?? body?.deliveryAddress ?? "").trim();
+  return { name, phone, address };
+}
+
+function normalizeNote(body: any) {
+  const note = String(body?.note ?? body?.customer?.note ?? "").trim();
+  return note || undefined;
+}
+
+function buildOrder(params: {
+  id: string;
+  items: NormalizedItem[];
+  customer: { name: string; phone: string; address: string };
+  paymentMethod: PaymentMethod;
+  status: OrderStatus;
+  stripeCheckoutSessionId?: string;
+  note?: string;
+}): Order {
+  const subtotal = subtotalCents(params.items);
+  const totalCents = subtotal + DELIVERY_FEE_CENTS;
+
+  return {
+    id: params.id,
+    createdAt: new Date().toISOString(),
+    items: params.items.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      price: Number((item.cents / 100).toFixed(2)),
+    })),
+    total: Number((totalCents / 100).toFixed(2)),
+    deliveryFee: Number((DELIVERY_FEE_CENTS / 100).toFixed(2)),
+    customer: params.customer,
+    paymentMethod: params.paymentMethod,
+    status: params.status,
+    stripeCheckoutSessionId: params.stripeCheckoutSessionId,
+    note: params.note,
+  };
+}
+
+async function storeOrder(env: Env, order: Order) {
+  await env.ORDERS_KV.put(`${ORDERS_PREFIX}${order.id}`, JSON.stringify(order));
+  if (order.stripeCheckoutSessionId) {
+    await env.ORDERS_KV.put(`${SESSION_PREFIX}${order.stripeCheckoutSessionId}`, order.id);
+  }
+}
+
+async function getOrderById(env: Env, orderId: string): Promise<Order | null> {
+  const raw = await env.ORDERS_KV.get(`${ORDERS_PREFIX}${orderId}`);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as Order;
+  } catch {
+    return null;
+  }
+}
+
 // Haversine (km)
 function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const R = 6371;
@@ -139,8 +218,9 @@ async function createCheckoutSession(params: {
   deliveryLat: number;
   deliveryLng: number;
   distance: number;
+  orderId: string;
 }) {
-  const { items, origin, stripeSecretKey, deliveryAddress, deliveryLat, deliveryLng, distance } = params;
+  const { items, origin, stripeSecretKey, deliveryAddress, deliveryLat, deliveryLng, distance, orderId } = params;
 
   const form = new URLSearchParams();
   form.set("mode", "payment");
@@ -159,6 +239,7 @@ async function createCheckoutSession(params: {
   form.set("metadata[delivery_lat]", String(deliveryLat));
   form.set("metadata[delivery_lng]", String(deliveryLng));
   form.set("metadata[delivery_distance_km]", distance.toFixed(3));
+  form.set("metadata[order_id]", orderId);
 
   // Items
   let idx = 0;
@@ -197,6 +278,40 @@ async function createCheckoutSession(params: {
   return { ok: true, session: bodyJson };
 }
 
+function parseStripeSignature(headerValue: string | null) {
+  if (!headerValue) return null;
+  const parts = headerValue.split(",").map((part) => part.trim());
+  const timestampPart = parts.find((part) => part.startsWith("t="));
+  const signaturePart = parts.find((part) => part.startsWith("v1="));
+  if (!timestampPart || !signaturePart) return null;
+  const timestamp = timestampPart.slice(2);
+  const signature = signaturePart.slice(3);
+  if (!timestamp || !signature) return null;
+  return { timestamp, signature };
+}
+
+function toHex(buffer: ArrayBuffer) {
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function verifyStripeWebhook(body: string, signatureHeader: string | null, secret: string) {
+  const parsed = parseStripeSignature(signatureHeader);
+  if (!parsed) return false;
+  const payload = `${parsed.timestamp}.${body}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  const expected = toHex(signature);
+  return expected === parsed.signature;
+}
+
 export default {
   async fetch(request: Request, env: Env) {
     const requestOrigin = normalizeOrigin(request.headers.get("Origin"));
@@ -212,7 +327,73 @@ export default {
       return text("OK", 200, cors);
     }
 
-    if (url.pathname !== "/create-checkout-session") {
+    if (request.method === "GET" && url.pathname.startsWith("/order/")) {
+      const orderId = url.pathname.replace("/order/", "").trim();
+      if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+      const order = await getOrderById(env, orderId);
+      if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+      return json({ order }, 200, cors);
+    }
+
+    if (request.method === "GET" && url.pathname === "/order-by-session") {
+      const sessionId = url.searchParams.get("sessionId")?.trim();
+      if (!sessionId) return json({ error: "SESSION_ID_REQUIRED" }, 400, cors);
+      const orderId = await env.ORDERS_KV.get(`${SESSION_PREFIX}${sessionId}`);
+      if (!orderId) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+      const order = await getOrderById(env, orderId);
+      if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+      return json({ orderId: order.id, status: order.status, order }, 200, cors);
+    }
+
+    if (url.pathname === "/stripe-webhook") {
+      if (request.method !== "POST") {
+        return json({ error: "METHOD_NOT_ALLOWED" }, 405, cors);
+      }
+      if (!env.STRIPE_WEBHOOK_SECRET) {
+        return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_WEBHOOK_SECRET" }, 500, cors);
+      }
+      const bodyText = await request.text();
+      const signatureHeader = request.headers.get("stripe-signature");
+      const isValid = await verifyStripeWebhook(bodyText, signatureHeader, env.STRIPE_WEBHOOK_SECRET);
+      if (!isValid) {
+        return json({ error: "INVALID_SIGNATURE" }, 400, cors);
+      }
+
+      let event: any = null;
+      try {
+        event = JSON.parse(bodyText);
+      } catch {
+        return json({ error: "INVALID_JSON" }, 400, cors);
+      }
+
+      if (event?.type !== "checkout.session.completed") {
+        return json({ received: true, ignored: true }, 200, cors);
+      }
+
+      const session = event.data?.object;
+      const sessionId = session?.id ? String(session.id) : "";
+      const orderIdFromMetadata = session?.metadata?.order_id ? String(session.metadata.order_id) : "";
+      const mappedOrderId = sessionId ? await env.ORDERS_KV.get(`${SESSION_PREFIX}${sessionId}`) : null;
+      const orderId = mappedOrderId || orderIdFromMetadata;
+      if (!orderId) {
+        return json({ received: true, updated: false }, 200, cors);
+      }
+
+      const order = await getOrderById(env, orderId);
+      if (!order) {
+        return json({ received: true, updated: false }, 200, cors);
+      }
+
+      const updated: Order = { ...order, status: "PAID_ONLINE" };
+      await storeOrder(env, updated);
+      return json({ received: true, updated: true }, 200, cors);
+    }
+
+    const isCheckoutSession = url.pathname === "/create-checkout-session";
+    const isOrderCash = url.pathname === "/create-order-cash";
+    const isOrderStripe = url.pathname === "/create-order-stripe";
+
+    if (!isCheckoutSession && !isOrderCash && !isOrderStripe) {
       return json({ error: "NOT_FOUND" }, 404, cors);
     }
 
@@ -221,10 +402,6 @@ export default {
     }
 
     try {
-      if (!env.STRIPE_SECRET_KEY) {
-        return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_SECRET_KEY" }, 500, cors);
-      }
-
       const body: any = await request.json().catch(() => null);
       if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
 
@@ -267,6 +444,27 @@ export default {
         ? requestOrigin
         : (env.DEFAULT_ORIGIN || FALLBACK_ORIGIN);
 
+      const customer = normalizeCustomer(body);
+      const note = normalizeNote(body);
+      const orderId = crypto.randomUUID();
+      const baseOrder: Order = buildOrder({
+        id: orderId,
+        items: validation.items,
+        customer,
+        paymentMethod: isOrderCash ? "CASH" : "STRIPE",
+        status: isOrderCash ? "CASH_ON_DELIVERY" : "PENDING_PAYMENT",
+        note,
+      });
+
+      if (isOrderCash) {
+        await storeOrder(env, baseOrder);
+        return json({ orderId: baseOrder.id }, 200, cors);
+      }
+
+      if (!env.STRIPE_SECRET_KEY) {
+        return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_SECRET_KEY" }, 500, cors);
+      }
+
       const result = await createCheckoutSession({
         items: validation.items,
         origin: checkoutOrigin,
@@ -275,6 +473,7 @@ export default {
         deliveryLat,
         deliveryLng,
         distance: km,
+        orderId: baseOrder.id,
       });
 
       if (!result.ok) {
@@ -285,7 +484,13 @@ export default {
         return json({ error: "STRIPE_NO_URL", details: result.session }, 502, cors);
       }
 
-      return json({ url: result.session.url, sessionId: result.session.id }, 200, cors);
+      const order: Order = {
+        ...baseOrder,
+        stripeCheckoutSessionId: result.session.id,
+      };
+      await storeOrder(env, order);
+
+      return json({ url: result.session.url, sessionId: result.session.id, orderId: order.id }, 200, cors);
     } catch (e: any) {
       return json({ error: "WORKER_ERROR", details: e?.message ?? String(e) }, 500, cors);
     }

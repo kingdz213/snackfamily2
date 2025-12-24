@@ -1,5 +1,3 @@
-export type PaymentStatus = 'stripe' | 'cash';
-
 export interface WhatsAppOrderItem {
   label: string;
   quantity: number;
@@ -7,7 +5,9 @@ export interface WhatsAppOrderItem {
 }
 
 export interface WhatsAppOrderParams {
-  paymentStatus: PaymentStatus;
+  orderId: string;
+  verificationUrl: string;
+  paymentLabel: string;
   customerName: string;
   customerPhone: string;
   address: string;
@@ -21,8 +21,6 @@ export interface WhatsAppOrderParams {
   notes?: string;
   timestampIso?: string;
 }
-
-export const LAST_ORDER_STORAGE_KEY = 'sf2_last_order_payload';
 
 function formatCurrency(value: number) {
   return `${value.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
@@ -43,11 +41,6 @@ export function getWhatsAppPhone(): string {
 }
 
 export function buildOrderWhatsAppMessage(params: WhatsAppOrderParams): string {
-  const paymentLabel =
-    params.paymentStatus === 'stripe'
-      ? 'PAYÉ EN LIGNE'
-      : 'PAIEMENT CASH (À LA LIVRAISON)';
-
   const itemsLines = params.items.length
     ? params.items
         .map((item) => {
@@ -69,7 +62,9 @@ export function buildOrderWhatsAppMessage(params: WhatsAppOrderParams): string {
 
   return (
     `${header}\n` +
-    `Statut : ${paymentLabel}\n` +
+    `Commande : #${params.orderId}\n` +
+    `Paiement : ${params.paymentLabel}\n` +
+    `Vérification : ${params.verificationUrl}\n` +
     `Date/heure : ${formatTimestamp(params.timestampIso)}\n` +
     `Nom : ${params.customerName || 'Inconnu'}\n` +
     `Téléphone : ${params.customerPhone || '-'}\n` +

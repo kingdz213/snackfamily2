@@ -3,8 +3,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, MapPin, Banknote } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { startCheckout } from '../lib/stripe';
-import { LAST_ORDER_STORAGE_KEY, WhatsAppOrderParams, openWhatsAppOrder } from '../lib/whatsapp';
+import { createOrderCash, createOrderStripe } from '../lib/orders';
+import { WhatsAppOrderParams, openWhatsAppOrder } from '../lib/whatsapp';
 import { Portal } from './Portal';
 import { getRecommendations, MIN_ORDER_EUR } from '../lib/recommendations';
 import { MENU_CATEGORIES } from '../data/menuData';
@@ -317,11 +317,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     return description;
   };
 
-  const buildWhatsAppOrderParams = (paymentStatus: WhatsAppOrderParams['paymentStatus']): WhatsAppOrderParams => {
+  const buildWhatsAppOrderParams = (params: {
+    orderId: string;
+    paymentLabel: string;
+  }): WhatsAppOrderParams => {
     const timestampIso = new Date().toISOString();
 
     return {
-      paymentStatus,
+      orderId: params.orderId,
+      paymentLabel: params.paymentLabel,
+      verificationUrl: `${window.location.origin}/order/${params.orderId}`,
       customerName: deliveryInfo.name.trim(),
       customerPhone: deliveryInfo.phone.trim(),
       address: deliveryInfo.address.trim(),
@@ -505,24 +510,24 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
       const items = cartItems.map((it) => ({
         name: buildLineItemName(it),
-        price: Math.round(Number(it.price) * 100),
+        price: Number(it.price),
         quantity: Math.max(1, Math.trunc(it.quantity)),
       }));
 
-      const orderPayload = buildWhatsAppOrderParams('stripe');
-      try {
-        localStorage.setItem(LAST_ORDER_STORAGE_KEY, JSON.stringify(orderPayload));
-      } catch (error) {
-        warnDev('[OrderUI] Failed to persist last order payload', error);
-      }
-
-      await startCheckout({
-        origin: window.location.origin,
+      const response = await createOrderStripe({
         items,
         deliveryAddress: deliveryAddress.trim(),
         deliveryLat: Number(deliveryLat),
         deliveryLng: Number(deliveryLng),
+        customer: {
+          name: deliveryInfo.name.trim(),
+          phone: deliveryInfo.phone.trim(),
+          address: deliveryAddress.trim(),
+        },
+        note: deliveryInfo.note.trim() || undefined,
       });
+
+      window.location.assign(response.url);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
       setCheckoutError(message);
@@ -540,7 +545,27 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setIsCheckingOut(true);
 
     try {
-      const payload = buildWhatsAppOrderParams('cash');
+      const orderId = await createOrderCash({
+        items: cartItems.map((item) => ({
+          name: buildLineItemName(item),
+          quantity: Math.max(1, Math.trunc(item.quantity)),
+          price: Number.isFinite(item.price) ? item.price : 0,
+        })),
+        deliveryAddress: formattedDeliveryAddress.trim(),
+        deliveryLat: Number(deliveryLat),
+        deliveryLng: Number(deliveryLng),
+        customer: {
+          name: deliveryInfo.name.trim(),
+          phone: deliveryInfo.phone.trim(),
+          address: formattedDeliveryAddress.trim(),
+        },
+        note: deliveryInfo.note.trim() || undefined,
+      });
+
+      const payload = buildWhatsAppOrderParams({
+        orderId,
+        paymentLabel: 'À la livraison',
+      });
       setLastCashOrder(payload);
       openWhatsAppOrder(payload);
       setCheckoutInfo("Votre commande est prête. Cliquez sur ‘Envoyer sur WhatsApp’ pour la transmettre.");
