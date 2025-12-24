@@ -4,10 +4,10 @@
 // Paiement CASH = géré côté front (pas besoin du Worker). Le Worker sert uniquement pour Stripe.
 
 interface Env {
-  STRIPE_SECRET_KEY: string;
+  STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   DEFAULT_ORIGIN?: string;
-  ORDERS_KV: KVNamespace;
+  ORDERS_KV?: KVNamespace;
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
@@ -81,6 +81,22 @@ function text(data: string, status = 200, headers: Record<string, string> = {}) 
       ...headers,
     },
   });
+}
+
+function missingEnvResponse(name: string, cors: Record<string, string>) {
+  return json({ error: "SERVER_MISCONFIGURED", details: `Missing ${name}` }, 500, cors);
+}
+
+function getRequiredEnv(name: string, value: string | undefined, cors: Record<string, string>) {
+  if (!value) return { ok: false as const, response: missingEnvResponse(name, cors) };
+  return { ok: true as const, value };
+}
+
+function getOrdersKv(env: Env, cors: Record<string, string>) {
+  if (!env.ORDERS_KV) {
+    return { ok: false as const, response: missingEnvResponse("ORDERS_KV binding", cors) };
+  }
+  return { ok: true as const, kv: env.ORDERS_KV };
 }
 
 // Accepte EUROS (14.50) OU CENTIMES (1450)
@@ -180,15 +196,15 @@ function buildOrder(params: {
   };
 }
 
-async function storeOrder(env: Env, order: Order) {
-  await env.ORDERS_KV.put(`${ORDERS_PREFIX}${order.id}`, JSON.stringify(order));
+async function storeOrder(kv: KVNamespace, order: Order) {
+  await kv.put(`${ORDERS_PREFIX}${order.id}`, JSON.stringify(order));
   if (order.stripeCheckoutSessionId) {
-    await env.ORDERS_KV.put(`${SESSION_PREFIX}${order.stripeCheckoutSessionId}`, order.id);
+    await kv.put(`${SESSION_PREFIX}${order.stripeCheckoutSessionId}`, order.id);
   }
 }
 
-async function getOrderById(env: Env, orderId: string): Promise<Order | null> {
-  const raw = await env.ORDERS_KV.get(`${ORDERS_PREFIX}${orderId}`);
+async function getOrderById(kv: KVNamespace, orderId: string): Promise<Order | null> {
+  const raw = await kv.get(`${ORDERS_PREFIX}${orderId}`);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as Order;
@@ -328,19 +344,23 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname.startsWith("/order/")) {
+      const kvCheck = getOrdersKv(env, cors);
+      if (!kvCheck.ok) return kvCheck.response;
       const orderId = url.pathname.replace("/order/", "").trim();
       if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
-      const order = await getOrderById(env, orderId);
+      const order = await getOrderById(kvCheck.kv, orderId);
       if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
       return json({ order }, 200, cors);
     }
 
     if (request.method === "GET" && url.pathname === "/order-by-session") {
+      const kvCheck = getOrdersKv(env, cors);
+      if (!kvCheck.ok) return kvCheck.response;
       const sessionId = url.searchParams.get("sessionId")?.trim();
       if (!sessionId) return json({ error: "SESSION_ID_REQUIRED" }, 400, cors);
-      const orderId = await env.ORDERS_KV.get(`${SESSION_PREFIX}${sessionId}`);
+      const orderId = await kvCheck.kv.get(`${SESSION_PREFIX}${sessionId}`);
       if (!orderId) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
-      const order = await getOrderById(env, orderId);
+      const order = await getOrderById(kvCheck.kv, orderId);
       if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
       return json({ orderId: order.id, status: order.status, order }, 200, cors);
     }
@@ -349,12 +369,13 @@ export default {
       if (request.method !== "POST") {
         return json({ error: "METHOD_NOT_ALLOWED" }, 405, cors);
       }
-      if (!env.STRIPE_WEBHOOK_SECRET) {
-        return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_WEBHOOK_SECRET" }, 500, cors);
-      }
+      const kvCheck = getOrdersKv(env, cors);
+      if (!kvCheck.ok) return kvCheck.response;
+      const webhookSecret = getRequiredEnv("STRIPE_WEBHOOK_SECRET", env.STRIPE_WEBHOOK_SECRET, cors);
+      if (!webhookSecret.ok) return webhookSecret.response;
       const bodyText = await request.text();
       const signatureHeader = request.headers.get("stripe-signature");
-      const isValid = await verifyStripeWebhook(bodyText, signatureHeader, env.STRIPE_WEBHOOK_SECRET);
+      const isValid = await verifyStripeWebhook(bodyText, signatureHeader, webhookSecret.value);
       if (!isValid) {
         return json({ error: "INVALID_SIGNATURE" }, 400, cors);
       }
@@ -373,19 +394,19 @@ export default {
       const session = event.data?.object;
       const sessionId = session?.id ? String(session.id) : "";
       const orderIdFromMetadata = session?.metadata?.order_id ? String(session.metadata.order_id) : "";
-      const mappedOrderId = sessionId ? await env.ORDERS_KV.get(`${SESSION_PREFIX}${sessionId}`) : null;
+      const mappedOrderId = sessionId ? await kvCheck.kv.get(`${SESSION_PREFIX}${sessionId}`) : null;
       const orderId = mappedOrderId || orderIdFromMetadata;
       if (!orderId) {
         return json({ received: true, updated: false }, 200, cors);
       }
 
-      const order = await getOrderById(env, orderId);
+      const order = await getOrderById(kvCheck.kv, orderId);
       if (!order) {
         return json({ received: true, updated: false }, 200, cors);
       }
 
       const updated: Order = { ...order, status: "PAID_ONLINE" };
-      await storeOrder(env, updated);
+      await storeOrder(kvCheck.kv, updated);
       return json({ received: true, updated: true }, 200, cors);
     }
 
@@ -402,6 +423,8 @@ export default {
     }
 
     try {
+      const kvCheck = getOrdersKv(env, cors);
+      if (!kvCheck.ok) return kvCheck.response;
       const body: any = await request.json().catch(() => null);
       if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
 
@@ -457,18 +480,17 @@ export default {
       });
 
       if (isOrderCash) {
-        await storeOrder(env, baseOrder);
+        await storeOrder(kvCheck.kv, baseOrder);
         return json({ orderId: baseOrder.id }, 200, cors);
       }
 
-      if (!env.STRIPE_SECRET_KEY) {
-        return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_SECRET_KEY" }, 500, cors);
-      }
+      const stripeSecret = getRequiredEnv("STRIPE_SECRET_KEY", env.STRIPE_SECRET_KEY, cors);
+      if (!stripeSecret.ok) return stripeSecret.response;
 
       const result = await createCheckoutSession({
         items: validation.items,
         origin: checkoutOrigin,
-        stripeSecretKey: String(env.STRIPE_SECRET_KEY),
+        stripeSecretKey: stripeSecret.value,
         deliveryAddress,
         deliveryLat,
         deliveryLng,
@@ -488,7 +510,7 @@ export default {
         ...baseOrder,
         stripeCheckoutSessionId: result.session.id,
       };
-      await storeOrder(env, order);
+      await storeOrder(kvCheck.kv, order);
 
       return json({ url: result.session.url, sessionId: result.session.id, orderId: order.id }, 200, cors);
     } catch (e: any) {
