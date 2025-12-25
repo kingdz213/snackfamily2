@@ -16,28 +16,63 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState<'login' | 'register' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const normalizedEmail = email.trim().toLowerCase();
-  const isEmailValid = normalizedEmail.length > 0 && normalizedEmail.includes('@') && normalizedEmail.includes('.');
+  const emailTrim = email.trim();
+  const isEmailValid = emailTrim.length > 0 && emailTrim.includes('@') && emailTrim.includes('.');
   const isPasswordValid = password.length >= 6;
   const isRegisterDisabled = isSubmitting === 'register' || !isEmailValid || !isPasswordValid;
 
   if (!isOpen) return null;
 
+  const getFirebaseErrorMessage = (firebaseError: unknown) => {
+    const code = typeof firebaseError === 'object' && firebaseError !== null && 'code' in firebaseError
+      ? String((firebaseError as { code: string }).code)
+      : '';
+
+    switch (code) {
+      case 'auth/invalid-email':
+        return { message: 'Email invalide', code };
+      case 'auth/email-already-in-use':
+        return { message: 'Cet email est déjà utilisé', code };
+      case 'auth/weak-password':
+        return { message: 'Mot de passe trop court (6 caractères min.)', code };
+      case 'auth/invalid-credential':
+      case 'auth/wrong-password':
+        return { message: 'Identifiants incorrects', code };
+      case 'auth/user-not-found':
+        return { message: 'Aucun compte trouvé avec cet email', code };
+      default:
+        return { message: 'Une erreur est survenue. Veuillez réessayer.', code };
+    }
+  };
+
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    if (!emailTrim) {
+      setError('Veuillez entrer une adresse email valide.');
+      return;
+    }
+    if (!isEmailValid) {
+      setError('Email invalide');
+      return;
+    }
+    if (!isPasswordValid) {
+      setError('Mot de passe: 6 caractères minimum');
+      return;
+    }
     if (import.meta.env.DEV) {
-      console.info('[AuthModal] Tentative de connexion', { email: normalizedEmail });
+      console.info('[AuthModal] Tentative de connexion', { email: emailTrim });
     }
     setIsSubmitting('login');
     try {
-      await login(email.trim(), password);
+      await login(emailTrim, password);
       setPassword('');
     } catch (err) {
+      const { message: firebaseMessage, code } = getFirebaseErrorMessage(err);
       if (import.meta.env.DEV) {
-        console.error('[AuthModal] Erreur connexion', err);
+        console.error('[AuthModal] Erreur connexion', { code, error: err });
       }
-      setError(err instanceof Error ? err.message : 'Connexion impossible.');
+      setError(firebaseMessage);
     } finally {
       setIsSubmitting(null);
     }
@@ -48,28 +83,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
     setError(null);
     if (import.meta.env.DEV) {
       console.info('[AuthModal] Tentative de création', {
-        email: normalizedEmail,
+        email: emailTrim,
         isEmailValid,
         isPasswordValid,
       });
     }
     if (!isEmailValid) {
-      setError('Veuillez entrer une adresse email valide.');
+      setError('Email invalide');
       return;
     }
     if (!isPasswordValid) {
-      setError('Le mot de passe doit contenir au moins 6 caractères.');
+      setError('Mot de passe: 6 caractères minimum');
       return;
     }
     setIsSubmitting('register');
     try {
-      await register(normalizedEmail, password);
+      await register(emailTrim, password);
       setPassword('');
     } catch (err) {
+      const { message: firebaseMessage, code } = getFirebaseErrorMessage(err);
       if (import.meta.env.DEV) {
-        console.error('[AuthModal] Erreur création compte', err);
+        console.error('[AuthModal] Erreur création compte', { code, error: err });
       }
-      setError(err instanceof Error ? err.message : 'Création du compte impossible.');
+      setError(firebaseMessage);
     } finally {
       setIsSubmitting(null);
     }
