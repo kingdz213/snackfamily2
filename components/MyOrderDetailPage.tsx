@@ -59,7 +59,14 @@ export const MyOrderDetailPage: React.FC<MyOrderDetailPageProps> = ({ navigateTo
       setOrder(null);
       return;
     }
+    if (!db) {
+      setOrder(null);
+      setError('Configuration Firebase incomplète.');
+      setIsLoading(false);
+      return;
+    }
 
+    setError(null);
     const ref = doc(db, 'orders', orderId);
     const unsubscribe = onSnapshot(
       ref,

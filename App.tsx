@@ -22,6 +22,7 @@ import { CartItem, MenuItem, MenuCategory, Page } from './types';
 import { subscribeToForegroundMessages } from './lib/notifications';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { MENU_CATEGORIES } from './data/menuData';
+import { firebaseInitError } from '@/src/firebase';
 
 const pageToPath: Record<Page, string> = {
   home: '/',
@@ -384,6 +385,12 @@ function App() {
         cartCount={cartItems.reduce((acc, item) => acc + item.quantity, 0)}
         toggleCart={toggleCart}
       />
+
+      {firebaseInitError && (
+        <div className="bg-amber-100 text-amber-900 text-sm font-semibold px-4 py-2 text-center border-b border-amber-200">
+          Configuration Firebase incomplète. Certaines fonctionnalités (connexion/notifications) sont désactivées.
+        </div>
+      )}
 
       <main className="flex-grow pt-24">
         {renderPage()}

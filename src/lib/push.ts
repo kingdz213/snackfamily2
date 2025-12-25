@@ -31,6 +31,9 @@ export const requestPushPermissionAndRegister = async (uid: string): Promise<Pus
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return { status: 'unsupported', message: 'Notifications non supportées.' };
   }
+  if (!db) {
+    return { status: 'error', message: 'Configuration Firebase incomplète.' };
+  }
 
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
@@ -71,6 +74,7 @@ export const requestPushPermissionAndRegister = async (uid: string): Promise<Pus
 };
 
 export const unregisterPushToken = async (uid: string) => {
+  if (!db) return;
   const token = getStoredPushToken();
   if (!token) return;
   await deleteDoc(doc(db, 'users', uid, 'fcmTokens', token));

@@ -44,6 +44,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
+    if (!auth) {
+      setLoading(false);
+      setUser(null);
+      return;
+    }
     const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       setLoading(false);
@@ -53,7 +58,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const refreshProfile = useCallback(async () => {
-    if (!auth.currentUser) {
+    if (!auth || !db || !auth.currentUser) {
       setProfile(null);
       return;
     }
@@ -75,10 +80,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [refreshProfile, user]);
 
   const login = useCallback(async (email: string, password: string) => {
+    if (!auth) {
+      throw new Error('Firebase Auth indisponible.');
+    }
     await signInWithEmailAndPassword(auth, email, password);
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
+    if (!auth) {
+      throw new Error('Firebase Auth indisponible.');
+    }
     if (auth.currentUser?.isAnonymous) {
       const credential = EmailAuthProvider.credential(email, password);
       await linkWithCredential(auth.currentUser, credential);
@@ -88,15 +99,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const loginAnonymously = useCallback(async () => {
+    if (!auth) {
+      throw new Error('Firebase Auth indisponible.');
+    }
     await signInAnonymously(auth);
   }, []);
 
   const logout = useCallback(async () => {
+    if (!auth) {
+      throw new Error('Firebase Auth indisponible.');
+    }
     await signOut(auth);
   }, []);
 
   const saveProfile = useCallback(async (input: UserProfileInput) => {
-    if (!auth.currentUser) return;
+    if (!auth || !db || !auth.currentUser) return;
     const ref = doc(db, 'users', auth.currentUser.uid);
     await setDoc(
       ref,
@@ -110,7 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const getIdToken = useCallback(async () => {
-    if (!auth.currentUser) return null;
+    if (!auth || !auth.currentUser) return null;
     return auth.currentUser.getIdToken();
   }, []);
 
