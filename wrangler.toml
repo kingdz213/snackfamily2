@@ -2,12 +2,10 @@ name = "delicate-meadow-9436snackfamily2payments"
 main = "cloudflare-worker.ts"
 compatibility_date = "2025-12-21"
 
-# Configure with:
-#   wrangler secret put STRIPE_SECRET_KEY
-#   wrangler secret put STRIPE_WEBHOOK_SECRET
-[vars]
-DEFAULT_ORIGIN = "https://snackfamily2.eu"
-
+# KV binding used by the Worker
 kv_namespaces = [
   { binding = "ORDERS_KV", id = "c62f80a3edde4a458d2f998b3b2306c7", preview_id = "25b6be5bcd734cb7b2b9a360e23fa23e" }
 ]
+
+[vars]
+DEFAULT_ORIGIN = "https://snackfamily2.eu"
