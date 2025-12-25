@@ -10,50 +10,47 @@ type OrderItem = {
 
 type OrderResponse = {
   id: string;
+  createdAt: string;
   items: OrderItem[];
   subtotal: number;
   deliveryFee: number;
   total: number;
   deliveryAddress: string;
   paymentMethod: 'STRIPE' | 'CASH';
-  status: 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'CASH_ON_DELIVERY';
-  fulfillmentStatus: 'RECEIVED' | 'IN_PREPARATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
-  fulfillmentUpdatedAt: string;
+  status: 'RECEIVED' | 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'IN_PREPARATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED';
 };
 
 const formatCents = (value: number) => `${(value / 100).toFixed(2)} €`;
-
-const statusLabels: Record<OrderResponse['status'], string> = {
-  PENDING_PAYMENT: 'En attente de paiement',
-  PAID_ONLINE: 'Payé en ligne',
-  CASH_ON_DELIVERY: 'Paiement à la livraison',
-};
 
 const paymentLabels: Record<OrderResponse['paymentMethod'], string> = {
   STRIPE: 'En ligne (Stripe)',
   CASH: 'À la livraison',
 };
 
-const fulfillmentCopy: Record<OrderResponse['fulfillmentStatus'], { title: string; subtitle: string }> = {
+const statusCopy: Record<OrderResponse['status'], { title: string; subtitle: string }> = {
   RECEIVED: {
-    title: 'Commande reçue',
-    subtitle: 'Votre commande a bien été prise en compte.',
+    title: 'Commande enregistrée — paiement à la livraison',
+    subtitle: 'Votre commande est prise en compte. Préparation en cours.',
+  },
+  PENDING_PAYMENT: {
+    title: 'Paiement en cours de confirmation',
+    subtitle: 'Nous validons votre paiement. Vous serez informé dès confirmation.',
+  },
+  PAID_ONLINE: {
+    title: 'Commande confirmée — préparation en cours',
+    subtitle: 'Votre paiement est confirmé. Nous préparons votre commande.',
   },
   IN_PREPARATION: {
-    title: 'En préparation',
+    title: 'Commande en préparation',
     subtitle: 'Votre commande est en cours de préparation.',
   },
   OUT_FOR_DELIVERY: {
-    title: 'En cours de livraison',
+    title: 'En livraison',
     subtitle: 'Votre commande est en route. Merci de rester joignable.',
   },
   DELIVERED: {
-    title: 'Livrée',
+    title: 'Commande livrée',
     subtitle: 'Votre commande a été livrée. Merci et à bientôt !',
-  },
-  CANCELLED: {
-    title: 'Annulée',
-    subtitle: 'Cette commande a été annulée.',
   },
 };
 
@@ -70,7 +67,7 @@ export const OrderStatusPage: React.FC<OrderStatusPageProps> = ({ orderId }) => 
     let cancelled = false;
     const fetchOrder = async () => {
       try {
-        const endpoint = `${resolveWorkerBaseUrl()}/order/${encodeURIComponent(orderId)}`;
+        const endpoint = `${resolveWorkerBaseUrl()}/api/orders/${encodeURIComponent(orderId)}`;
         const response = await fetch(endpoint);
         if (!response.ok) {
           throw new Error('Commande introuvable.');
@@ -110,12 +107,12 @@ export const OrderStatusPage: React.FC<OrderStatusPageProps> = ({ orderId }) => 
       <div className="w-full max-w-3xl bg-white shadow-lg rounded-xl p-6 space-y-4">
         <div>
           <h1 className="text-2xl font-display font-bold text-snack-black uppercase">Commande #{order.id}</h1>
-          <p className="text-sm text-gray-500">Paiement : {statusLabels[order.status]}</p>
+          <p className="text-sm text-gray-500">Statut : {statusCopy[order.status].title}</p>
         </div>
 
         <div className="rounded-lg border border-snack-gold/30 bg-snack-light px-4 py-3">
-          <p className="text-lg font-semibold text-snack-black">{fulfillmentCopy[order.fulfillmentStatus].title}</p>
-          <p className="text-sm text-gray-600">{fulfillmentCopy[order.fulfillmentStatus].subtitle}</p>
+          <p className="text-lg font-semibold text-snack-black">{statusCopy[order.status].title}</p>
+          <p className="text-sm text-gray-600">{statusCopy[order.status].subtitle}</p>
         </div>
 
         <div className="text-sm text-gray-700 space-y-1">

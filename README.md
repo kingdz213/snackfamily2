@@ -7,6 +7,7 @@
 - `VITE_WORKER_URL` : URL complète du backend checkout (peut déjà contenir `/create-checkout-session`).
 - `VITE_WORKER_BASE_URL` : alias legacy si la prod utilise encore l'ancien nom (la librairie ajoute automatiquement `/create-checkout-session`).
 - `VITE_PUBLIC_ORIGIN` : origin public attendu (ex: `https://snackfamily2.eu`), utile pour générer les URLs de retour.
+- `VITE_WHATSAPP_ORDER_PHONE` : numéro WhatsApp pour les commandes (format international).
 - `VITE_FIREBASE_VAPID_KEY` : clé VAPID pour les notifications web push (front).
 
 > ⚠️ Ne jamais exposer de clé secrète Stripe dans le front. Les secrets restent côté Worker/Firebase Functions (`STRIPE_API_KEY`, `STRIPE_WEBHOOK_SECRET`).
@@ -20,6 +21,7 @@ VITE_WORKER_URL=https://payments.snackfamily2.eu/create-checkout-session
 VITE_WORKER_BASE_URL=https://payments.snackfamily2.eu
 
 VITE_PUBLIC_ORIGIN=https://snackfamily2.eu
+VITE_WHATSAPP_ORDER_PHONE=+32465671893
 VITE_FIREBASE_VAPID_KEY=BOGUS_PUBLIC_VAPID_KEY
 ```
 
@@ -29,12 +31,14 @@ VITE_FIREBASE_VAPID_KEY=BOGUS_PUBLIC_VAPID_KEY
 # Front Vercel (Environment Variables)
 VITE_WORKER_BASE_URL=https://<your-worker>.workers.dev
 VITE_PUBLIC_ORIGIN=https://snackfamily2.eu
+VITE_WHATSAPP_ORDER_PHONE=+32465671893
 # Optionnel si vous chargez Stripe côté front :
 VITE_STRIPE_PUBLISHABLE_KEY=pk_live_xxx
 
 # Cloudflare Worker (Vars → Text)
 STRIPE_SECRET_KEY=sk_live_xxx
-ALLOWED_ORIGIN=https://snackfamily2.eu
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+ADMIN_PIN=1234
 DEFAULT_ORIGIN=https://snackfamily2.eu
 ```
 
