@@ -6,6 +6,7 @@
 interface Env {
   STRIPE_SECRET_KEY: string;
   DEFAULT_ORIGIN?: string;
+  ORDERS_KV?: KVNamespace;
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
@@ -77,6 +78,14 @@ function text(data: string, status = 200, headers: Record<string, string> = {}) 
       ...headers,
     },
   });
+}
+
+function hasOrdersKv(env: Env) {
+  return Boolean(env.ORDERS_KV && typeof env.ORDERS_KV.get === "function");
+}
+
+function hasStripeSecret(env: Env) {
+  return Boolean(env.STRIPE_SECRET_KEY && String(env.STRIPE_SECRET_KEY).trim());
 }
 
 // Accepte EUROS (14.50) OU CENTIMES (1450)
@@ -209,7 +218,16 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return text("OK", 200, cors);
+      return json(
+        {
+          ok: true,
+          hasOrdersKV: hasOrdersKv(env),
+          hasStripeSecret: hasStripeSecret(env),
+          origin: env.DEFAULT_ORIGIN || FALLBACK_ORIGIN,
+        },
+        200,
+        cors
+      );
     }
 
     if (url.pathname !== "/create-checkout-session") {
@@ -221,8 +239,11 @@ export default {
     }
 
     try {
-      if (!env.STRIPE_SECRET_KEY) {
+      if (!hasStripeSecret(env)) {
         return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_SECRET_KEY" }, 500, cors);
+      }
+      if (!hasOrdersKv(env)) {
+        return json({ error: "SERVER_MISCONFIGURED", details: "ORDERS_KV not bound" }, 500, cors);
       }
 
       const body: any = await request.json().catch(() => null);
