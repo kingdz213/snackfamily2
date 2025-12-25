@@ -8,6 +8,8 @@ import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone, resolvePublicOri
 import { Portal } from './Portal';
 import { getRecommendations, MIN_ORDER_EUR } from '../lib/recommendations';
 import { MENU_CATEGORIES } from '../data/menuData';
+import { LoadingSpinner } from '@/src/components/LoadingSpinner';
+import { prefersReducedMotion, motionSafeHover, motionSafeTap, motionSafeTransition } from '@/src/lib/motion';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -83,6 +85,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   // Paiement
   const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cash'>('stripe');
+  const [isAddBouncing, setIsAddBouncing] = useState(false);
+  const addBounceTimeoutRef = useRef<number | null>(null);
 
   // Adresse + position obligatoires
   const [deliveryInfo, setDeliveryInfo] = useState<DeliveryInfo>({
@@ -101,6 +105,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const checkoutFormRef = useRef<HTMLDivElement | null>(null);
 
   const bodyStyleRestoreRef = useRef<null | { overflow: string; filter: string }>(null);
+  const reduceMotion = prefersReducedMotion();
 
   const dev = import.meta.env.DEV;
   const logDev = (...args: any[]) => dev && console.log(...args);
@@ -212,6 +217,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     }
   }, [isOrderModalOpen, selectedItem]);
 
+  useEffect(() => {
+    return () => {
+      if (addBounceTimeoutRef.current) {
+        window.clearTimeout(addBounceTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleSupplementToggle = (suppName: string) => {
     setSelectedSupplements((prev) => (prev.includes(suppName) ? prev.filter((s) => s !== suppName) : [...prev, suppName]));
   };
@@ -259,7 +272,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     };
 
     addToCart(newItem);
-    closeOrderModal();
+    if (!reduceMotion) {
+      setIsAddBouncing(true);
+      addBounceTimeoutRef.current = window.setTimeout(() => setIsAddBouncing(false), 180);
+    }
+    window.setTimeout(() => closeOrderModal(), reduceMotion ? 0 : 110);
   };
 
   const itemsSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -735,9 +752,13 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     </button>
                   </div>
 
-                  <button
+                  <motion.button
                     onClick={handleAddToCart}
                     disabled={isSelectedItemUnavailable}
+                    whileHover={reduceMotion ? undefined : motionSafeHover}
+                    whileTap={reduceMotion ? undefined : motionSafeTap}
+                    animate={reduceMotion ? { scale: 1 } : isAddBouncing ? { scale: [1, 1.05, 1] } : { scale: 1 }}
+                    transition={reduceMotion ? { duration: 0 } : { ...motionSafeTransition, duration: 0.18 }}
                     className={`flex-1 bg-snack-gold text-snack-black h-14 rounded-lg font-display font-bold text-lg uppercase tracking-wide transition-all duration-200 flex items-center justify-between px-6 shadow-lg active:scale-95 active:bg-green-600 active:text-white ${
                       isSelectedItemUnavailable
                         ? 'opacity-60 cursor-not-allowed'
@@ -746,7 +767,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                   >
                     <span>{isSelectedItemUnavailable ? 'Indisponible' : 'Ajouter'}</span>
                     <span>{(getCurrentItemPrice() * quantity).toFixed(2)} €</span>
-                  </button>
+                  </motion.button>
                 </div>
               </motion.div>
             </div>
@@ -825,7 +846,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto">
+                  <div className="flex-1 overflow-y-auto drawer-scroll">
                     {cartItems.length === 0 ? (
                       <div className="h-full flex flex-col items-center justify-center text-gray-400 p-10">
                         <ShoppingBag size={64} className="mb-4 opacity-20" />
@@ -1023,8 +1044,14 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                               isLocating ? 'opacity-70 cursor-not-allowed' : 'hover:bg-white'
                             }`}
                           >
-                            <MapPin />
-                            {isLocating ? 'Détection...' : 'Utiliser ma position (10 km)'}
+                            {isLocating ? (
+                              <LoadingSpinner label="Détection..." size={20} />
+                            ) : (
+                              <>
+                                <MapPin />
+                                Utiliser ma position (10 km)
+                              </>
+                            )}
                           </button>
 
                           {hasGeo && km != null && (
@@ -1161,14 +1188,19 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         id="checkout-btn"
                         onClick={paymentMethod === 'stripe' ? handleStripeCheckout : handleCashCheckout}
                         disabled={isCheckingOut || disableStripeCheckout}
-                        className={`w-full bg-snack-gold text-snack-black py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group ${
+                        className={`w-full bg-snack-gold text-snack-black py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group glow-soft shine-sweep ${
                           isCheckingOut || disableStripeCheckout
                             ? 'opacity-60 cursor-not-allowed'
                             : 'hover:bg-white hover:border-snack-black hover:border-gray-200'
                         }`}
                       >
                         {isCheckingOut ? (
-                          <span>Chargement...</span>
+                          <LoadingSpinner
+                            label="Chargement..."
+                            size={22}
+                            iconClassName="text-snack-black"
+                            labelClassName="text-snack-black font-bold"
+                          />
                         ) : paymentMethod === 'stripe' ? (
                           <>
                             <CreditCard size={24} className="group-hover:scale-110 transition-transform" />

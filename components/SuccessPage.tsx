@@ -3,6 +3,7 @@ import { CheckCircle, Home, MessageCircle } from 'lucide-react';
 import { Page } from '../types';
 import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone, resolvePublicOrigin } from '../lib/whatsapp';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
+import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 
 interface SuccessPageProps {
   navigateTo: (page: Page) => void;
@@ -48,6 +49,8 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
       lines: buildOrderLines(orderDetails),
     });
   }, [orderDetails]);
+
+  const isMessageLoading = !orderMessage;
 
   const openWhatsAppForOrder = useCallback((order: OrderResponse | null) => {
     setWhatsAppError(null);
@@ -194,10 +197,11 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
           >
             Copier le message
           </button>
+          {isMessageLoading && <LoadingSpinner label="Chargement du message..." size={20} />}
           <textarea
             ref={messageRef}
             readOnly
-            value={orderMessage || 'Chargement du message...'}
+            value={orderMessage}
             className="min-h-[160px] w-full rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 focus:outline-none"
           />
           {copyMessage && <p className="text-sm text-gray-600">{copyMessage}</p>}

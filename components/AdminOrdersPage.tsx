@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { Page } from '../types';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
+import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 
 interface AdminOrdersPageProps {
   navigateTo: (page: Page) => void;
@@ -120,7 +121,16 @@ export const AdminOrdersPage: React.FC<AdminOrdersPageProps> = ({ navigateTo }) 
               onClick={fetchOrders}
               className="w-full rounded-lg bg-snack-black text-white py-3 text-sm font-bold uppercase tracking-wide hover:bg-snack-gold hover:text-snack-black transition-colors"
             >
-              {isLoading ? 'Chargement…' : 'Charger les commandes'}
+              {isLoading ? (
+                <LoadingSpinner
+                  label="Chargement…"
+                  size={20}
+                  iconClassName="text-white"
+                  labelClassName="text-white font-semibold"
+                />
+              ) : (
+                'Charger les commandes'
+              )}
             </button>
             {error && <p className="text-sm text-red-600 font-semibold">{error}</p>}
           </div>

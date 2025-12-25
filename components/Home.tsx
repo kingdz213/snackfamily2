@@ -82,7 +82,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
             <div className="flex flex-col sm:flex-row gap-5 w-full justify-center items-center">
               <button 
                 onClick={() => navigateTo('commander')}
-                className="bg-snack-gold hover:bg-white text-snack-black min-w-[200px] px-8 py-4 rounded font-display font-bold text-lg uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-3 shadow-xl hover:shadow-2xl hover:scale-105"
+                className="bg-snack-gold hover:bg-white text-snack-black min-w-[200px] px-8 py-4 rounded font-display font-bold text-lg uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-3 shadow-xl hover:shadow-2xl glow-soft shine-sweep"
               >
                 <span>Commander</span>
                 <ArrowRight size={20} />
