@@ -6,6 +6,29 @@ export interface MenuItem {
   priceLabel?: string;
   priceSecondaryLabel?: string;
   unavailable?: boolean;
+  imageUrl?: string;
+  optionGroups?: MenuOptionGroup[];
+}
+
+export interface MenuOptionChoice {
+  id: string;
+  label: string;
+  deltaPriceCents: number;
+}
+
+export interface MenuOptionGroup {
+  id: string;
+  label: string;
+  choices: MenuOptionChoice[];
+  defaultChoiceId?: string;
+}
+
+export interface CartSelectedOption {
+  groupId: string;
+  groupLabel: string;
+  choiceId: string;
+  choiceLabel: string;
+  deltaPriceCents: number;
 }
 
 export interface MenuCategory {
@@ -27,6 +50,7 @@ export interface CartItem {
   selectedSupplements?: string[];
   selectedVeggies?: string[];
   variant?: 'Solo' | 'Menu/Frites';
+  selectedOptions?: CartSelectedOption[];
 }
 
 export const SAUCES = [

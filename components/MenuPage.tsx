@@ -109,6 +109,20 @@ export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
                           }`}
                         >
                           <div>
+                            <div className="mb-4">
+                              {item.imageUrl ? (
+                                <img
+                                  src={item.imageUrl}
+                                  alt={item.name}
+                                  className="w-full h-36 md:h-40 object-cover rounded-md"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="w-full h-36 md:h-40 rounded-md bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                                  Photo à venir
+                                </div>
+                              )}
+                            </div>
                             <div className="flex justify-between items-start mb-2">
                               <h3 className="font-bold text-lg text-snack-black group-hover:text-snack-gold transition-colors">
                                 {item.name}

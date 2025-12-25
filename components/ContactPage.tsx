@@ -47,7 +47,7 @@ export const ContactPage: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
                 <div className="bg-white p-4 rounded border border-gray-200">
                     <p className="font-bold text-snack-gold mb-1">Livrez-vous à domicile ?</p>
-                    <p className="text-sm text-gray-600">Oui, nous livrons dans un rayon de 5km autour de Colfontaine le soir.</p>
+                    <p className="text-sm text-gray-600">Oui, nous livrons dans un rayon de 10km autour de Colfontaine le soir.</p>
                 </div>
                 <div className="bg-white p-4 rounded border border-gray-200">
                     <p className="font-bold text-snack-gold mb-1">Acceptez-vous la carte ?</p>

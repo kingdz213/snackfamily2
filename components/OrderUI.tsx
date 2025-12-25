@@ -1,7 +1,7 @@
 // components/OrderUI.tsx
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, MapPin, Banknote, CalendarClock } from 'lucide-react';
-import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
+import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem, CartSelectedOption, MenuOptionGroup } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { startCashOrder, startCheckout } from '../lib/stripe';
 import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone, resolvePublicOrigin } from '../lib/whatsapp';
@@ -19,6 +19,7 @@ interface OrderUIProps {
   closeOrderModal: () => void;
   openOrderModal: (item: MenuItem, category: MenuCategory) => void;
   addToCart: (item: CartItem) => void;
+  requireAuth: (action: () => void) => void;
 
   isCartOpen: boolean;
   closeCart: () => void;
@@ -107,6 +108,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   closeOrderModal,
   openOrderModal,
   addToCart,
+  requireAuth,
   isCartOpen,
   closeCart,
   cartItems,
@@ -114,12 +116,13 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   clearCart,
   screenW,
 }) => {
-  const { getIdToken, profile } = useAuth();
+  const { getIdToken, profile, user } = useAuth();
   const [quantity, setQuantity] = useState(1);
   const [selectedSauce, setSelectedSauce] = useState<string>('Sans sauce');
   const [selectedSupplements, setSelectedSupplements] = useState<string[]>([]);
   const [selectedVeggies, setSelectedVeggies] = useState<string[]>([]);
   const [variant, setVariant] = useState<'Menu/Frites' | 'Solo'>('Menu/Frites');
+  const [selectedOptions, setSelectedOptions] = useState<CartSelectedOption[]>([]);
 
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
@@ -161,6 +164,26 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const dev = import.meta.env.DEV;
   const logDev = (...args: any[]) => dev && console.log(...args);
   const warnDev = (...args: any[]) => dev && console.warn(...args);
+
+  const buildDefaultOptions = (item: MenuItem | null): CartSelectedOption[] => {
+    if (!item?.optionGroups || item.optionGroups.length === 0) return [];
+    return item.optionGroups.map((group) => {
+      const fallbackChoice = group.choices[0];
+      const choice =
+        group.choices.find((candidate) => candidate.id === group.defaultChoiceId) ||
+        fallbackChoice;
+      return {
+        groupId: group.id,
+        groupLabel: group.label,
+        choiceId: choice?.id ?? group.id,
+        choiceLabel: choice?.label ?? group.label,
+        deltaPriceCents: choice?.deltaPriceCents ?? 0,
+      };
+    });
+  };
+
+  const getOptionChoice = (group: MenuOptionGroup, choiceId: string) =>
+    group.choices.find((choice) => choice.id === choiceId) || group.choices[0];
 
   const safeW =
     Number.isFinite(screenW) && screenW > 0 ? screenW : typeof window !== 'undefined' ? window.innerWidth : 0;
@@ -275,6 +298,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       setSelectedSupplements([]);
       setSelectedVeggies([]);
       setVariant('Menu/Frites');
+      setSelectedOptions(buildDefaultOptions(selectedItem));
       setCheckoutError(null);
       setCheckoutInfo(null);
     }
@@ -296,6 +320,24 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setSelectedVeggies((prev) => (prev.includes(vegName) ? prev.filter((v) => v !== vegName) : [...prev, vegName]));
   };
 
+  const handleOptionChange = (group: MenuOptionGroup, choiceId: string) => {
+    const choice = getOptionChoice(group, choiceId);
+    if (!choice) return;
+    setSelectedOptions((prev) => {
+      const filtered = prev.filter((opt) => opt.groupId !== group.id);
+      return [
+        ...filtered,
+        {
+          groupId: group.id,
+          groupLabel: group.label,
+          choiceId: choice.id,
+          choiceLabel: choice.label,
+          deltaPriceCents: choice.deltaPriceCents,
+        },
+      ];
+    });
+  };
+
   const getSupplementPrice = (name: string) => SUPPLEMENTS.find((sup) => sup.name === name)?.price ?? 0;
   const supplementLabelPrice = SUPPLEMENTS[0]?.price ?? 0;
 
@@ -310,10 +352,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       variant === 'Solo' && selectedItem.priceSecondary ? Number(selectedItem.priceSecondary) : Number(selectedItem.price);
 
     const suppsCost = selectedSupplements.reduce((total, name) => total + getSupplementPrice(name), 0);
-    return base + suppsCost;
+    const optionsCost = selectedOptions.reduce((total, option) => total + option.deltaPriceCents, 0) / 100;
+    return base + suppsCost + optionsCost;
   };
 
-  const handleAddToCart = () => {
+  const addItemToCart = () => {
     if (!selectedItem) return;
 
     if (selectedItem.unavailable) {
@@ -332,6 +375,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       selectedSupplements: selectedCategory?.hasSupplements ? selectedSupplements : undefined,
       selectedVeggies: selectedCategory?.hasVeggies ? selectedVeggies : undefined,
       variant: selectedItem.priceSecondary ? variant : undefined,
+      selectedOptions: selectedOptions.length > 0 ? selectedOptions : undefined,
     };
 
     addToCart(newItem);
@@ -340,6 +384,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       addBounceTimeoutRef.current = window.setTimeout(() => setIsAddBouncing(false), 180);
     }
     window.setTimeout(() => closeOrderModal(), reduceMotion ? 0 : 110);
+  };
+
+  const handleAddToCart = () => {
+    requireAuth(addItemToCart);
   };
 
   const itemsSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -380,6 +428,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   const buildLineItemName = (item: CartItem) => {
     let description = item.name;
+    if (item.selectedOptions && item.selectedOptions.length > 0) {
+      const optionText = item.selectedOptions.map((opt) => opt.choiceLabel).join(', ');
+      description += ` — ${optionText}`;
+    }
     if (item.variant) description += ` (${item.variant})`;
     if (item.selectedSauce) description += ` - ${item.selectedSauce}`;
     if (item.selectedVeggies) {
@@ -406,7 +458,12 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     if (item.unavailable) return;
 
     const basePrice = Number(item.price);
-    const hasOptions = category.hasSauces || category.hasSupplements || category.hasVeggies || item.priceSecondary !== undefined;
+    const hasOptions =
+      category.hasSauces ||
+      category.hasSupplements ||
+      category.hasVeggies ||
+      item.priceSecondary !== undefined ||
+      (item.optionGroups && item.optionGroups.length > 0);
 
     if (hasOptions) {
       openOrderModal(item, category);
@@ -637,6 +694,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setCheckoutError(null);
     setCheckoutInfo(null);
 
+    if (!user) {
+      setCheckoutError('Connexion obligatoire pour valider la commande.');
+      return;
+    }
+
     if (!validateBeforeCheckout()) return;
 
     setIsCheckingOut(true);
@@ -672,6 +734,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const handleCashCheckout = async () => {
     setCheckoutError(null);
     setCheckoutInfo(null);
+
+    if (!user) {
+      setCheckoutError('Connexion obligatoire pour valider la commande.');
+      return;
+    }
 
     if (!validateBeforeCheckout()) return;
 
@@ -796,6 +863,48 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       </div>
                     </div>
                   )}
+
+                  {selectedItem.optionGroups?.map((group) => {
+                    const selectedChoiceId =
+                      selectedOptions.find((option) => option.groupId === group.id)?.choiceId ||
+                      group.defaultChoiceId ||
+                      group.choices[0]?.id;
+                    return (
+                      <div key={group.id} className="bg-white p-4 rounded border border-gray-200 shadow-sm">
+                        <h4 className="font-bold text-snack-black uppercase mb-3 text-sm tracking-wider flex items-center gap-2">
+                          <span className="w-2 h-2 bg-snack-gold rounded-full"></span> {group.label}
+                        </h4>
+                        <div className="grid gap-2">
+                          {group.choices.map((choice) => {
+                            const extra =
+                              choice.deltaPriceCents > 0 ? `(+${(choice.deltaPriceCents / 100).toFixed(2)}€)` : '';
+                            return (
+                              <label
+                                key={choice.id}
+                                className={`flex items-center justify-between cursor-pointer p-3 rounded border transition-all ${
+                                  selectedChoiceId === choice.id
+                                    ? 'border-snack-gold bg-snack-gold/10'
+                                    : 'border-gray-200 hover:border-gray-300'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="radio"
+                                    name={`option-${group.id}`}
+                                    checked={selectedChoiceId === choice.id}
+                                    onChange={() => handleOptionChange(group, choice.id)}
+                                    className="accent-snack-gold w-4 h-4"
+                                  />
+                                  <span className="text-sm font-bold text-snack-black">{choice.label}</span>
+                                </div>
+                                {extra && <span className="text-xs font-bold text-snack-gold">{extra}</span>}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
 
                   {selectedCategory.hasSauces && (
                     <div className="bg-white p-4 rounded border border-gray-200 shadow-sm">
@@ -1045,6 +1154,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                               </div>
 
                               <div className="mt-2 text-sm text-gray-500 space-y-1 border-l-2 border-gray-100 pl-3">
+                                {item.selectedOptions && item.selectedOptions.length > 0 && (
+                                  <div className="space-y-1">
+                                    {item.selectedOptions.map((option) => (
+                                      <p key={`${item.id}-${option.groupId}`} className="text-snack-black">
+                                        <span className="font-bold text-xs uppercase">{option.groupLabel}:</span>{' '}
+                                        {option.choiceLabel}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
                                 {item.selectedSauce && (
                                   <p>
                                     <span className="font-bold text-xs uppercase">Sauce:</span> {item.selectedSauce}

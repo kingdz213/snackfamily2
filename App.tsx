@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Header } from './components/Header';
 import { Home } from './components/Home';
 import { MenuPage } from './components/MenuPage';
@@ -17,8 +17,11 @@ import { AdminOrderDetailPage } from './components/AdminOrderDetailPage';
 import { AccountPage } from './components/AccountPage';
 import { MyOrdersPage } from './components/MyOrdersPage';
 import { MyOrderDetailPage } from './components/MyOrderDetailPage';
+import { AuthModal } from './components/AuthModal';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
 import { subscribeToForegroundMessages } from './lib/notifications';
+import { useAuth } from '@/src/auth/AuthProvider';
+import { MENU_CATEGORIES } from './data/menuData';
 
 const pageToPath: Record<Page, string> = {
   home: '/',
@@ -91,7 +94,12 @@ const getWindowWidth = () => {
   return Number.isFinite(window.innerWidth) ? window.innerWidth : 0;
 };
 
+type AuthIntent =
+  | { type: 'openOrderModal'; itemName: string; categoryId: string }
+  | { type: 'openCart' };
+
 function App() {
+  const { user, loading } = useAuth();
   const initialLocation = getPageFromLocation();
   const [currentPage, setCurrentPage] = useState<Page>(initialLocation.page);
   const [orderId, setOrderId] = useState<string | null>(initialLocation.orderId ?? null);
@@ -105,6 +113,10 @@ function App() {
   const toastTimeoutRef = useRef<number | null>(null);
   const [showCartToast, setShowCartToast] = useState(false);
   const [pushToast, setPushToast] = useState<string | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authMessage, setAuthMessage] = useState('Connexion obligatoire pour commander.');
+  const [pendingIntent, setPendingIntent] = useState<AuthIntent | null>(null);
+  const pendingActionRef = useRef<null | (() => void)>(null);
 
   // Scroll en haut à chaque changement de page
   useEffect(() => {
@@ -146,6 +158,19 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = localStorage.getItem('postLoginIntent');
+      if (stored) {
+        const parsed = JSON.parse(stored) as AuthIntent;
+        setPendingIntent(parsed);
+      }
+    } catch (error) {
+      console.warn('[App] Failed to read postLoginIntent', error);
+    }
+  }, []);
+
   const navigateTo = (page: Page) => {
     try {
       const path = pageToPath[page] || '/';
@@ -181,7 +206,7 @@ function App() {
     }
   };
 
-  const addToCart = (item: CartItem) => {
+  const addToCartRaw = (item: CartItem) => {
     setCartItems(prev => [...prev, item]);
     setShowCartToast(true);
 
@@ -194,12 +219,8 @@ function App() {
     }, 1500);
   };
 
-  const toggleCart = () => {
-    setIsCartOpen((v) => {
-      const next = !v;
-      console.log('[App] Cart icon clicked, toggling cart to', next);
-      return next;
-    });
+  const openCart = () => {
+    setIsCartOpen(true);
   };
 
   const removeFromCart = (id: string) => {
@@ -210,11 +231,96 @@ function App() {
     setCartItems([]);
   };
 
-  const openOrderModal = (item: MenuItem, category: MenuCategory) => {
+  const openOrderModalRaw = (item: MenuItem, category: MenuCategory) => {
     setSelectedItem(item);
     setSelectedCategory(category);
     setIsOrderModalOpen(true);
   };
+
+  const persistIntent = (intent: AuthIntent | null) => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (!intent) {
+        localStorage.removeItem('postLoginIntent');
+        return;
+      }
+      localStorage.setItem('postLoginIntent', JSON.stringify(intent));
+    } catch (error) {
+      console.warn('[App] Failed to persist postLoginIntent', error);
+    }
+  };
+
+  const closeAuthModal = () => {
+    setIsAuthModalOpen(false);
+    setPendingIntent(null);
+    pendingActionRef.current = null;
+    persistIntent(null);
+  };
+
+  const executeIntent = useCallback(
+    (intent: AuthIntent | null) => {
+      if (!intent) return;
+      if (intent.type === 'openCart') {
+        openCart();
+        return;
+      }
+      const category = MENU_CATEGORIES.find((cat) => cat.id === intent.categoryId);
+      const item = category?.items.find((entry) => entry.name === intent.itemName);
+      if (category && item) {
+        openOrderModalRaw(item, category);
+      }
+    },
+    [openCart, openOrderModalRaw]
+  );
+
+  const requireAuth = useCallback(
+    (action: () => void, intent?: AuthIntent) => {
+      if (!loading && user) {
+        action();
+        return;
+      }
+      pendingActionRef.current = action;
+      if (intent) {
+        setPendingIntent(intent);
+        persistIntent(intent);
+      }
+      setAuthMessage('Connexion obligatoire pour commander.');
+      setIsAuthModalOpen(true);
+    },
+    [loading, user]
+  );
+
+  useEffect(() => {
+    if (loading || !user) return;
+    if (pendingActionRef.current) {
+      const action = pendingActionRef.current;
+      pendingActionRef.current = null;
+      action();
+      closeAuthModal();
+      return;
+    }
+    if (pendingIntent) {
+      executeIntent(pendingIntent);
+      closeAuthModal();
+    }
+  }, [executeIntent, loading, pendingIntent, user]);
+
+  const addToCart = (item: CartItem) => requireAuth(() => addToCartRaw(item));
+
+  const toggleCart = () => {
+    if (isCartOpen) {
+      setIsCartOpen(false);
+      return;
+    }
+    requireAuth(() => openCart(), { type: 'openCart' });
+  };
+
+  const openOrderModal = (item: MenuItem, category: MenuCategory) =>
+    requireAuth(() => openOrderModalRaw(item, category), {
+      type: 'openOrderModal',
+      itemName: item.name,
+      categoryId: category.id,
+    });
 
   const closeOrderModal = () => {
     setIsOrderModalOpen(false);
@@ -312,6 +418,13 @@ function App() {
         removeFromCart={removeFromCart}
         clearCart={clearCart}
         screenW={screenW}
+        requireAuth={requireAuth}
+      />
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        message={authMessage}
+        onClose={closeAuthModal}
       />
 
       {showCartToast && (
