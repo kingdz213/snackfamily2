@@ -14,6 +14,24 @@ export type CheckoutPayload = {
   deliveryLng: number;
 };
 
+export type CashOrderPayload = {
+  items: CheckoutItem[];
+  deliveryAddress: string;
+  deliveryLat: number;
+  deliveryLng: number;
+  origin: string;
+};
+
+export type CheckoutResponse = {
+  url?: string;
+  sessionId?: string;
+  orderId?: string;
+};
+
+export type CashOrderResponse = {
+  orderId: string;
+};
+
 const DEFAULT_WORKER_BASE_URL =
   "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";
 
@@ -27,7 +45,35 @@ export function resolveWorkerBaseUrl(): string {
   return normalizeBaseUrl(base);
 }
 
-export async function startCheckout(payload: CheckoutPayload): Promise<void> {
+async function postJson<T>(endpoint: string, payload: unknown): Promise<T> {
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let errorMessage = response.statusText;
+    try {
+      const errorBody = await response.json();
+      if (errorBody && typeof errorBody.message === 'string') {
+        errorMessage = errorBody.message;
+      }
+    } catch {
+      // ignore JSON parse errors
+    }
+    throw new Error(errorMessage || 'Request failed');
+  }
+
+  return (await response.json()) as T;
+}
+
+export async function startCashOrder(payload: CashOrderPayload): Promise<CashOrderResponse> {
+  const endpoint = `${resolveWorkerBaseUrl()}/create-cash-order`;
+  return postJson<CashOrderResponse>(endpoint, payload);
+}
+
+export async function startCheckout(payload: CheckoutPayload): Promise<CheckoutResponse> {
   const logDev = (...args: unknown[]) => {
     if (import.meta.env.DEV) console.log(...args);
   };
@@ -60,7 +106,7 @@ export async function startCheckout(payload: CheckoutPayload): Promise<void> {
       throw new Error(errorMessage || 'Stripe checkout failed');
     }
 
-    const data = (await response.json()) as { url?: string };
+    const data = (await response.json()) as CheckoutResponse;
     const url = data?.url;
 
     if (!url) {
@@ -69,6 +115,7 @@ export async function startCheckout(payload: CheckoutPayload): Promise<void> {
 
     logDev('[stripe] redirect', url);
     window.location.assign(url);
+    return data;
   } catch (error) {
     throw error instanceof Error ? error : new Error(String(error));
   } finally {
