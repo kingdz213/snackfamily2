@@ -67,7 +67,14 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({ navigateTo }) => {
       setIsLoading(false);
       return;
     }
+    if (!db) {
+      setOrders([]);
+      setError('Configuration Firebase incomplète.');
+      setIsLoading(false);
+      return;
+    }
 
+    setError(null);
     setIsLoading(true);
     const q = query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(

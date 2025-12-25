@@ -67,6 +67,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
     }
     setIsSubmitting('login');
     try {
+      if (!auth) {
+        setError('Configuration Firebase incomplète.');
+        return;
+      }
       logAuthAttempt('login');
       await signInWithEmailAndPassword(auth, trimmedEmail, password);
       setPassword('');
@@ -90,6 +94,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
     }
     setIsSubmitting('register');
     try {
+      if (!auth) {
+        setError('Configuration Firebase incomplète.');
+        return;
+      }
       logAuthAttempt('register');
       await createUserWithEmailAndPassword(auth, trimmedEmail, password);
       setPassword('');
