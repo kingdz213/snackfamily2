@@ -1,7 +1,43 @@
 import React from 'react';
 import { MapPin, Clock, Phone, Mail } from 'lucide-react';
 
+const weekdayNameToIndex: Record<string, number> = {
+  dimanche: 0,
+  lundi: 1,
+  mardi: 2,
+  mercredi: 3,
+  jeudi: 4,
+  vendredi: 5,
+  samedi: 6
+};
+
+const getBrusselsWeekdayIndex = (): number => {
+  try {
+    const weekday = new Intl.DateTimeFormat('fr-BE', {
+      weekday: 'long',
+      timeZone: 'Europe/Brussels'
+    })
+      .format(new Date())
+      .toLowerCase();
+
+    return weekdayNameToIndex[weekday] ?? new Date().getDay();
+  } catch {
+    return new Date().getDay();
+  }
+};
+
 export const InfoPage: React.FC = () => {
+  const todayIndex = getBrusselsWeekdayIndex();
+  const hours = [
+    { day: 'Lundi', hours: '11h00 – 23h00', index: 1 },
+    { day: 'Mardi', hours: '11h00 – 23h00', index: 2 },
+    { day: 'Mercredi', hours: '11h00 – 23h00', index: 3 },
+    { day: 'Jeudi', hours: '11h00 – 23h00', index: 4 },
+    { day: 'Vendredi', hours: '11h00 – 23h00', index: 5 },
+    { day: 'Samedi', hours: '11h00 – 23h00', index: 6 },
+    { day: 'Dimanche', hours: '16h30 – 23h00', index: 0 }
+  ];
+
   return (
     <div className="bg-white min-h-screen">
        {/* Header */}
@@ -25,34 +61,24 @@ export const InfoPage: React.FC = () => {
                 </div>
                 
                 <div className="space-y-4 text-lg">
-                    <div className="flex justify-between border-b border-gray-200 pb-2">
-                        <span className="font-medium text-gray-600">Lundi</span>
-                        <span className="font-bold text-snack-black">11h00 – 23h00</span>
-                    </div>
-                    <div className="flex justify-between border-b border-gray-200 pb-2">
-                        <span className="font-medium text-gray-600">Mardi</span>
-                        <span className="font-bold text-snack-black">11h00 – 23h00</span>
-                    </div>
-                    <div className="flex justify-between border-b border-gray-200 pb-2">
-                        <span className="font-medium text-gray-600">Mercredi</span>
-                        <span className="font-bold text-snack-black">11h00 – 23h00</span>
-                    </div>
-                    <div className="flex justify-between border-b border-gray-200 pb-2">
-                        <span className="font-medium text-gray-600">Jeudi</span>
-                        <span className="font-bold text-snack-black">11h00 – 23h00</span>
-                    </div>
-                    <div className="flex justify-between border-b border-gray-200 pb-2">
-                        <span className="font-medium text-gray-600">Vendredi</span>
-                        <span className="font-bold text-snack-black">11h00 – 23h00</span>
-                    </div>
-                    <div className="flex justify-between border-b border-gray-200 pb-2">
-                        <span className="font-medium text-gray-600">Samedi</span>
-                        <span className="font-bold text-snack-black">11h00 – 23h00</span>
-                    </div>
-                    <div className="flex justify-between pb-2">
-                        <span className="font-medium text-snack-gold">Dimanche</span>
-                        <span className="font-bold text-snack-gold">16h30 – 23h00</span>
-                    </div>
+                    {hours.map((item, index) => {
+                      const isToday = item.index === todayIndex;
+                      const isLast = index === hours.length - 1;
+
+                      return (
+                        <div
+                          key={item.day}
+                          className={`flex justify-between pb-2${isLast ? '' : ' border-b border-gray-200'}`}
+                        >
+                          <span className={`font-medium ${isToday ? 'text-snack-gold' : 'text-gray-600'}`}>
+                            {item.day}
+                          </span>
+                          <span className={`font-bold ${isToday ? 'text-snack-gold' : 'text-snack-black'}`}>
+                            {item.hours}
+                          </span>
+                        </div>
+                      );
+                    })}
                 </div>
              </div>
 
