@@ -11,7 +11,7 @@ import { OrderStatusPage } from './components/OrderStatusPage';
 import { Footer } from './components/Footer';
 import { OrderingCTA } from './components/OrderingCTA';
 import { OrderUI } from './components/OrderUI';
-import { AdminPage } from './components/AdminPage';
+import { AdminOrdersPage } from './components/AdminOrdersPage';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
 
 const pageToPath: Record<Page, string> = {
@@ -43,7 +43,7 @@ const getPageFromLocation = (): { page: Page; orderId?: string } => {
     const orderId = getOrderIdFromPath(pathname);
     if (orderId) return { page: 'orderStatus', orderId };
 
-    if (pathname.startsWith('/admin/orders')) return { page: 'admin' };
+    if (pathname.startsWith('/admin')) return { page: 'admin' };
 
     const matchedEntry = Object.entries(pageToPath).find(([, path]) => path === pathname);
     if (matchedEntry) return { page: matchedEntry[0] as Page };
@@ -204,7 +204,7 @@ function App() {
       case 'success': return <SuccessPage navigateTo={navigateTo} />;
       case 'cancel': return <CancelPage navigateTo={navigateTo} />;
       case 'orderStatus': return orderId ? <OrderStatusPage orderId={orderId} navigateTo={navigateTo} /> : <Home navigateTo={navigateTo} />;
-      case 'admin': return <AdminPage navigateTo={navigateTo} />;
+      case 'admin': return <AdminOrdersPage navigateTo={navigateTo} />;
       default: return <Home navigateTo={navigateTo} />;
     }
   };

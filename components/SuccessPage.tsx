@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle, Home, MessageCircle } from 'lucide-react';
 import { Page } from '../types';
 import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone, resolvePublicOrigin } from '../lib/whatsapp';
@@ -20,47 +20,80 @@ type OrderResponse = {
   total: number;
   deliveryAddress: string;
   paymentMethod: 'STRIPE' | 'CASH';
-  status: 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'CASH_ON_DELIVERY';
+  status: 'RECEIVED' | 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'IN_PREPARATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED';
 };
 
 export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
   const [whatsAppError, setWhatsAppError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>('Paiement en cours de confirmation…');
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [orderDetails, setOrderDetails] = useState<OrderResponse | null>(null);
-  const hasAutoSentRef = useRef(false);
+  const messageRef = useRef<HTMLTextAreaElement | null>(null);
 
   const buildOrderLines = (order: OrderResponse | null) => {
     if (!order?.items?.length) return ['- (aucun article)'];
     return order.items.map((item) => `- ${Math.max(1, Math.trunc(item.quantity))}x ${item.name}`);
   };
 
+  const orderMessage = useMemo(() => {
+    if (!orderDetails) return '';
+    const publicOrigin = resolvePublicOrigin() || window.location.origin;
+    const verifyUrl = `${publicOrigin}/order/${orderDetails.id}`;
+    const paymentLabel =
+      orderDetails.status === 'PENDING_PAYMENT' ? 'En ligne (confirmation en cours)' : 'En ligne (confirmé)';
+    return buildOrderMessage({
+      orderId: orderDetails.id,
+      paymentLabel,
+      verifyUrl,
+      lines: buildOrderLines(orderDetails),
+    });
+  }, [orderDetails]);
+
   const openWhatsAppForOrder = useCallback((order: OrderResponse | null) => {
     setWhatsAppError(null);
+    setCopyMessage(null);
 
     try {
       if (!order) {
         setWhatsAppError('Commande introuvable pour WhatsApp.');
         return;
       }
-      const publicOrigin = resolvePublicOrigin() || window.location.origin;
-      const verifyUrl = `${publicOrigin}/order/${order.id}`;
-      const adminPin = (import.meta.env.VITE_ADMIN_PIN as string | undefined)?.trim();
-      const deliveredPin = adminPin && adminPin.length > 0 ? encodeURIComponent(adminPin) : 'PIN_A_REMPLACER';
-      const deliveredUrl = `${resolveWorkerBaseUrl()}/admin/orders/${order.id}/delivered?pin=${deliveredPin}`;
-      const message = buildOrderMessage({
-        orderId: order.id,
-        paymentLabel: 'En ligne (confirmé)',
-        verifyUrl,
-        deliveredUrl,
-        lines: buildOrderLines(order),
-      });
+      const message = orderMessage || 'Commande Snack Family';
       const url = buildWhatsAppUrl(getWhatsAppPhone(), message);
-      window.open(url, '_blank');
+      window.location.assign(url);
     } catch (error) {
       console.error('[SuccessPage] Failed to open WhatsApp', error);
       setWhatsAppError("Impossible de préparer le message WhatsApp.");
     }
-  }, []);
+  }, [orderMessage]);
+
+  const copyOrderMessage = useCallback(async () => {
+    setWhatsAppError(null);
+    if (!orderMessage) {
+      setCopyMessage('Le message est en cours de préparation.');
+      return;
+    }
+
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(orderMessage);
+        setCopyMessage('Message copié ✅');
+        return;
+      } catch (error) {
+        console.warn('[SuccessPage] Clipboard API failed', error);
+      }
+    }
+
+    const textArea = messageRef.current;
+    if (textArea) {
+      textArea.focus();
+      textArea.select();
+      textArea.setSelectionRange(0, textArea.value.length);
+      setCopyMessage('Sélectionnez le texte et copiez-le manuellement.');
+    } else {
+      setCopyMessage('Copiez le message manuellement.');
+    }
+  }, [orderMessage]);
 
   const fetchOrderBySession = useCallback(async (sessionId: string) => {
     const endpoint = `${resolveWorkerBaseUrl()}/order-by-session?session_id=${encodeURIComponent(sessionId)}`;
@@ -72,7 +105,7 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
   }, []);
 
   const fetchOrderDetails = useCallback(async (id: string) => {
-    const endpoint = `${resolveWorkerBaseUrl()}/order/${encodeURIComponent(id)}`;
+    const endpoint = `${resolveWorkerBaseUrl()}/api/orders/${encodeURIComponent(id)}`;
     const response = await fetch(endpoint);
     if (!response.ok) {
       throw new Error('Impossible de récupérer la commande.');
@@ -94,16 +127,11 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
       try {
         const result = await fetchOrderBySession(sessionId);
         if (cancelled) return;
-        if (result.status === 'PAID_ONLINE') {
+        if (result.status !== 'PENDING_PAYMENT') {
           const details = await fetchOrderDetails(result.orderId);
           if (cancelled) return;
           setOrderDetails(details);
-          setStatusMessage('Paiement confirmé ✅');
-
-          if (!hasAutoSentRef.current) {
-            hasAutoSentRef.current = true;
-            openWhatsAppForOrder(details);
-          }
+          setStatusMessage('Commande confirmée — préparation en cours');
           return;
         }
 
@@ -145,15 +173,36 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
         Retour à l'accueil
       </button>
 
-      <div className="mt-6 flex flex-col items-center gap-3">
-        <button
-          onClick={() => openWhatsAppForOrder(orderDetails)}
-          className="inline-flex items-center gap-2 rounded-lg bg-green-600 px-6 py-3 font-bold uppercase tracking-wider text-white shadow hover:bg-green-700"
-        >
-          <MessageCircle size={20} />
-          Envoyer la commande sur WhatsApp
-        </button>
-        {whatsAppError && <p className="text-sm text-red-600">{whatsAppError}</p>}
+      <div className="mt-8 w-full max-w-xl rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="space-y-2 text-left">
+          <h2 className="text-lg font-bold text-snack-black">Confirmation</h2>
+          <p className="text-sm text-gray-600">
+            Utilisez WhatsApp ou copiez le message ci-dessous si l’ouverture automatique est bloquée.
+          </p>
+        </div>
+        <div className="mt-4 flex flex-col gap-3">
+          <button
+            onClick={() => openWhatsAppForOrder(orderDetails)}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-6 py-3 font-bold uppercase tracking-wider text-white shadow hover:bg-green-700"
+          >
+            <MessageCircle size={20} />
+            Ouvrir WhatsApp
+          </button>
+          <button
+            onClick={copyOrderMessage}
+            className="inline-flex items-center justify-center rounded-lg border border-snack-black px-6 py-3 text-sm font-bold uppercase tracking-wider text-snack-black hover:bg-snack-black hover:text-white"
+          >
+            Copier le message
+          </button>
+          <textarea
+            ref={messageRef}
+            readOnly
+            value={orderMessage || 'Chargement du message...'}
+            className="min-h-[160px] w-full rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 focus:outline-none"
+          />
+          {copyMessage && <p className="text-sm text-gray-600">{copyMessage}</p>}
+          {whatsAppError && <p className="text-sm text-red-600">{whatsAppError}</p>}
+        </div>
       </div>
     </div>
   );

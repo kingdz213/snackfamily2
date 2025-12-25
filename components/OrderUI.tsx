@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, MapPin, Banknote } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { resolveWorkerBaseUrl, startCashOrder, startCheckout } from '../lib/stripe';
+import { startCashOrder, startCheckout } from '../lib/stripe';
 import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone, resolvePublicOrigin } from '../lib/whatsapp';
 import { Portal } from './Portal';
 import { getRecommendations, MIN_ORDER_EUR } from '../lib/recommendations';
@@ -322,11 +322,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       ? cartItems.map((item) => `- ${Math.max(1, Math.trunc(item.quantity))}x ${buildLineItemName(item)}`)
       : ['- (aucun article)'];
 
-  const openWhatsAppMessage = (message: string) => {
-    const url = buildWhatsAppUrl(getWhatsAppPhone(), message);
-    window.open(url, '_blank');
-  };
-
   const handleSuggestionAdd = (item: MenuItem, category: MenuCategory) => {
     if (item.unavailable) return;
 
@@ -535,20 +530,15 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
       const publicOrigin = resolvePublicOrigin() || window.location.origin;
       const verifyUrl = `${publicOrigin}/order/${orderId}`;
-      const adminPin = (import.meta.env.VITE_ADMIN_PIN as string | undefined)?.trim();
-      const deliveredPin = adminPin && adminPin.length > 0 ? encodeURIComponent(adminPin) : 'PIN_A_REMPLACER';
-      const deliveredUrl = `${resolveWorkerBaseUrl()}/admin/orders/${orderId}/delivered?pin=${deliveredPin}`;
       const message = buildOrderMessage({
         orderId,
         paymentLabel: 'À la livraison',
         verifyUrl,
-        deliveredUrl,
         lines: buildOrderLines(),
       });
 
       const url = buildWhatsAppUrl(getWhatsAppPhone(), message);
       setLastCashWhatsAppUrl(url);
-      openWhatsAppMessage(message);
       setCheckoutInfo('Commande réservée — paiement à la livraison. Préparation en cours.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de valider la commande.';
@@ -1129,7 +1119,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           <div className="flex justify-center">
                             <button
                               type="button"
-                              onClick={() => window.open(lastCashWhatsAppUrl, '_blank')}
+                              onClick={() => window.location.assign(lastCashWhatsAppUrl)}
                               className="mt-2 inline-flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-green-700"
                             >
                               Envoyer sur WhatsApp
