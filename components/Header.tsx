@@ -22,6 +22,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
     { name: 'Menu', page: 'menu' },
     { name: 'Infos', page: 'infos' },
     { name: 'Contact', page: 'contact' },
+    { name: 'Espace gérant', page: 'admin' },
   ];
 
   const handleNav = (page: Page) => {
@@ -53,20 +54,23 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
 
         {/* Desktop Navigation */}
         <nav className="hidden lg:flex items-center space-x-10">
-          {navLinks.map((link) => (
-            <button 
-              key={link.name} 
-              onClick={() => handleNav(link.page)}
-              className={`font-display font-bold text-lg uppercase tracking-wide transition-colors relative py-2 ${
-                currentPage === link.page ? 'text-snack-gold' : 'text-white hover:text-snack-gold'
-              }`}
-            >
-              {link.name}
-              {currentPage === link.page && (
-                <span className="absolute bottom-0 left-0 w-full h-0.5 bg-snack-gold"></span>
-              )}
-            </button>
-          ))}
+          {navLinks.map((link) => {
+            const isActive = currentPage === link.page || (link.page === 'admin' && currentPage === 'adminOrderDetail');
+            return (
+              <button 
+                key={link.name} 
+                onClick={() => handleNav(link.page)}
+                className={`font-display font-bold text-lg uppercase tracking-wide transition-colors relative py-2 ${
+                  isActive ? 'text-snack-gold' : 'text-white hover:text-snack-gold'
+                }`}
+              >
+                {link.name}
+                {isActive && (
+                  <span className="absolute bottom-0 left-0 w-full h-0.5 bg-snack-gold"></span>
+                )}
+              </button>
+            );
+          })}
           
           <div className="flex items-center gap-4 shrink-0">
               {/* Cart Toggle Icon */}
@@ -150,18 +154,21 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
         }`}
       >
         <div className="flex flex-col p-8 space-y-6">
-          {navLinks.map((link, index) => (
-            <button 
-              key={link.name} 
-              onClick={() => handleNav(link.page)}
-              className={`font-display text-2xl font-bold uppercase tracking-wide border-b border-gray-800 pb-4 text-left transition-all duration-300 ${
-                currentPage === link.page ? 'text-snack-gold' : 'text-white hover:pl-2'
-              }`}
-              style={{ transitionDelay: `${index * 50}ms` }}
-            >
-              {link.name}
-            </button>
-          ))}
+          {navLinks.map((link, index) => {
+            const isActive = currentPage === link.page || (link.page === 'admin' && currentPage === 'adminOrderDetail');
+            return (
+              <button 
+                key={link.name} 
+                onClick={() => handleNav(link.page)}
+                className={`font-display text-2xl font-bold uppercase tracking-wide border-b border-gray-800 pb-4 text-left transition-all duration-300 ${
+                  isActive ? 'text-snack-gold' : 'text-white hover:pl-2'
+                }`}
+                style={{ transitionDelay: `${index * 50}ms` }}
+              >
+                {link.name}
+              </button>
+            );
+          })}
           <button 
             onClick={() => handleNav('commander')}
             className="cta-premium w-full bg-snack-gold text-snack-black font-display font-bold text-xl uppercase tracking-wide py-4 text-center rounded mt-4 hover:bg-white transition-colors shadow-lg flex items-center justify-center gap-2 glow-soft shine-sweep"

@@ -57,5 +57,6 @@ export type Page =
   | 'success'
   | 'cancel'
   | 'admin'
+  | 'adminOrderDetail'
   | 'adminOrderHub'
   | 'orderStatus';

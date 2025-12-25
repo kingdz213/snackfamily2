@@ -56,7 +56,7 @@ function corsHeadersFor(origin: string) {
   return {
     "Access-Control-Allow-Origin": allowed,
     "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
-    "Access-Control-Allow-Headers": "Content-Type, X-ADMIN-PIN",
+    "Access-Control-Allow-Headers": "Content-Type, X-ADMIN-PIN, Authorization",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   } as Record<string, string>;
@@ -145,6 +145,13 @@ type OrderRecord = {
   deliveryLng: number;
   paymentMethod: PaymentMethod;
   status: OrderStatus;
+  customerName?: string;
+  customerPhone?: string;
+  deliveryType?: string;
+  notes?: string;
+  paidAt?: string;
+  isPaid?: boolean;
+  amountPaidCents?: number;
   fulfillmentStatus?: string;
   fulfillmentUpdatedAt?: string;
   stripeCheckoutSessionId?: string;
@@ -190,6 +197,37 @@ async function hmacSha256Hex(secret: string, payload: string) {
     .join("");
 }
 
+async function hmacSha256Bytes(secret: string, payload: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return new Uint8Array(signature);
+}
+
+function base64UrlEncodeBytes(bytes: Uint8Array) {
+  let binary = "";
+  bytes.forEach((b) => {
+    binary += String.fromCharCode(b);
+  });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlEncodeString(value: string) {
+  return base64UrlEncodeBytes(new TextEncoder().encode(value));
+}
+
+function base64UrlDecodeToString(value: string) {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 async function verifyStripeSignature(payload: string, header: string, secret: string) {
   if (!header) return false;
   const { timestamp, signatures } = parseStripeSignature(header);
@@ -231,6 +269,10 @@ function normalizeOrderStatus(order: OrderRecord): OrderRecord {
   return order;
 }
 
+const ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+const ADMIN_LOGIN_RATE_WINDOW_MS = 5 * 60 * 1000;
+const ADMIN_LOGIN_MAX_ATTEMPTS = 6;
+
 function getAdminPin(env: Env) {
   const pin = env.ADMIN_PIN?.trim();
   return pin && pin.length > 0 ? pin : null;
@@ -250,6 +292,108 @@ function isAdminPinValid(env: Env, provided: string | null | undefined) {
 function extractAdminPin(request: Request, url: URL) {
   const headerPin = request.headers.get("X-ADMIN-PIN");
   return headerPin?.trim() || url.searchParams.get("pin");
+}
+
+type AdminTokenPayload = {
+  sub: "admin";
+  exp: number;
+  nonce: string;
+};
+
+async function createAdminToken(secret: string) {
+  const exp = Date.now() + ADMIN_TOKEN_TTL_MS;
+  const nonce =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? (crypto as Crypto).randomUUID()
+      : Math.random().toString(36).slice(2);
+  const payload: AdminTokenPayload = { sub: "admin", exp, nonce };
+  const payloadString = JSON.stringify(payload);
+  const signature = await hmacSha256Bytes(secret, payloadString);
+  return `${base64UrlEncodeString(payloadString)}.${base64UrlEncodeBytes(signature)}`;
+}
+
+async function verifyAdminToken(secret: string, token: string): Promise<AdminTokenPayload | null> {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [payloadPart, sigPart] = parts;
+  if (!payloadPart || !sigPart) return null;
+  let payloadString = "";
+  try {
+    payloadString = base64UrlDecodeToString(payloadPart);
+  } catch {
+    return null;
+  }
+  let payload: AdminTokenPayload;
+  try {
+    payload = JSON.parse(payloadString) as AdminTokenPayload;
+  } catch {
+    return null;
+  }
+  if (!payload || payload.sub !== "admin" || !Number.isFinite(payload.exp)) return null;
+  if (Date.now() > payload.exp) return null;
+  const expectedSig = await hmacSha256Bytes(secret, payloadString);
+  const expectedSigPart = base64UrlEncodeBytes(expectedSig);
+  if (expectedSigPart !== sigPart) return null;
+  return payload;
+}
+
+function extractAdminToken(request: Request) {
+  const header = request.headers.get("Authorization") || "";
+  if (!header.toLowerCase().startsWith("bearer ")) return null;
+  return header.slice(7).trim();
+}
+
+async function verifyAdminRequest(request: Request, env: Env) {
+  const secret = getAdminSigningSecret(env);
+  if (!secret) {
+    return { ok: false, error: "ADMIN_DISABLED", message: "Admin signing secret missing." } as const;
+  }
+  const token = extractAdminToken(request);
+  if (!token) {
+    return { ok: false, error: "UNAUTHORIZED", message: "Token admin requis." } as const;
+  }
+  const payload = await verifyAdminToken(secret, token);
+  if (!payload) {
+    return { ok: false, error: "UNAUTHORIZED", message: "Token admin invalide ou expiré." } as const;
+  }
+  return { ok: true, payload } as const;
+}
+
+function getClientIp(request: Request) {
+  const cfIp = request.headers.get("CF-Connecting-IP");
+  if (cfIp) return cfIp;
+  const forwarded = request.headers.get("X-Forwarded-For");
+  if (forwarded) return forwarded.split(",")[0]?.trim() || "unknown";
+  return "unknown";
+}
+
+async function registerLoginAttempt(env: Env, clientIp: string) {
+  if (!env.ORDERS_KV) return { allowed: true } as const;
+  const key = `admin-login-rate:${clientIp}`;
+  const raw = await env.ORDERS_KV.get(key);
+  let data: { count: number; resetAt: number };
+  if (raw) {
+    try {
+      data = JSON.parse(raw) as { count: number; resetAt: number };
+    } catch {
+      data = { count: 0, resetAt: Date.now() + ADMIN_LOGIN_RATE_WINDOW_MS };
+    }
+  } else {
+    data = { count: 0, resetAt: Date.now() + ADMIN_LOGIN_RATE_WINDOW_MS };
+  }
+
+  if (Date.now() > data.resetAt) {
+    data = { count: 0, resetAt: Date.now() + ADMIN_LOGIN_RATE_WINDOW_MS };
+  }
+
+  data.count += 1;
+  await env.ORDERS_KV.put(key, JSON.stringify(data), { expirationTtl: Math.ceil(ADMIN_LOGIN_RATE_WINDOW_MS / 1000) });
+
+  if (data.count > ADMIN_LOGIN_MAX_ATTEMPTS) {
+    const retryAfter = Math.max(1, Math.ceil((data.resetAt - Date.now()) / 1000));
+    return { allowed: false, retryAfter } as const;
+  }
+  return { allowed: true } as const;
 }
 
 async function listOrders(env: Env, limit = 50): Promise<OrderRecord[]> {
@@ -305,6 +449,66 @@ function statusRank(status: OrderStatus) {
 
 function buildPublicOrderUrl(origin: string, orderId: string) {
   return `${origin}/order/${orderId}`;
+}
+
+type AdminOrderSummary = {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  status: OrderStatus;
+  customerName: string;
+  phone: string;
+  address: string;
+  deliveryType: string;
+  paymentMethod: "stripe" | "cash";
+  totalCents: number;
+  amountDueCents: number;
+  itemsCount: number;
+  adminHubUrl?: string;
+};
+
+function normalizePhone(value: string) {
+  return value.replace(/[^\d+]/g, "").trim();
+}
+
+function resolvePaymentMethod(order: OrderRecord) {
+  return order.paymentMethod === "STRIPE" ? "stripe" : "cash";
+}
+
+function isOrderPaid(order: OrderRecord) {
+  if (order.paymentMethod === "STRIPE") {
+    return ["PAID_ONLINE", "IN_PREPARATION", "OUT_FOR_DELIVERY", "DELIVERED"].includes(order.status);
+  }
+  return Boolean(order.isPaid || order.paidAt || order.amountPaidCents);
+}
+
+function buildOrderSummary(order: OrderRecord): AdminOrderSummary {
+  const normalized = normalizeOrderStatus(order);
+  const customerName = String(
+    (normalized as any).customerName ?? (normalized as any).name ?? (normalized as any).customer ?? ""
+  ).trim();
+  const phone = String(
+    (normalized as any).customerPhone ?? (normalized as any).phone ?? (normalized as any).customerPhoneNumber ?? ""
+  ).trim();
+  const updatedAt = normalized.statusUpdatedAt || normalized.fulfillmentUpdatedAt || normalized.createdAt || nowIso();
+  const totalCents = Number.isFinite(normalized.total) ? normalized.total : 0;
+  const amountDueCents = resolvePaymentMethod(normalized) === "stripe" ? (isOrderPaid(normalized) ? 0 : totalCents) : isOrderPaid(normalized) ? 0 : totalCents;
+
+  return {
+    id: normalized.id,
+    createdAt: normalized.createdAt || nowIso(),
+    updatedAt,
+    status: normalized.status,
+    customerName,
+    phone: normalizePhone(phone),
+    address: normalized.deliveryAddress || "Adresse non renseignée",
+    deliveryType: normalized.deliveryType || "Livraison",
+    paymentMethod: resolvePaymentMethod(normalized),
+    totalCents,
+    amountDueCents,
+    itemsCount: Array.isArray(normalized.items) ? normalized.items.reduce((sum, item) => sum + (item?.quantity ?? 0), 0) : 0,
+    adminHubUrl: normalized.adminHubUrl,
+  };
 }
 
 // Haversine (km)
@@ -644,6 +848,130 @@ export default {
         }
 
         return json({ ok: true }, 200, cors);
+      }
+
+      if (request.method === "POST" && url.pathname === "/admin/login") {
+        const adminPin = getAdminPin(env);
+        const secret = getAdminSigningSecret(env);
+        if (!adminPin || !secret) {
+          return json({ error: "ADMIN_DISABLED", message: "Admin PIN or signing secret not configured." }, 403, cors);
+        }
+
+        const rate = await registerLoginAttempt(env, getClientIp(request));
+        if (!rate.allowed) {
+          return json(
+            { error: "RATE_LIMITED", message: "Trop de tentatives. Réessayez plus tard." },
+            429,
+            { ...cors, "Retry-After": String(rate.retryAfter ?? 30) }
+          );
+        }
+
+        const body: any = await request.json().catch(() => null);
+        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+        const pin = String(body.pin ?? "").trim();
+        if (!pin || !isAdminPinValid(env, pin)) {
+          return json({ error: "UNAUTHORIZED", message: "Code gérant invalide." }, 401, cors);
+        }
+
+        const token = await createAdminToken(secret);
+        return json({ token, expiresIn: ADMIN_TOKEN_TTL_MS }, 200, cors);
+      }
+
+      if (request.method === "GET" && url.pathname === "/admin/orders") {
+        const auth = await verifyAdminRequest(request, env);
+        if (!auth.ok) {
+          return json({ error: auth.error, message: auth.message }, 401, cors);
+        }
+
+        const rawLimit = Number(url.searchParams.get("limit") ?? "50");
+        const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 50)) : 50;
+        const cursor = url.searchParams.get("cursor") || undefined;
+
+        const listing = await env.ORDERS_KV!.list({ prefix: "order:", limit, cursor });
+        const keys = listing.keys
+          .map((entry) => entry.name)
+          .filter((name) => name.startsWith("order:") && !name.startsWith("order:session:"));
+        const records = await Promise.all(
+          keys.map(async (key) => {
+            const raw = await env.ORDERS_KV!.get(key);
+            return raw ? (JSON.parse(raw) as OrderRecord) : null;
+          })
+        );
+        const summaries = records
+          .filter((order): order is OrderRecord => Boolean(order))
+          .map((order) => buildOrderSummary(order))
+          .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+          .slice(0, limit);
+
+        return json({ orders: summaries, cursor: listing.cursor }, 200, cors);
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/admin/orders/")) {
+        const auth = await verifyAdminRequest(request, env);
+        if (!auth.ok) {
+          return json({ error: auth.error, message: auth.message }, 401, cors);
+        }
+        const match = url.pathname.match(/^\/admin\/orders\/([^/]+)$/);
+        const orderId = match?.[1];
+        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+
+        const order = await readOrder(env, orderId);
+        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        normalizeOrderStatus(order);
+
+        return json(
+          {
+            order: {
+              id: order.id,
+              createdAt: order.createdAt,
+              updatedAt: order.statusUpdatedAt || order.fulfillmentUpdatedAt || order.createdAt,
+              items: order.items,
+              subtotal: order.subtotal,
+              deliveryFee: order.deliveryFee,
+              total: order.total,
+              deliveryAddress: order.deliveryAddress,
+              paymentMethod: resolvePaymentMethod(order),
+              status: order.status,
+              statusUpdatedAt: order.statusUpdatedAt,
+              customerName: order.customerName ?? "",
+              phone: order.customerPhone ?? "",
+              notes: order.notes ?? "",
+              adminHubUrl: order.adminHubUrl,
+            },
+            summary: buildOrderSummary(order),
+          },
+          200,
+          cors
+        );
+      }
+
+      if (request.method === "POST" && url.pathname.startsWith("/admin/orders/") && url.pathname.endsWith("/status")) {
+        const auth = await verifyAdminRequest(request, env);
+        if (!auth.ok) {
+          return json({ error: auth.error, message: auth.message }, 401, cors);
+        }
+        const match = url.pathname.match(/^\/admin\/orders\/([^/]+)\/status$/);
+        const orderId = match?.[1];
+        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+
+        const body: any = await request.json().catch(() => null);
+        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+
+        const status = String(body.status ?? "").trim() as OrderStatus;
+        const allowed: OrderStatus[] = ["IN_PREPARATION", "OUT_FOR_DELIVERY", "DELIVERED"];
+        if (!allowed.includes(status)) {
+          return json({ error: "INVALID_STATUS" }, 400, cors);
+        }
+
+        const order = await readOrder(env, orderId);
+        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+
+        normalizeOrderStatus(order);
+        order.status = status;
+        order.statusUpdatedAt = nowIso();
+        await saveOrder(env, order);
+
+        return json({ ok: true, summary: buildOrderSummary(order) }, 200, cors);
       }
 
       if (request.method === "POST" && url.pathname === "/admin/order-action") {

@@ -11,8 +11,9 @@ import { OrderStatusPage } from './components/OrderStatusPage';
 import { Footer } from './components/Footer';
 import { OrderingCTA } from './components/OrderingCTA';
 import { OrderUI } from './components/OrderUI';
-import { AdminOrdersPage } from './components/AdminOrdersPage';
 import { AdminOrderHubPage } from './components/AdminOrderHubPage';
+import { AdminDashboardPage } from './components/AdminDashboardPage';
+import { AdminOrderDetailPage } from './components/AdminOrderDetailPage';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
 
 const pageToPath: Record<Page, string> = {
@@ -22,6 +23,7 @@ const pageToPath: Record<Page, string> = {
   contact: '/contact',
   commander: '/commander',
   admin: '/admin',
+  adminOrderDetail: '/admin/orders',
   adminOrderHub: '/admin/order',
   success: '/success',
   cancel: '/cancel',
@@ -35,7 +37,14 @@ const getOrderIdFromPath = (pathname: string): string | null => {
   return segments[1] || null;
 };
 
-const getPageFromLocation = (): { page: Page; orderId?: string } => {
+const getAdminOrderIdFromPath = (pathname: string): string | null => {
+  if (!pathname.startsWith('/admin/orders/')) return null;
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length < 3) return null;
+  return segments[2] || null;
+};
+
+const getPageFromLocation = (): { page: Page; orderId?: string; adminOrderId?: string } => {
   try {
     const { pathname, search } = window.location;
 
@@ -44,6 +53,9 @@ const getPageFromLocation = (): { page: Page; orderId?: string } => {
 
     const orderId = getOrderIdFromPath(pathname);
     if (orderId) return { page: 'orderStatus', orderId };
+
+    const adminOrderId = getAdminOrderIdFromPath(pathname);
+    if (adminOrderId) return { page: 'adminOrderDetail', adminOrderId };
 
     if (pathname.startsWith('/admin/order')) return { page: 'adminOrderHub' };
     if (pathname.startsWith('/admin')) return { page: 'admin' };
@@ -65,6 +77,7 @@ function App() {
   const initialLocation = getPageFromLocation();
   const [currentPage, setCurrentPage] = useState<Page>(initialLocation.page);
   const [orderId, setOrderId] = useState<string | null>(initialLocation.orderId ?? null);
+  const [adminOrderId, setAdminOrderId] = useState<string | null>(initialLocation.adminOrderId ?? null);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
@@ -101,6 +114,7 @@ function App() {
       const next = getPageFromLocation();
       setCurrentPage(next.page);
       setOrderId(next.orderId ?? null);
+      setAdminOrderId(next.adminOrderId ?? null);
     };
 
     window.addEventListener('popstate', handlePopstate);
@@ -124,6 +138,9 @@ function App() {
     setCurrentPage(page);
     if (page !== 'orderStatus') {
       setOrderId(null);
+    }
+    if (page !== 'adminOrderDetail') {
+      setAdminOrderId(null);
     }
     setIsOrderModalOpen(false);
     setSelectedItem(null);
@@ -213,7 +230,8 @@ function App() {
       case 'success': return <SuccessPage navigateTo={navigateTo} />;
       case 'cancel': return <CancelPage navigateTo={navigateTo} />;
       case 'orderStatus': return orderId ? <OrderStatusPage orderId={orderId} navigateTo={navigateTo} /> : <Home navigateTo={navigateTo} />;
-      case 'admin': return <AdminOrdersPage navigateTo={navigateTo} />;
+      case 'admin': return <AdminDashboardPage />;
+      case 'adminOrderDetail': return adminOrderId ? <AdminOrderDetailPage navigateTo={navigateTo} /> : <AdminDashboardPage />;
       case 'adminOrderHub': return <AdminOrderHubPage />;
       default: return <Home navigateTo={navigateTo} />;
     }
@@ -239,6 +257,7 @@ function App() {
         currentPage !== 'cancel' &&
         currentPage !== 'commander' &&
         currentPage !== 'admin' &&
+        currentPage !== 'adminOrderDetail' &&
         currentPage !== 'adminOrderHub' && (
         <OrderingCTA
           navigateTo={navigateTo}
