@@ -26,11 +26,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    if (import.meta.env.DEV) {
+      console.info('[AuthModal] Tentative de connexion', { email: normalizedEmail });
+    }
     setIsSubmitting('login');
     try {
       await login(email.trim(), password);
       setPassword('');
     } catch (err) {
+      if (import.meta.env.DEV) {
+        console.error('[AuthModal] Erreur connexion', err);
+      }
       setError(err instanceof Error ? err.message : 'Connexion impossible.');
     } finally {
       setIsSubmitting(null);
@@ -40,6 +46,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
   const handleRegister = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    if (import.meta.env.DEV) {
+      console.info('[AuthModal] Tentative de création', {
+        email: normalizedEmail,
+        isEmailValid,
+        isPasswordValid,
+      });
+    }
     if (!isEmailValid) {
       setError('Veuillez entrer une adresse email valide.');
       return;
@@ -53,6 +66,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
       await register(normalizedEmail, password);
       setPassword('');
     } catch (err) {
+      if (import.meta.env.DEV) {
+        console.error('[AuthModal] Erreur création compte', err);
+      }
       setError(err instanceof Error ? err.message : 'Création du compte impossible.');
     } finally {
       setIsSubmitting(null);

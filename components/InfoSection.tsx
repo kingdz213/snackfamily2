@@ -2,6 +2,10 @@ import React from 'react';
 import { Clock, MapPin, Phone, Mail } from 'lucide-react';
 
 export const InfoSection: React.FC = () => {
+  const todayIndex = new Date().getDay();
+  const isWeekdayToday = todayIndex >= 1 && todayIndex <= 6;
+  const isSundayToday = todayIndex === 0;
+
   return (
     <section id="infos" className="bg-snack-black text-white scroll-mt-20">
       {/* Hidden anchor for contact compatibility */}
@@ -51,13 +55,13 @@ export const InfoSection: React.FC = () => {
                    <h3 className="font-display font-bold text-2xl uppercase">Horaires d'ouverture</h3>
                 </div>
                 <div className="space-y-4">
-                   <div className="flex justify-between items-center border-b border-white/10 pb-3">
-                      <span className="font-medium">Lundi – Samedi</span>
-                      <span className="text-snack-gold font-bold">11h00 – 23h00</span>
+                   <div className={`flex justify-between items-center border-b border-white/10 pb-3 ${isWeekdayToday ? 'text-snack-gold' : ''}`}>
+                      <span className={`font-medium ${isWeekdayToday ? 'text-snack-gold' : ''}`}>Lundi – Samedi</span>
+                      <span className={`font-bold ${isWeekdayToday ? 'text-snack-gold' : ''}`}>11h00 – 23h00</span>
                    </div>
-                   <div className="flex justify-between items-center border-b border-white/10 pb-3">
-                      <span className="font-medium">Dimanche</span>
-                      <span className="text-snack-gold font-bold">16h30 – 23h00</span>
+                   <div className={`flex justify-between items-center border-b border-white/10 pb-3 ${isSundayToday ? 'text-snack-gold' : ''}`}>
+                      <span className={`font-medium ${isSundayToday ? 'text-snack-gold' : ''}`}>Dimanche</span>
+                      <span className={`font-bold ${isSundayToday ? 'text-snack-gold' : ''}`}>16h30 – 23h00</span>
                    </div>
                 </div>
              </div>

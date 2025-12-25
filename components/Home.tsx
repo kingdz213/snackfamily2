@@ -56,7 +56,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8 }}
-            className="w-full max-w-5xl md:max-w-3xl lg:max-w-[780px] flex flex-col items-center rounded-3xl border border-white/10 bg-black/30 p-6 sm:p-10 lg:p-8 shadow-2xl backdrop-blur-sm shine-sweep"
+            className="w-full max-w-5xl md:max-w-3xl lg:max-w-[680px] xl:max-w-[760px] flex flex-col items-center rounded-3xl border border-white/10 bg-black/30 p-6 sm:p-10 lg:p-6 shadow-2xl backdrop-blur-sm shine-sweep"
           >
             {/* Badge - Perfectly Centered */}
             <div className="mb-8 flex justify-center">
@@ -67,7 +67,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
             
             {/* Title - Perfectly Centered */}
             <h1 
-              className="text-5xl md:text-7xl lg:text-9xl font-display font-bold text-white mb-6 uppercase leading-none drop-shadow-2xl tracking-tight text-center"
+              className="text-5xl md:text-7xl lg:text-8xl xl:text-9xl font-display font-bold text-white mb-6 uppercase leading-none drop-shadow-2xl tracking-tight text-center"
               style={{ textShadow: '0 4px 20px rgba(0,0,0,0.5)' }}
             >
               Le Vrai Goût <br/><span className="text-snack-gold">Belge</span>

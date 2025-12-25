@@ -79,12 +79,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const register = useCallback(async (email: string, password: string) => {
+    const normalizedEmail = email.trim();
     if (auth.currentUser?.isAnonymous) {
-      const credential = EmailAuthProvider.credential(email, password);
+      const credential = EmailAuthProvider.credential(normalizedEmail, password);
       await linkWithCredential(auth.currentUser, credential);
       return;
     }
-    await createUserWithEmailAndPassword(auth, email, password);
+    await createUserWithEmailAndPassword(auth, normalizedEmail, password);
   }, []);
 
   const loginAnonymously = useCallback(async () => {

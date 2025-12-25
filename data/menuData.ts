@@ -28,7 +28,7 @@ const DURUM_FRIES_OPTION_GROUP: MenuOptionGroup = {
   defaultChoiceId: 'no-fries',
   choices: [
     { id: 'no-fries', label: 'Sans frites', deltaPriceCents: 0 },
-    { id: 'with-fries', label: 'Avec frites', deltaPriceCents: 200 },
+    { id: 'with-fries', label: 'Avec frites (+2,00€)', deltaPriceCents: 200 },
   ],
 };
 

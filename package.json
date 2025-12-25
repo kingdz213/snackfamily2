@@ -7,6 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "sync:takeaway": "node scripts/sync_takeaway_menu.mjs",
+    "sync:menu": "node scripts/apply_takeaway_menu_to_menuData.mjs",
+    "sync:prompts": "node scripts/generate_image_prompts.mjs",
+    "sync:all": "npm run sync:takeaway && npm run sync:menu && npm run sync:prompts",
     "deploy:worker": "wrangler deploy --config wrangler.toml",
     "deploy:worker:versions": "wrangler versions upload --config wrangler.toml"
   },
@@ -22,6 +26,7 @@
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "playwright": "^1.51.0",
     "typescript": "^5.8.2",
     "vite": "^6.2.0"
   }
