@@ -1,4 +1,4 @@
-import { MenuCategory, MenuItem } from '../types';
+import { MenuCategory, MenuItem, MenuOptionGroup } from '../types';
 
 function parsePrice(v: string | number | undefined | null): number | undefined {
   if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
@@ -21,6 +21,28 @@ const FALLBACK_DESSERT_CATEGORY: MenuCategory = {
     { name: 'Tiramisu Fraise', price: 3.50 },
   ],
 };
+
+const DURUM_FRIES_OPTION_GROUP: MenuOptionGroup = {
+  id: 'fries',
+  label: 'Accompagnement',
+  defaultChoiceId: 'no-fries',
+  choices: [
+    { id: 'no-fries', label: 'Sans frites', deltaPriceCents: 0 },
+    { id: 'with-fries', label: 'Avec frites', deltaPriceCents: 200 },
+  ],
+};
+
+const DURUM_ITEMS: MenuItem[] = [
+  { name: 'Dürüm Poulet', price: 6.50 },
+  { name: 'Dürüm Pita', price: 6.50 },
+  { name: 'Dürüm Mixte', price: 6.00 },
+  { name: 'Dürüm Hawaï', price: 6.50 },
+  { name: 'Dürüm Végétarien', price: 6.00 },
+  { name: 'Dürüm Tenders', price: 6.00 },
+].map((item) => ({
+  ...item,
+  optionGroups: [DURUM_FRIES_OPTION_GROUP],
+}));
 
 const RAW_MENU_CATEGORIES: MenuCategory[] = [
   {
@@ -54,14 +76,7 @@ const RAW_MENU_CATEGORIES: MenuCategory[] = [
     hasSauces: true,
     hasVeggies: true,
     hasSupplements: true,
-    items: [
-      { name: 'Dürüm Poulet', price: 6.50 },
-      { name: 'Dürüm Pita', price: 6.50 },
-      { name: 'Dürüm Mixte', price: 6.00 },
-      { name: 'Dürüm Hawaï', price: 6.50 },
-      { name: 'Dürüm Végétarien', price: 6.00 },
-      { name: 'Dürüm Tenders', price: 6.00 },
-    ]
+    items: DURUM_ITEMS
   },
   {
     id: 'sandwichs',

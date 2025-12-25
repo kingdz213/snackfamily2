@@ -68,6 +68,20 @@ export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
                                 }`}
                             >
                                 <div className="w-full">
+                                    <div className="mb-4">
+                                        {item.imageUrl ? (
+                                            <img
+                                                src={item.imageUrl}
+                                                alt={item.name}
+                                                className="w-full h-36 md:h-40 object-cover rounded-md"
+                                                loading="lazy"
+                                            />
+                                        ) : (
+                                            <div className="w-full h-36 md:h-40 rounded-md bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                                                Photo à venir
+                                            </div>
+                                        )}
+                                    </div>
                                     <div className="flex justify-between items-start">
                                         <span className="font-bold text-snack-black text-xl leading-tight">{item.name}</span>
                                         {item.unavailable && (
