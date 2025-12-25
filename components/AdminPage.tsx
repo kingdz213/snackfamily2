@@ -27,6 +27,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({ navigateTo }) => {
         </div>
 
         <button
+          onClick={() => navigateTo('adminOrders')}
+          className="px-4 py-3 rounded-lg bg-snack-gold text-snack-black font-bold uppercase tracking-wide hover:bg-snack-black hover:text-snack-gold transition-colors"
+        >
+          Gérer les commandes
+        </button>
+
+        <button
           onClick={() => navigateTo('home')}
           className="px-4 py-3 rounded-lg bg-snack-black text-white font-bold uppercase tracking-wide hover:bg-snack-gold hover:text-snack-black transition-colors"
         >

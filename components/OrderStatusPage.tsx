@@ -8,6 +8,8 @@ type OrderItem = {
   price: number;
 };
 
+type FulfillmentStatus = 'RECEIVED' | 'IN_PREPARATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
+
 type OrderResponse = {
   id: string;
   items: OrderItem[];
@@ -17,6 +19,8 @@ type OrderResponse = {
   deliveryAddress: string;
   paymentMethod: 'STRIPE' | 'CASH';
   status: 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'CASH_ON_DELIVERY';
+  fulfillmentStatus: FulfillmentStatus;
+  fulfillmentUpdatedAt?: string;
 };
 
 const formatCents = (value: number) => `${(value / 100).toFixed(2)} €`;
@@ -30,6 +34,29 @@ const statusLabels: Record<OrderResponse['status'], string> = {
 const paymentLabels: Record<OrderResponse['paymentMethod'], string> = {
   STRIPE: 'En ligne (Stripe)',
   CASH: 'À la livraison',
+};
+
+const fulfillmentStatusContent: Record<FulfillmentStatus, { title: string; subtitle: string }> = {
+  RECEIVED: {
+    title: 'Commande reçue',
+    subtitle: 'Votre commande a bien été prise en compte.',
+  },
+  IN_PREPARATION: {
+    title: 'En préparation',
+    subtitle: 'Votre commande est en cours de préparation.',
+  },
+  OUT_FOR_DELIVERY: {
+    title: 'En cours de livraison',
+    subtitle: 'Votre commande est en route. Merci de rester joignable.',
+  },
+  DELIVERED: {
+    title: 'Livrée',
+    subtitle: 'Votre commande a été livrée. Merci et à bientôt !',
+  },
+  CANCELLED: {
+    title: 'Annulée',
+    subtitle: 'Cette commande a été annulée.',
+  },
 };
 
 interface OrderStatusPageProps {
@@ -80,12 +107,20 @@ export const OrderStatusPage: React.FC<OrderStatusPageProps> = ({ orderId }) => 
     );
   }
 
+  const fulfillmentContent = fulfillmentStatusContent[order.fulfillmentStatus];
+
   return (
     <div className="min-h-[60vh] flex flex-col items-center px-4 py-16 bg-gray-50">
       <div className="w-full max-w-3xl bg-white shadow-lg rounded-xl p-6 space-y-4">
         <div>
           <h1 className="text-2xl font-display font-bold text-snack-black uppercase">Commande #{order.id}</h1>
-          <p className="text-sm text-gray-500">Statut : {statusLabels[order.status]}</p>
+          <p className="text-sm text-gray-500">Statut paiement : {statusLabels[order.status]}</p>
+        </div>
+
+        <div className="rounded-lg border border-snack-gold/30 bg-snack-gold/10 p-4">
+          <p className="text-sm uppercase tracking-wide text-snack-black/70">Suivi de commande</p>
+          <p className="text-lg font-bold text-snack-black">{fulfillmentContent.title}</p>
+          <p className="text-sm text-gray-600">{fulfillmentContent.subtitle}</p>
         </div>
 
         <div className="text-sm text-gray-700 space-y-1">

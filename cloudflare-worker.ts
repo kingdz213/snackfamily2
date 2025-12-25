@@ -7,6 +7,7 @@ interface Env {
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   DEFAULT_ORIGIN?: string;
+  ADMIN_PIN?: string;
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
@@ -92,6 +93,18 @@ function hasWebhookSecret(env: Env) {
   return Boolean(env.STRIPE_WEBHOOK_SECRET);
 }
 
+function getAdminPin(env: Env) {
+  const pin = String(env.ADMIN_PIN ?? "").trim();
+  return pin.length > 0 ? pin : null;
+}
+
+function isAdminPinValid(env: Env, pin: string | null | undefined) {
+  const expected = getAdminPin(env);
+  if (!expected) return false;
+  if (!pin) return false;
+  return pin === expected;
+}
+
 // Accepte EUROS (14.50) OU CENTIMES (1450)
 function toCentsSmart(price: unknown): number | null {
   const n = Number(price);
@@ -133,6 +146,7 @@ function subtotalCents(items: NormalizedItem[]) {
 
 type OrderStatus = "PENDING_PAYMENT" | "PAID_ONLINE" | "CASH_ON_DELIVERY";
 type PaymentMethod = "STRIPE" | "CASH";
+type FulfillmentStatus = "RECEIVED" | "IN_PREPARATION" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
 
 type OrderRecord = {
   id: string;
@@ -148,6 +162,8 @@ type OrderRecord = {
   status: OrderStatus;
   stripeCheckoutSessionId?: string;
   origin: string;
+  fulfillmentStatus: FulfillmentStatus;
+  fulfillmentUpdatedAt: string;
 };
 
 function nowIso() {
@@ -202,10 +218,38 @@ async function saveOrder(env: Env, order: OrderRecord) {
   await env.ORDERS_KV.put(`order:${order.id}`, JSON.stringify(order));
 }
 
+type StoredOrderRecord = Omit<OrderRecord, "fulfillmentStatus" | "fulfillmentUpdatedAt"> &
+  Partial<Pick<OrderRecord, "fulfillmentStatus" | "fulfillmentUpdatedAt">>;
+
+function normalizeFulfillmentStatus(value: unknown): FulfillmentStatus {
+  if (
+    value === "RECEIVED" ||
+    value === "IN_PREPARATION" ||
+    value === "OUT_FOR_DELIVERY" ||
+    value === "DELIVERED" ||
+    value === "CANCELLED"
+  ) {
+    return value;
+  }
+  return "RECEIVED";
+}
+
+function normalizeOrderRecord(order: StoredOrderRecord): OrderRecord {
+  const fulfillmentStatus = normalizeFulfillmentStatus(order.fulfillmentStatus);
+  const fulfillmentUpdatedAt = order.fulfillmentUpdatedAt ?? order.createdAt ?? nowIso();
+  return {
+    ...order,
+    fulfillmentStatus,
+    fulfillmentUpdatedAt,
+  };
+}
+
 async function readOrder(env: Env, orderId: string): Promise<OrderRecord | null> {
   if (!env.ORDERS_KV) throw new Error("ORDERS_KV not bound");
   const raw = await env.ORDERS_KV.get(`order:${orderId}`);
-  return raw ? (JSON.parse(raw) as OrderRecord) : null;
+  if (!raw) return null;
+  const parsed = JSON.parse(raw) as StoredOrderRecord;
+  return normalizeOrderRecord(parsed);
 }
 
 // Haversine (km)
@@ -384,6 +428,8 @@ export default {
           paymentMethod: "CASH",
           status: "CASH_ON_DELIVERY",
           origin: checkoutOrigin,
+          fulfillmentStatus: "RECEIVED",
+          fulfillmentUpdatedAt: nowIso(),
         };
 
         await saveOrder(env, order);
@@ -457,6 +503,8 @@ export default {
           paymentMethod: "STRIPE",
           status: "PENDING_PAYMENT",
           origin: checkoutOrigin,
+          fulfillmentStatus: "RECEIVED",
+          fulfillmentUpdatedAt: nowIso(),
         };
 
         await saveOrder(env, order);
@@ -521,6 +569,23 @@ export default {
         return json({ ok: true }, 200, cors);
       }
 
+      if (request.method === "GET" && url.pathname.startsWith("/orders/")) {
+        const orderId = url.pathname.replace("/orders/", "").trim();
+        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        const order = await readOrder(env, orderId);
+        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+
+        return json(
+          {
+            ...order,
+            fulfillmentStatus: order.fulfillmentStatus,
+            fulfillmentUpdatedAt: order.fulfillmentUpdatedAt,
+          },
+          200,
+          cors
+        );
+      }
+
       if (request.method === "GET" && url.pathname.startsWith("/order/")) {
         const orderId = url.pathname.replace("/order/", "").trim();
         if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
@@ -537,10 +602,95 @@ export default {
             deliveryAddress: order.deliveryAddress,
             paymentMethod: order.paymentMethod,
             status: order.status,
+            fulfillmentStatus: order.fulfillmentStatus,
+            fulfillmentUpdatedAt: order.fulfillmentUpdatedAt,
           },
           200,
           cors
         );
+      }
+
+      if (request.method === "GET" && url.pathname === "/admin/orders") {
+        const pin = url.searchParams.get("pin");
+        if (!isAdminPinValid(env, pin)) {
+          return json({ error: "UNAUTHORIZED" }, 401, cors);
+        }
+
+        const listResult = await env.ORDERS_KV!.list({ prefix: "order:", limit: 200 });
+        const orderKeys = listResult.keys.filter((key) => !key.name.startsWith("order:session:"));
+        const rawOrders = await Promise.all(
+          orderKeys.map(async (key) => {
+            const value = await env.ORDERS_KV!.get(key.name);
+            return value ? (JSON.parse(value) as StoredOrderRecord) : null;
+          })
+        );
+        const normalized = rawOrders
+          .filter((order): order is StoredOrderRecord => Boolean(order))
+          .map((order) => normalizeOrderRecord(order))
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .slice(0, 50)
+          .map((order) => ({
+            orderId: order.id,
+            createdAt: order.createdAt,
+            customer: order.deliveryAddress,
+            paymentMethod: order.paymentMethod,
+            paymentStatus: order.status,
+            fulfillmentStatus: order.fulfillmentStatus,
+          }));
+
+        return json({ orders: normalized }, 200, cors);
+      }
+
+      if (request.method === "POST" && url.pathname.startsWith("/admin/orders/") && url.pathname.endsWith("/fulfillment")) {
+        const segments = url.pathname.split("/").filter(Boolean);
+        const orderId = segments[2];
+        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+
+        const body: any = await request.json().catch(() => null);
+        const pin = body?.pin ?? null;
+        if (!isAdminPinValid(env, pin)) {
+          return json({ error: "UNAUTHORIZED" }, 401, cors);
+        }
+
+        const status = normalizeFulfillmentStatus(body?.status);
+        if (status === "RECEIVED") {
+          return json({ error: "INVALID_STATUS" }, 400, cors);
+        }
+
+        const order = await readOrder(env, orderId);
+        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+
+        order.fulfillmentStatus = status;
+        order.fulfillmentUpdatedAt = nowIso();
+        await saveOrder(env, order);
+
+        return json(
+          {
+            orderId: order.id,
+            fulfillmentStatus: order.fulfillmentStatus,
+            fulfillmentUpdatedAt: order.fulfillmentUpdatedAt,
+          },
+          200,
+          cors
+        );
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/admin/orders/") && url.pathname.endsWith("/delivered")) {
+        const segments = url.pathname.split("/").filter(Boolean);
+        const orderId = segments[2];
+        const pin = url.searchParams.get("pin");
+        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!isAdminPinValid(env, pin)) {
+          return json({ error: "UNAUTHORIZED" }, 401, cors);
+        }
+
+        const order = await readOrder(env, orderId);
+        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+
+        order.fulfillmentStatus = "DELIVERED";
+        order.fulfillmentUpdatedAt = nowIso();
+        await saveOrder(env, order);
+        return text("OK", 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/order-by-session") {

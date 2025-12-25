@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle, Home, MessageCircle } from 'lucide-react';
 import { Page } from '../types';
-import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone } from '../lib/whatsapp';
+import { buildOrderMessage, buildWhatsAppUrl, getStoredAdminPin, getWhatsAppPhone, resolvePublicOrigin } from '../lib/whatsapp';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
 
 interface SuccessPageProps {
@@ -21,6 +21,7 @@ type OrderResponse = {
   deliveryAddress: string;
   paymentMethod: 'STRIPE' | 'CASH';
   status: 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'CASH_ON_DELIVERY';
+  fulfillmentStatus?: 'RECEIVED' | 'IN_PREPARATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
 };
 
 export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
@@ -42,11 +43,17 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
         setWhatsAppError('Commande introuvable pour WhatsApp.');
         return;
       }
-      const verifyUrl = `${window.location.origin}/order/${order.id}`;
+      const publicOrigin = resolvePublicOrigin();
+      const verifyUrl = `${publicOrigin || window.location.origin}/order/${order.id}`;
+      const adminPin = getStoredAdminPin();
+      const deliveredUrl = adminPin
+        ? `${resolveWorkerBaseUrl()}/admin/orders/${order.id}/delivered?pin=${encodeURIComponent(adminPin)}`
+        : undefined;
       const message = buildOrderMessage({
         orderId: order.id,
-        paymentLabel: 'En ligne (confirmé)',
+        paymentLabel: 'En ligne confirmé',
         verifyUrl,
+        deliveredUrl,
         lines: buildOrderLines(order),
       });
       const url = buildWhatsAppUrl(getWhatsAppPhone(), message);

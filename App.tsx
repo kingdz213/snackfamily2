@@ -12,6 +12,7 @@ import { Footer } from './components/Footer';
 import { OrderingCTA } from './components/OrderingCTA';
 import { OrderUI } from './components/OrderUI';
 import { AdminPage } from './components/AdminPage';
+import { AdminOrdersPage } from './components/AdminOrdersPage';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
 
 const pageToPath: Record<Page, string> = {
@@ -21,6 +22,7 @@ const pageToPath: Record<Page, string> = {
   contact: '/contact',
   commander: '/commander',
   admin: '/admin',
+  adminOrders: '/admin/orders',
   success: '/success',
   cancel: '/cancel',
   orderStatus: '/order',
@@ -39,6 +41,8 @@ const getPageFromLocation = (): { page: Page; orderId?: string } => {
 
     if (search.includes('success=true')) return { page: 'success' };
     if (search.includes('canceled=true')) return { page: 'cancel' };
+
+    if (pathname.startsWith('/admin/orders')) return { page: 'adminOrders' };
 
     const orderId = getOrderIdFromPath(pathname);
     if (orderId) return { page: 'orderStatus', orderId };
@@ -203,6 +207,7 @@ function App() {
       case 'cancel': return <CancelPage navigateTo={navigateTo} />;
       case 'orderStatus': return orderId ? <OrderStatusPage orderId={orderId} navigateTo={navigateTo} /> : <Home navigateTo={navigateTo} />;
       case 'admin': return <AdminPage navigateTo={navigateTo} />;
+      case 'adminOrders': return <AdminOrdersPage navigateTo={navigateTo} />;
       default: return <Home navigateTo={navigateTo} />;
     }
   };
@@ -223,7 +228,11 @@ function App() {
       <Footer navigateTo={navigateTo} />
 
       {/* Bouton flottant Commander (visible sauf sur Checkout/Success/Cancel/Commander) */}
-      {currentPage !== 'success' && currentPage !== 'cancel' && currentPage !== 'commander' && currentPage !== 'admin' && (
+      {currentPage !== 'success' &&
+        currentPage !== 'cancel' &&
+        currentPage !== 'commander' &&
+        currentPage !== 'admin' &&
+        currentPage !== 'adminOrders' && (
         <OrderingCTA
           navigateTo={navigateTo}
         />
