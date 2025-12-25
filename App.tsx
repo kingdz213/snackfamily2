@@ -7,6 +7,7 @@ import { ContactPage } from './components/ContactPage';
 import { OrderPage } from './components/OrderPage';
 import { SuccessPage } from './components/SuccessPage';
 import { CancelPage } from './components/CancelPage';
+import { OrderStatusPage } from './components/OrderStatusPage';
 import { Footer } from './components/Footer';
 import { OrderingCTA } from './components/OrderingCTA';
 import { OrderUI } from './components/OrderUI';
@@ -22,21 +23,32 @@ const pageToPath: Record<Page, string> = {
   admin: '/admin',
   success: '/success',
   cancel: '/cancel',
+  orderStatus: '/order',
 };
 
-const getPageFromLocation = (): Page => {
+const getOrderIdFromPath = (pathname: string): string | null => {
+  if (!pathname.startsWith('/order/')) return null;
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length < 2) return null;
+  return segments[1] || null;
+};
+
+const getPageFromLocation = (): { page: Page; orderId?: string } => {
   try {
     const { pathname, search } = window.location;
 
-    if (search.includes('success=true')) return 'success';
-    if (search.includes('canceled=true')) return 'cancel';
+    if (search.includes('success=true')) return { page: 'success' };
+    if (search.includes('canceled=true')) return { page: 'cancel' };
+
+    const orderId = getOrderIdFromPath(pathname);
+    if (orderId) return { page: 'orderStatus', orderId };
 
     const matchedEntry = Object.entries(pageToPath).find(([, path]) => path === pathname);
-    if (matchedEntry) return matchedEntry[0] as Page;
+    if (matchedEntry) return { page: matchedEntry[0] as Page };
   } catch (e) {
     console.warn("Navigation warning: could not determine initial page", e);
   }
-  return 'home';
+  return { page: 'home' };
 };
 
 const getWindowWidth = () => {
@@ -45,7 +57,9 @@ const getWindowWidth = () => {
 };
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>(getPageFromLocation());
+  const initialLocation = getPageFromLocation();
+  const [currentPage, setCurrentPage] = useState<Page>(initialLocation.page);
+  const [orderId, setOrderId] = useState<string | null>(initialLocation.orderId ?? null);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
@@ -79,7 +93,9 @@ function App() {
 
   useEffect(() => {
     const handlePopstate = () => {
-      setCurrentPage(getPageFromLocation());
+      const next = getPageFromLocation();
+      setCurrentPage(next.page);
+      setOrderId(next.orderId ?? null);
     };
 
     window.addEventListener('popstate', handlePopstate);
@@ -95,6 +111,9 @@ function App() {
     }
 
     setCurrentPage(page);
+    if (page !== 'orderStatus') {
+      setOrderId(null);
+    }
     setIsOrderModalOpen(false);
     setSelectedItem(null);
     setSelectedCategory(null);
@@ -182,6 +201,7 @@ function App() {
       case 'commander': return <OrderPage openOrderModal={openOrderModal} />;
       case 'success': return <SuccessPage navigateTo={navigateTo} />;
       case 'cancel': return <CancelPage navigateTo={navigateTo} />;
+      case 'orderStatus': return orderId ? <OrderStatusPage orderId={orderId} navigateTo={navigateTo} /> : <Home navigateTo={navigateTo} />;
       case 'admin': return <AdminPage navigateTo={navigateTo} />;
       default: return <Home navigateTo={navigateTo} />;
     }
