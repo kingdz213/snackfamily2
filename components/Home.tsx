@@ -2,13 +2,13 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, Star, Utensils } from 'lucide-react';
 import { Page } from '../types';
+import { Embers } from '@/src/components/Embers';
 
 interface HomeProps {
   navigateTo: (page: Page) => void;
 }
 
 export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
-  
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
@@ -46,16 +46,17 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
             className="w-full h-full object-cover object-center opacity-50" 
             fetchPriority="high"
           />
-          <div className="absolute inset-0 bg-black/60"></div>
+          <Embers className="z-20" count={14} maxOpacity={0.28} speed={16} />
+          <div className="absolute inset-0 bg-black/60 z-10"></div>
         </div>
 
         {/* Content Container - Removed pt-20 for perfect vertical centering */}
-        <div className="relative z-20 container mx-auto px-4 flex flex-col items-center text-center">
+        <div className="relative z-30 container mx-auto px-4 flex flex-col items-center text-center">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8 }}
-            className="max-w-5xl w-full flex flex-col items-center"
+            className="max-w-5xl w-full flex flex-col items-center rounded-3xl border border-white/10 bg-black/30 p-6 sm:p-10 shadow-2xl backdrop-blur-sm shine-sweep"
           >
             {/* Badge - Perfectly Centered */}
             <div className="mb-8 flex justify-center">
@@ -82,7 +83,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
             <div className="flex flex-col sm:flex-row gap-5 w-full justify-center items-center">
               <button 
                 onClick={() => navigateTo('commander')}
-                className="bg-snack-gold hover:bg-white text-snack-black min-w-[200px] px-8 py-4 rounded font-display font-bold text-lg uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-3 shadow-xl hover:shadow-2xl glow-soft shine-sweep"
+                className="cta-premium bg-snack-gold hover:bg-white text-snack-black min-w-[200px] px-8 py-4 rounded font-display font-bold text-lg uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-3 shadow-xl hover:shadow-2xl glow-soft shine-sweep"
               >
                 <span>Commander</span>
                 <ArrowRight size={20} />
@@ -90,7 +91,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
               
               <button 
                 onClick={() => navigateTo('menu')}
-                className="bg-white/10 backdrop-blur-sm border-2 border-white text-white hover:bg-white hover:text-snack-black min-w-[200px] px-8 py-4 rounded font-display font-bold text-lg uppercase tracking-wider transition-all duration-200 flex items-center justify-center shadow-lg hover:shadow-2xl hover:scale-105"
+                className="cta-premium bg-white/10 backdrop-blur-sm border-2 border-white text-white hover:bg-white hover:text-snack-black min-w-[200px] px-8 py-4 rounded font-display font-bold text-lg uppercase tracking-wider transition-all duration-200 flex items-center justify-center shadow-lg hover:shadow-2xl glow-soft"
               >
                 Voir le Menu
               </button>
@@ -222,7 +223,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
             <div>
                 <button 
                     onClick={() => navigateTo('commander')}
-                    className="bg-snack-black text-white hover:bg-white hover:text-black px-10 py-5 rounded font-display font-bold text-xl uppercase tracking-wide transition-all shadow-2xl transform hover:-translate-y-1 whitespace-nowrap flex items-center gap-3"
+                    className="cta-premium bg-snack-black text-white hover:bg-white hover:text-black px-10 py-5 rounded font-display font-bold text-xl uppercase tracking-wide transition-all shadow-2xl transform hover:-translate-y-1 whitespace-nowrap flex items-center gap-3 glow-soft shine-sweep"
                 >
                     <span>Je commande</span>
                     <ArrowRight size={20} />

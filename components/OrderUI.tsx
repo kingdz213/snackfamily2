@@ -537,7 +537,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         quantity: Math.max(1, Math.trunc(it.quantity)),
       }));
 
-      const { orderId } = await startCashOrder({
+      const { orderId, adminHubUrl, publicOrderUrl } = await startCashOrder({
         origin: window.location.origin,
         items,
         deliveryAddress: formattedDeliveryAddress.trim(),
@@ -546,11 +546,13 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       });
 
       const publicOrigin = resolvePublicOrigin() || window.location.origin;
-      const verifyUrl = `${publicOrigin}/order/${orderId}`;
+      const verifyUrl = publicOrderUrl || `${publicOrigin}/order/${orderId}`;
+
       const message = buildOrderMessage({
         orderId,
         paymentLabel: 'À la livraison',
-        verifyUrl,
+        publicOrderUrl: verifyUrl,
+        adminHubUrl,
         lines: buildOrderLines(),
       });
 
@@ -1092,7 +1094,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           <div className="grid grid-cols-2 gap-2">
                             <button
                               onClick={() => setPaymentMethod('stripe')}
-                              className={`py-2 rounded-lg border font-bold flex items-center justify-center gap-2 ${
+                              className={`py-2 rounded-lg border font-bold flex items-center justify-center gap-2 transition-all glow-soft shine-sweep ${
                                 paymentMethod === 'stripe'
                                   ? 'border-snack-gold bg-snack-gold/10 text-black'
                                   : 'border-gray-200 text-gray-500 hover:border-gray-300'
@@ -1106,7 +1108,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
                             <button
                               onClick={() => setPaymentMethod('cash')}
-                              className={`py-2 rounded-lg border font-bold flex items-center justify-center gap-2 ${
+                              className={`py-2 rounded-lg border font-bold flex items-center justify-center gap-2 transition-all glow-soft ${
                                 paymentMethod === 'cash'
                                   ? 'border-snack-gold bg-snack-gold/10 text-black'
                                   : 'border-gray-200 text-gray-500 hover:border-gray-300'
@@ -1174,7 +1176,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       className="sticky bottom-0 border-t border-gray-200 bg-white shadow-[0_-5px_15px_rgba(0,0,0,0.05)] p-6 space-y-3"
                       style={{ paddingBottom: 'calc(16px + env(safe-area-inset-bottom))' }}
                     >
-                      <div className="flex justify-between items-end">
+                      <div className="flex justify-between items-end rounded-lg border border-snack-gold/20 bg-snack-gold/5 p-3 glow-soft">
                         <div>
                           <div className="text-gray-500 uppercase font-bold tracking-wider text-sm">Total</div>
                           <div className="text-xs text-gray-500">
@@ -1188,7 +1190,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                         id="checkout-btn"
                         onClick={paymentMethod === 'stripe' ? handleStripeCheckout : handleCashCheckout}
                         disabled={isCheckingOut || disableStripeCheckout}
-                        className={`w-full bg-snack-gold text-snack-black py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group glow-soft shine-sweep ${
+                        className={`cta-premium w-full bg-snack-gold text-snack-black py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group glow-soft shine-sweep ${
                           isCheckingOut || disableStripeCheckout
                             ? 'opacity-60 cursor-not-allowed'
                             : 'hover:bg-white hover:border-snack-black hover:border-gray-200'

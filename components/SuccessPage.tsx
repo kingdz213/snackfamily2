@@ -22,6 +22,7 @@ type OrderResponse = {
   deliveryAddress: string;
   paymentMethod: 'STRIPE' | 'CASH';
   status: 'RECEIVED' | 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'IN_PREPARATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED';
+  adminHubUrl?: string;
 };
 
 export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
@@ -45,7 +46,8 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
     return buildOrderMessage({
       orderId: orderDetails.id,
       paymentLabel,
-      verifyUrl,
+      publicOrderUrl: verifyUrl,
+      adminHubUrl: orderDetails.adminHubUrl,
       lines: buildOrderLines(orderDetails),
     });
   }, [orderDetails]);

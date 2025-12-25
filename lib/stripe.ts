@@ -26,11 +26,16 @@ export type CheckoutResponse = {
   url?: string;
   sessionId?: string;
   orderId?: string;
+  publicOrderUrl?: string;
+  adminHubUrl?: string;
 };
 
 export type CashOrderResponse = {
   orderId: string;
+  publicOrderUrl: string;
+  adminHubUrl: string;
 };
+
 
 const DEFAULT_WORKER_BASE_URL =
   "https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev";

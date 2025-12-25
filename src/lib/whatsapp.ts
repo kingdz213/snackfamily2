@@ -1,8 +1,8 @@
 type OrderMessageParams = {
   orderId: string;
   paymentLabel: string;
-  verifyUrl: string;
-  deliveredUrl?: string;
+  publicOrderUrl: string;
+  adminHubUrl?: string;
   lines: string[];
 };
 
@@ -30,14 +30,14 @@ export function buildWhatsAppUrl(phone: string, message: string): string {
   return `${baseUrl}?text=${encoded}`;
 }
 
-export function buildOrderMessage({ orderId, paymentLabel, verifyUrl, deliveredUrl, lines }: OrderMessageParams): string {
+export function buildOrderMessage({ orderId, paymentLabel, publicOrderUrl, adminHubUrl, lines }: OrderMessageParams): string {
   const recap = lines.length > 0 ? lines.join('\n') : '- (aucun article)';
-  const deliveredLine = deliveredUrl ? `Lien 1 clic (livrée): ${deliveredUrl}\n` : '';
+  const adminLine = adminHubUrl ? `✅ Terminer la commande (admin): ${adminHubUrl}\n` : '';
   return (
     `Nouvelle commande #${orderId}\n` +
     `Paiement: ${paymentLabel}\n` +
-    `Lien de vérification: ${verifyUrl}\n` +
-    deliveredLine +
+    adminLine +
+    `📦 Suivi client: ${publicOrderUrl}\n` +
     `\n` +
     `Récapitulatif:\n${recap}`
   );

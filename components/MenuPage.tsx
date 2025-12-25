@@ -69,7 +69,8 @@ export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
                   <li key={cat.id} className="flex-shrink-0">
                     <button
                       onClick={() => scrollToCategory(cat.id)}
-                      className={`w-full text-left px-5 py-4 hover:bg-gray-50 transition-colors flex items-center justify-between text-sm font-bold uppercase tracking-wide ${
+                      data-active={activeCategory === cat.id ? 'true' : 'false'}
+                      className={`menu-underline w-full text-left px-5 py-4 hover:bg-gray-50 transition-colors flex items-center justify-between text-sm font-bold uppercase tracking-wide ${
                         activeCategory === cat.id ? 'text-snack-gold bg-gray-900' : 'text-gray-600'
                       }`}
                     >
@@ -103,7 +104,7 @@ export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
                       return (
                         <div
                           key={idx}
-                          className={`bg-white p-5 rounded-lg shadow-sm border border-gray-200 group flex flex-col justify-between h-full ${
+                          className={`premium-card bg-white p-5 rounded-lg shadow-sm border border-gray-200 group flex flex-col justify-between h-full ${
                             reduceMotion ? 'transition-none' : 'transition-all duration-200 hover:border-snack-gold hover:shadow-md hover:-translate-y-1'
                           }`}
                         >
@@ -141,7 +142,9 @@ export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
                             {!item.unavailable && (
                               <button 
                                 onClick={() => openOrderModal(item, cat)}
-                                className="bg-snack-black text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-snack-gold hover:text-black transition-all duration-200 shadow-md transform active:scale-90 active:bg-green-600 active:text-white"
+                                className={`bg-snack-black text-white w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 shadow-md transform active:scale-90 active:bg-green-600 active:text-white glow-soft ${
+                                  reduceMotion ? '' : 'hover:bg-snack-gold hover:text-black'
+                                }`}
                               >
                                 <Plus size={20} />
                               </button>

@@ -96,7 +96,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
               {/* Commander Button - Navigates to Order Page */}
               <button 
                 onClick={() => handleNav('commander')}
-                className={`px-6 py-2.5 rounded font-display font-bold text-lg uppercase tracking-wide transition-all transform shadow-lg glow-soft shine-sweep ${
+                className={`cta-premium px-6 py-2.5 rounded font-display font-bold text-lg uppercase tracking-wide transition-all transform shadow-lg glow-soft shine-sweep ${
                     currentPage === 'commander' 
                     ? 'bg-white text-snack-black' 
                     : 'bg-snack-gold hover:bg-white text-snack-black'
@@ -164,7 +164,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
           ))}
           <button 
             onClick={() => handleNav('commander')}
-            className="w-full bg-snack-gold text-snack-black font-display font-bold text-xl uppercase tracking-wide py-4 text-center rounded mt-4 hover:bg-white transition-colors shadow-lg flex items-center justify-center gap-2 glow-soft shine-sweep"
+            className="cta-premium w-full bg-snack-gold text-snack-black font-display font-bold text-xl uppercase tracking-wide py-4 text-center rounded mt-4 hover:bg-white transition-colors shadow-lg flex items-center justify-center gap-2 glow-soft shine-sweep"
           >
             <ShoppingBag size={20} />
             Commander
