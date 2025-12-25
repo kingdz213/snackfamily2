@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
+import { FirebaseError } from 'firebase/app';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 import { Portal } from './Portal';
 import { X } from 'lucide-react';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
+import { auth } from '@/src/firebase';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -11,27 +14,64 @@ interface AuthModalProps {
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }) => {
-  const { user, loading, login, register, logout } = useAuth();
+  const { user, loading, logout } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState<'login' | 'register' | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const normalizedEmail = email.trim().toLowerCase();
-  const isEmailValid = normalizedEmail.length > 0 && normalizedEmail.includes('@') && normalizedEmail.includes('.');
+  const trimmedEmail = email.trim();
+  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
   const isPasswordValid = password.length >= 6;
-  const isRegisterDisabled = isSubmitting === 'register' || !isEmailValid || !isPasswordValid;
+  const isBusy = isSubmitting !== null;
+  const isRegisterDisabled = isBusy || !isEmailValid || !isPasswordValid;
+  const isLoginDisabled = isBusy || !isEmailValid || !isPasswordValid;
+
+  const logAuthAttempt = (context: 'login' | 'register') => {
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.debug(`[AuthModal:${context}] emailLength=${trimmedEmail.length} passwordLength=${password.length}`);
+    }
+  };
+
+  const getAuthErrorMessage = (err: unknown) => {
+    if (err instanceof FirebaseError) {
+      switch (err.code) {
+        case 'auth/email-already-in-use':
+          return 'Email déjà utilisé.';
+        case 'auth/weak-password':
+          return 'Mot de passe trop faible.';
+        case 'auth/user-not-found':
+        case 'auth/invalid-credential':
+          return 'Identifiants incorrects ou compte inexistant.';
+        case 'auth/invalid-email':
+          return 'Email invalide.';
+        default:
+          return err.message;
+      }
+    }
+    return err instanceof Error ? err.message : 'Une erreur est survenue.';
+  };
 
   if (!isOpen) return null;
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    if (!isEmailValid) {
+      setError('Email invalide.');
+      return;
+    }
+    if (!isPasswordValid) {
+      setError('Mot de passe trop court (min. 6).');
+      return;
+    }
     setIsSubmitting('login');
     try {
-      await login(email.trim(), password);
+      logAuthAttempt('login');
+      await signInWithEmailAndPassword(auth, trimmedEmail, password);
       setPassword('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Connexion impossible.');
+      setError(getAuthErrorMessage(err));
     } finally {
       setIsSubmitting(null);
     }
@@ -41,19 +81,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
     event.preventDefault();
     setError(null);
     if (!isEmailValid) {
-      setError('Veuillez entrer une adresse email valide.');
+      setError('Email invalide.');
       return;
     }
     if (!isPasswordValid) {
-      setError('Le mot de passe doit contenir au moins 6 caractères.');
+      setError('Mot de passe trop court (min. 6).');
       return;
     }
     setIsSubmitting('register');
     try {
-      await register(normalizedEmail, password);
+      logAuthAttempt('register');
+      await createUserWithEmailAndPassword(auth, trimmedEmail, password);
       setPassword('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Création du compte impossible.');
+      setError(getAuthErrorMessage(err));
     } finally {
       setIsSubmitting(null);
     }
@@ -136,8 +177,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
                   </div>
                   <button
                     type="submit"
-                    disabled={isSubmitting === 'login'}
-                    className="w-full rounded-lg bg-snack-black px-4 py-3 text-sm font-bold uppercase tracking-wide text-snack-gold hover:bg-snack-gold hover:text-snack-black transition-colors"
+                    disabled={isLoginDisabled}
+                    className="w-full rounded-lg bg-snack-black px-4 py-3 text-sm font-bold uppercase tracking-wide text-snack-gold hover:bg-snack-gold hover:text-snack-black transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isSubmitting === 'login' ? <LoadingSpinner label="Connexion..." size={20} /> : 'Connexion'}
                   </button>
