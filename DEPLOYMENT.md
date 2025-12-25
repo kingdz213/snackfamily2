@@ -21,3 +21,14 @@ This repo pins the Worker configuration in `wrangler.toml` (and a minimal `wrang
   "origin": "https://snackfamily2.eu"
 }
 ```
+
+## Animations
+- Premium animation pack is always enabled in production and respects `prefers-reduced-motion`.
+
+## Admin order hub (WhatsApp)
+- Configure Worker secrets: `ADMIN_PIN` (required) + `ADMIN_SIGNING_SECRET`.
+- WhatsApp message contains a single admin hub link that requires the PIN and allows marking orders as delivered.
+
+## Manual UI checks (mobile)
+- iOS Safari: CTA glow/pulse visible without hover, hero embers visible, cards have premium depth.
+- Chrome iOS: CTA glow/pulse visible without hover, hero embers visible, cards have premium depth.

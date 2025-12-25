@@ -61,7 +61,7 @@ export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
                           return (
                             <div 
                                 key={idx}
-                                className={`text-left bg-white p-6 rounded-lg border border-gray-200 shadow-sm flex flex-col justify-between h-full ${
+                                className={`premium-card text-left bg-white p-6 rounded-lg border border-gray-200 shadow-sm flex flex-col justify-between h-full ${
                                     reduceMotion ? 'transition-none' : 'transition-all duration-200 hover:shadow-md hover:-translate-y-1'
                                 } ${reduceMotion ? '' : 'hover:border-snack-gold'} ${reduceMotion ? '' : 'active:scale-[0.98] active:border-green-600'} ${
                                     item.unavailable ? 'opacity-60 grayscale' : ''
@@ -90,7 +90,9 @@ export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
                                     {!item.unavailable && (
                                         <button 
                                           onClick={() => openOrderModal(item, filteredCategory)}
-                                          className="bg-snack-gold text-snack-black px-4 py-2 rounded font-bold uppercase text-sm flex items-center gap-2 hover:bg-black hover:text-snack-gold transition-colors"
+                                          className={`cta-premium bg-snack-gold text-snack-black px-4 py-2 rounded font-bold uppercase text-sm flex items-center gap-2 transition-all glow-soft shine-sweep ${
+                                            reduceMotion ? '' : 'hover:bg-black hover:text-snack-gold hover:-translate-y-0.5 active:scale-[0.98]'
+                                          }`}
                                         >
                                             <span>Ajouter</span>
                                             <Plus size={16} />

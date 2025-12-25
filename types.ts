@@ -48,4 +48,14 @@ export const VEGGIES = [
   "Salade", "Chou blanc", "Chou rouge", "Carottes", "Oignons", "Oignons secs", "Tomate", "Cornichon"
 ];
 
-export type Page = 'home' | 'menu' | 'infos' | 'contact' | 'commander' | 'success' | 'cancel' | 'admin' | 'orderStatus';
+export type Page =
+  | 'home'
+  | 'menu'
+  | 'infos'
+  | 'contact'
+  | 'commander'
+  | 'success'
+  | 'cancel'
+  | 'admin'
+  | 'adminOrderHub'
+  | 'orderStatus';

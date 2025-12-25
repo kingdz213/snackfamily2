@@ -27,7 +27,7 @@ export const OrderingCTA: React.FC<OrderingCTAProps> = ({ navigateTo }) => {
     >
       <button 
         onClick={() => navigateTo('commander')}
-        className="flex items-center gap-3 bg-snack-gold hover:bg-white text-snack-black py-4 px-8 rounded shadow-xl font-display font-bold text-xl uppercase tracking-wider border border-snack-black/10 transition-all glow-soft shine-sweep"
+        className="cta-premium flex items-center gap-3 bg-snack-gold hover:bg-white text-snack-black py-4 px-8 rounded shadow-xl font-display font-bold text-xl uppercase tracking-wider border border-snack-black/10 transition-all glow-soft shine-sweep"
       >
         <ShoppingBag size={24} />
         <span>Commander</span>

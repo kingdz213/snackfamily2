@@ -12,6 +12,7 @@ import { Footer } from './components/Footer';
 import { OrderingCTA } from './components/OrderingCTA';
 import { OrderUI } from './components/OrderUI';
 import { AdminOrdersPage } from './components/AdminOrdersPage';
+import { AdminOrderHubPage } from './components/AdminOrderHubPage';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
 
 const pageToPath: Record<Page, string> = {
@@ -21,6 +22,7 @@ const pageToPath: Record<Page, string> = {
   contact: '/contact',
   commander: '/commander',
   admin: '/admin',
+  adminOrderHub: '/admin/order',
   success: '/success',
   cancel: '/cancel',
   orderStatus: '/order',
@@ -43,6 +45,7 @@ const getPageFromLocation = (): { page: Page; orderId?: string } => {
     const orderId = getOrderIdFromPath(pathname);
     if (orderId) return { page: 'orderStatus', orderId };
 
+    if (pathname.startsWith('/admin/order')) return { page: 'adminOrderHub' };
     if (pathname.startsWith('/admin')) return { page: 'admin' };
 
     const matchedEntry = Object.entries(pageToPath).find(([, path]) => path === pathname);
@@ -102,6 +105,12 @@ function App() {
 
     window.addEventListener('popstate', handlePopstate);
     return () => window.removeEventListener('popstate', handlePopstate);
+  }, []);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      console.info('ANIM PACK ACTIVE');
+    }
   }, []);
 
   const navigateTo = (page: Page) => {
@@ -205,6 +214,7 @@ function App() {
       case 'cancel': return <CancelPage navigateTo={navigateTo} />;
       case 'orderStatus': return orderId ? <OrderStatusPage orderId={orderId} navigateTo={navigateTo} /> : <Home navigateTo={navigateTo} />;
       case 'admin': return <AdminOrdersPage navigateTo={navigateTo} />;
+      case 'adminOrderHub': return <AdminOrderHubPage />;
       default: return <Home navigateTo={navigateTo} />;
     }
   };
@@ -225,7 +235,11 @@ function App() {
       <Footer navigateTo={navigateTo} />
 
       {/* Bouton flottant Commander (visible sauf sur Checkout/Success/Cancel/Commander) */}
-      {currentPage !== 'success' && currentPage !== 'cancel' && currentPage !== 'commander' && currentPage !== 'admin' && (
+      {currentPage !== 'success' &&
+        currentPage !== 'cancel' &&
+        currentPage !== 'commander' &&
+        currentPage !== 'admin' &&
+        currentPage !== 'adminOrderHub' && (
         <OrderingCTA
           navigateTo={navigateTo}
         />

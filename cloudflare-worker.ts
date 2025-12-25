@@ -8,6 +8,7 @@ interface Env {
   STRIPE_WEBHOOK_SECRET?: string;
   DEFAULT_ORIGIN?: string;
   ADMIN_PIN?: string;
+  ADMIN_SIGNING_SECRET?: string;
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
@@ -134,6 +135,7 @@ type PaymentMethod = "STRIPE" | "CASH";
 type OrderRecord = {
   id: string;
   createdAt: string;
+  statusUpdatedAt: string;
   items: { name: string; quantity: number; price: number }[];
   subtotal: number;
   deliveryFee: number;
@@ -146,6 +148,7 @@ type OrderRecord = {
   fulfillmentStatus?: string;
   fulfillmentUpdatedAt?: string;
   stripeCheckoutSessionId?: string;
+  adminHubUrl?: string;
   origin: string;
 };
 
@@ -212,6 +215,10 @@ function normalizeOrderStatus(order: OrderRecord): OrderRecord {
     order.status = order.paymentMethod === "STRIPE" ? "PENDING_PAYMENT" : "RECEIVED";
   }
 
+  if (!order.statusUpdatedAt) {
+    order.statusUpdatedAt = order.createdAt || nowIso();
+  }
+
   if (order.status === "CASH_ON_DELIVERY") {
     order.status = "RECEIVED";
   }
@@ -227,6 +234,11 @@ function normalizeOrderStatus(order: OrderRecord): OrderRecord {
 function getAdminPin(env: Env) {
   const pin = env.ADMIN_PIN?.trim();
   return pin && pin.length > 0 ? pin : null;
+}
+
+function getAdminSigningSecret(env: Env) {
+  const secret = env.ADMIN_SIGNING_SECRET?.trim();
+  return secret && secret.length > 0 ? secret : null;
 }
 
 function isAdminPinValid(env: Env, provided: string | null | undefined) {
@@ -257,6 +269,42 @@ async function listOrders(env: Env, limit = 50): Promise<OrderRecord[]> {
     .map((order) => normalizeOrderStatus(order))
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
     .slice(0, limit);
+}
+
+type AdminPurpose = "ADMIN_HUB" | "ADMIN_DELIVER";
+
+function buildAdminPayload(orderId: string, exp: number, purpose: AdminPurpose) {
+  return `${orderId}.${exp}.${purpose}`;
+}
+
+async function signAdmin(secret: string, orderId: string, exp: number, purpose: AdminPurpose) {
+  return hmacSha256Hex(secret, buildAdminPayload(orderId, exp, purpose));
+}
+
+async function verifyAdmin(secret: string, orderId: string, exp: number, sig: string, purpose: AdminPurpose) {
+  const expected = await signAdmin(secret, orderId, exp, purpose);
+  return expected === sig;
+}
+
+function statusRank(status: OrderStatus) {
+  switch (status) {
+    case "RECEIVED":
+    case "PENDING_PAYMENT":
+    case "PAID_ONLINE":
+      return 0;
+    case "IN_PREPARATION":
+      return 1;
+    case "OUT_FOR_DELIVERY":
+      return 2;
+    case "DELIVERED":
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function buildPublicOrderUrl(origin: string, orderId: string) {
+  return `${origin}/order/${orderId}`;
 }
 
 // Haversine (km)
@@ -422,9 +470,18 @@ export default {
           : origin;
 
         const orderId = generateOrderId();
+        const adminSecret = getAdminSigningSecret(env);
+        const adminExp = Date.now() + 48 * 60 * 60 * 1000;
+        const adminHubUrl = adminSecret
+          ? `${checkoutOrigin}/admin/order?orderId=${encodeURIComponent(orderId)}&exp=${encodeURIComponent(
+              String(adminExp)
+            )}&sig=${encodeURIComponent(await signAdmin(adminSecret, orderId, adminExp, "ADMIN_HUB"))}`
+          : undefined;
+        const publicOrderUrl = buildPublicOrderUrl(checkoutOrigin, orderId);
         const order: OrderRecord = {
           id: orderId,
           createdAt: nowIso(),
+          statusUpdatedAt: nowIso(),
           items: validation.items.map((it) => ({ name: it.name, quantity: it.quantity, price: it.cents })),
           subtotal: sub,
           deliveryFee: DELIVERY_FEE_CENTS,
@@ -434,11 +491,12 @@ export default {
           deliveryLng,
           paymentMethod: "CASH",
           status: "RECEIVED",
+          adminHubUrl,
           origin: checkoutOrigin,
         };
 
         await saveOrder(env, order);
-        return json({ orderId }, 200, cors);
+        return json({ orderId, publicOrderUrl, adminHubUrl }, 200, cors);
       }
 
       if (request.method === "POST" && url.pathname === "/create-checkout-session") {
@@ -495,9 +553,18 @@ export default {
           ? bodyOrigin
           : origin;
         const orderId = generateOrderId();
+        const adminSecret = getAdminSigningSecret(env);
+        const adminExp = Date.now() + 48 * 60 * 60 * 1000;
+        const adminHubUrl = adminSecret
+          ? `${checkoutOrigin}/admin/order?orderId=${encodeURIComponent(orderId)}&exp=${encodeURIComponent(
+              String(adminExp)
+            )}&sig=${encodeURIComponent(await signAdmin(adminSecret, orderId, adminExp, "ADMIN_HUB"))}`
+          : undefined;
+        const publicOrderUrl = buildPublicOrderUrl(checkoutOrigin, orderId);
         const order: OrderRecord = {
           id: orderId,
           createdAt: nowIso(),
+          statusUpdatedAt: nowIso(),
           items: validation.items.map((it) => ({ name: it.name, quantity: it.quantity, price: it.cents })),
           subtotal: sub,
           deliveryFee: DELIVERY_FEE_CENTS,
@@ -507,6 +574,7 @@ export default {
           deliveryLng,
           paymentMethod: "STRIPE",
           status: "PENDING_PAYMENT",
+          adminHubUrl,
           origin: checkoutOrigin,
         };
 
@@ -535,7 +603,11 @@ export default {
         await saveOrder(env, order);
         await env.ORDERS_KV!.put(`order:session:${result.session.id}`, orderId);
 
-        return json({ url: result.session.url, sessionId: result.session.id, orderId }, 200, cors);
+        return json(
+          { url: result.session.url, sessionId: result.session.id, orderId, publicOrderUrl, adminHubUrl },
+          200,
+          cors
+        );
       }
 
       if (request.method === "POST" && url.pathname === "/stripe-webhook") {
@@ -564,6 +636,7 @@ export default {
             if (existing) {
               normalizeOrderStatus(existing);
               existing.status = "PAID_ONLINE";
+              existing.statusUpdatedAt = nowIso();
               existing.stripeCheckoutSessionId = existing.stripeCheckoutSessionId ?? event?.data?.object?.id;
               await saveOrder(env, existing);
             }
@@ -571,6 +644,86 @@ export default {
         }
 
         return json({ ok: true }, 200, cors);
+      }
+
+      if (request.method === "POST" && url.pathname === "/admin/order-action") {
+        const secret = getAdminSigningSecret(env);
+        const pinSecret = getAdminPin(env);
+        if (!pinSecret || !secret) {
+          return json({ error: "ADMIN_DISABLED", message: "Admin PIN or signing secret not configured." }, 403, cors);
+        }
+
+        const body: any = await request.json().catch(() => null);
+        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+
+        const orderId = String(body.orderId ?? "").trim();
+        const action = String(body.action ?? "").trim() as "OPEN" | "DELIVERED";
+        const exp = Number(body.exp);
+        const sig = String(body.sig ?? "").trim();
+        const pin = String(body.pin ?? "").trim();
+
+        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!Number.isFinite(exp)) return json({ error: "EXP_INVALID" }, 400, cors);
+        if (!sig) return json({ error: "SIG_REQUIRED" }, 400, cors);
+        if (Date.now() > exp) return json({ error: "LINK_EXPIRED" }, 400, cors);
+        if (!pin || pin !== pinSecret) return json({ error: "PIN_INVALID" }, 403, cors);
+        if (action !== "OPEN" && action !== "DELIVERED") return json({ error: "INVALID_ACTION" }, 400, cors);
+
+        const purpose = action === "OPEN" ? "ADMIN_HUB" : "ADMIN_DELIVER";
+        const isValidSig = await verifyAdmin(secret, orderId, exp, sig, purpose);
+        if (!isValidSig) return json({ error: "INVALID_SIGNATURE" }, 401, cors);
+
+        const order = await readOrder(env, orderId);
+        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+
+        normalizeOrderStatus(order);
+        const rank = statusRank(order.status);
+
+        if (action === "OPEN") {
+          if (rank > 1) {
+            return json({ error: "STATUS_LOCKED", message: "Commande déjà en cours de livraison ou livrée." }, 409, cors);
+          }
+          if (rank < 1) {
+            order.status = "IN_PREPARATION";
+            order.statusUpdatedAt = nowIso();
+            await saveOrder(env, order);
+          }
+
+          const deliveredExp = Date.now() + 24 * 60 * 60 * 1000;
+          const deliveredSig = await signAdmin(secret, orderId, deliveredExp, "ADMIN_DELIVER");
+          const publicOrderUrl = buildPublicOrderUrl(order.origin, orderId);
+
+          return json(
+            {
+              ok: true,
+              order,
+              publicOrderUrl,
+              deliveredAction: { exp: deliveredExp, sig: deliveredSig },
+            },
+            200,
+            cors
+          );
+        }
+
+        if (rank < 1) {
+          return json({ error: "STATUS_NOT_READY", message: "Commande pas encore en préparation." }, 409, cors);
+        }
+
+        if (order.status !== "DELIVERED") {
+          order.status = "DELIVERED";
+          order.statusUpdatedAt = nowIso();
+          await saveOrder(env, order);
+        }
+
+        return json(
+          {
+            ok: true,
+            order,
+            publicOrderUrl: buildPublicOrderUrl(order.origin, orderId),
+          },
+          200,
+          cors
+        );
       }
 
       if (request.method === "GET" && url.pathname === "/api/admin/orders") {
@@ -624,6 +777,7 @@ export default {
 
         normalizeOrderStatus(order);
         order.status = status;
+        order.statusUpdatedAt = nowIso();
         await saveOrder(env, order);
 
         return json(
@@ -648,13 +802,15 @@ export default {
             subtotal: order.subtotal,
             deliveryFee: order.deliveryFee,
             total: order.total,
-            deliveryAddress: order.deliveryAddress,
-            paymentMethod: order.paymentMethod,
-            status: order.status,
-          },
-          200,
-          cors
-        );
+          deliveryAddress: order.deliveryAddress,
+          paymentMethod: order.paymentMethod,
+          status: order.status,
+          statusUpdatedAt: order.statusUpdatedAt,
+          adminHubUrl: order.adminHubUrl,
+        },
+        200,
+        cors
+      );
       }
 
       if (request.method === "GET" && (url.pathname.startsWith("/order/") || url.pathname.startsWith("/orders/"))) {
@@ -674,13 +830,15 @@ export default {
             subtotal: order.subtotal,
             deliveryFee: order.deliveryFee,
             total: order.total,
-            deliveryAddress: order.deliveryAddress,
-            paymentMethod: order.paymentMethod,
-            status: order.status,
-          },
-          200,
-          cors
-        );
+          deliveryAddress: order.deliveryAddress,
+          paymentMethod: order.paymentMethod,
+          status: order.status,
+          statusUpdatedAt: order.statusUpdatedAt,
+          adminHubUrl: order.adminHubUrl,
+        },
+        200,
+        cors
+      );
       }
 
       if (request.method === "GET" && url.pathname === "/order-by-session") {
