@@ -16,6 +16,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState<'login' | 'register' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const normalizedEmail = email.trim().toLowerCase();
+  const isEmailValid = normalizedEmail.length > 0 && normalizedEmail.includes('@') && normalizedEmail.includes('.');
+  const isPasswordValid = password.length >= 6;
+  const isRegisterDisabled = isSubmitting === 'register' || !isEmailValid || !isPasswordValid;
 
   if (!isOpen) return null;
 
@@ -36,9 +40,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
   const handleRegister = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    if (!isEmailValid) {
+      setError('Veuillez entrer une adresse email valide.');
+      return;
+    }
+    if (!isPasswordValid) {
+      setError('Le mot de passe doit contenir au moins 6 caractères.');
+      return;
+    }
     setIsSubmitting('register');
     try {
-      await register(email.trim(), password);
+      await register(normalizedEmail, password);
       setPassword('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Création du compte impossible.');
@@ -95,7 +107,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
                     <input
                       type="email"
                       value={email}
-                      onChange={(event) => setEmail(event.target.value)}
+                      onChange={(event) => {
+                        setEmail(event.target.value);
+                        if (error) {
+                          setError(null);
+                        }
+                      }}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold"
                       placeholder="email@exemple.com"
                       required
@@ -106,7 +123,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
                     <input
                       type="password"
                       value={password}
-                      onChange={(event) => setPassword(event.target.value)}
+                      onChange={(event) => {
+                        setPassword(event.target.value);
+                        if (error) {
+                          setError(null);
+                        }
+                      }}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold"
                       placeholder="••••••••"
                       required
@@ -123,14 +145,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
               )}
 
               {!user && (
-                <button
-                  type="button"
-                  disabled={isSubmitting === 'register'}
-                  onClick={handleRegister}
-                  className="w-full rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-3 text-sm font-bold uppercase tracking-wide text-snack-black hover:bg-snack-gold transition-colors"
-                >
-                  {isSubmitting === 'register' ? <LoadingSpinner label="Création..." size={20} /> : 'Créer un compte'}
-                </button>
+                <form onSubmit={handleRegister}>
+                  <button
+                    type="submit"
+                    disabled={isRegisterDisabled}
+                    className="w-full rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-3 text-sm font-bold uppercase tracking-wide text-snack-black hover:bg-snack-gold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isSubmitting === 'register' ? <LoadingSpinner label="Création..." size={20} /> : 'Créer un compte'}
+                  </button>
+                </form>
               )}
 
               {user && (
