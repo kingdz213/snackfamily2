@@ -59,4 +59,7 @@ export type Page =
   | 'admin'
   | 'adminOrderDetail'
   | 'adminOrderHub'
-  | 'orderStatus';
+  | 'orderStatus'
+  | 'account'
+  | 'myOrders'
+  | 'myOrderDetail';

@@ -4,6 +4,8 @@ type OrderMessageParams = {
   publicOrderUrl: string;
   adminHubUrl?: string;
   lines: string[];
+  desiredDeliveryAt?: string | null;
+  desiredDeliverySlotLabel?: string | null;
 };
 
 function sanitizePhone(phone: string) {
@@ -30,12 +32,25 @@ export function buildWhatsAppUrl(phone: string, message: string): string {
   return `${baseUrl}?text=${encoded}`;
 }
 
-export function buildOrderMessage({ orderId, paymentLabel, publicOrderUrl, adminHubUrl, lines }: OrderMessageParams): string {
+export function buildOrderMessage({
+  orderId,
+  paymentLabel,
+  publicOrderUrl,
+  adminHubUrl,
+  lines,
+  desiredDeliveryAt,
+  desiredDeliverySlotLabel,
+}: OrderMessageParams): string {
   const recap = lines.length > 0 ? lines.join('\n') : '- (aucun article)';
+  const desiredLabel =
+    desiredDeliverySlotLabel ||
+    (desiredDeliveryAt ? new Date(desiredDeliveryAt).toLocaleString('fr-BE') : null);
+  const scheduledLine = desiredLabel ? `Heure souhaitée: ${desiredLabel}\n` : '';
   const adminLine = adminHubUrl ? `✅ Terminer la commande (admin): ${adminHubUrl}\n` : '';
   return (
     `Nouvelle commande #${orderId}\n` +
     `Paiement: ${paymentLabel}\n` +
+    scheduledLine +
     adminLine +
     `📦 Suivi client: ${publicOrderUrl}\n` +
     `\n` +

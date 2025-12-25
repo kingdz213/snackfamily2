@@ -22,6 +22,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
     { name: 'Menu', page: 'menu' },
     { name: 'Infos', page: 'infos' },
     { name: 'Contact', page: 'contact' },
+    { name: 'Mon compte', page: 'account' },
     { name: 'Espace gérant', page: 'admin' },
   ];
 
@@ -37,6 +38,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
     }
     prevCountRef.current = cartCount;
   }, [cartCount, reduceMotion]);
+
 
   return (
     <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg min-h-[96px] sm:min-h-[104px]">
@@ -55,7 +57,10 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
         {/* Desktop Navigation */}
         <nav className="hidden lg:flex items-center space-x-10">
           {navLinks.map((link) => {
-            const isActive = currentPage === link.page || (link.page === 'admin' && currentPage === 'adminOrderDetail');
+            const isActive =
+              currentPage === link.page ||
+              (link.page === 'admin' && currentPage === 'adminOrderDetail') ||
+              (link.page === 'account' && (currentPage === 'myOrders' || currentPage === 'myOrderDetail'));
             return (
               <button 
                 key={link.name} 
@@ -155,7 +160,10 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
       >
         <div className="flex flex-col p-8 space-y-6">
           {navLinks.map((link, index) => {
-            const isActive = currentPage === link.page || (link.page === 'admin' && currentPage === 'adminOrderDetail');
+            const isActive =
+              currentPage === link.page ||
+              (link.page === 'admin' && currentPage === 'adminOrderDetail') ||
+              (link.page === 'account' && (currentPage === 'myOrders' || currentPage === 'myOrderDetail'));
             return (
               <button 
                 key={link.name} 

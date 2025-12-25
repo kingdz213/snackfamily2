@@ -1,5 +1,5 @@
 import { getToken, onMessage, type MessagePayload } from "firebase/messaging";
-import { messaging } from "../firebase";
+import { getFirebaseMessaging } from "../firebase";
 
 const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY as string | undefined;
 
@@ -18,6 +18,7 @@ async function ensureServiceWorkerRegistration() {
 }
 
 export async function requestNotificationToken() {
+  const messaging = await getFirebaseMessaging();
   if (!messaging) {
     throw new Error("Firebase Messaging n'est pas disponible dans ce contexte.");
   }
@@ -34,15 +35,20 @@ export async function requestNotificationToken() {
 }
 
 export function subscribeToForegroundMessages(handler: (payload: MessagePayload) => void) {
-  if (!messaging) {
-    return () => {};
-  }
+  let active = true;
+  let unsubscribe: (() => void) | null = null;
 
-  const unsubscribe = onMessage(messaging, (payload) => {
-    handler(payload);
+  void getFirebaseMessaging().then((messaging) => {
+    if (!active || !messaging) return;
+    unsubscribe = onMessage(messaging, (payload) => {
+      handler(payload);
+    });
   });
 
-  return unsubscribe;
+  return () => {
+    active = false;
+    if (unsubscribe) unsubscribe();
+  };
 }
 
 export function playNotificationFeedback() {

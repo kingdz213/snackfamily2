@@ -23,6 +23,8 @@ type OrderResponse = {
   paymentMethod: 'STRIPE' | 'CASH';
   status: 'RECEIVED' | 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'IN_PREPARATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED';
   adminHubUrl?: string;
+  desiredDeliveryAt?: string | null;
+  desiredDeliverySlotLabel?: string | null;
 };
 
 export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
@@ -49,6 +51,8 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
       publicOrderUrl: verifyUrl,
       adminHubUrl: orderDetails.adminHubUrl,
       lines: buildOrderLines(orderDetails),
+      desiredDeliveryAt: orderDetails.desiredDeliveryAt ?? null,
+      desiredDeliverySlotLabel: orderDetails.desiredDeliverySlotLabel ?? null,
     });
   }, [orderDetails]);
 

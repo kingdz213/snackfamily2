@@ -22,6 +22,8 @@ type OrderResponse = {
   deliveryAddress: string;
   paymentMethod: 'STRIPE' | 'CASH';
   status: 'RECEIVED' | 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'IN_PREPARATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED';
+  desiredDeliveryAt?: string | null;
+  desiredDeliverySlotLabel?: string | null;
 };
 
 const formatCents = (value: number) => `${(value / 100).toFixed(2)} €`;
@@ -270,6 +272,17 @@ export const OrderStatusPage: React.FC<OrderStatusPageProps> = ({ orderId }) => 
             <span className="font-semibold">Adresse : </span>
             {order.deliveryAddress}
           </div>
+          {(order.desiredDeliveryAt || order.desiredDeliverySlotLabel) && (
+            <div>
+              <span className="font-semibold">Heure souhaitée : </span>
+              {order.desiredDeliverySlotLabel ||
+                new Date(order.desiredDeliveryAt ?? '').toLocaleString('fr-BE', {
+                  weekday: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+            </div>
+          )}
         </div>
 
         <div className="border-t border-gray-100 pt-4">

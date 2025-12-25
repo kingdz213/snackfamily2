@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
 import { OrderTimeline } from './OrderTimeline';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
+import { Trash2 } from 'lucide-react';
 
 type OrderStatus =
   | 'RECEIVED'
@@ -27,6 +28,8 @@ type AdminOrderSummary = {
   amountDueCents: number;
   itemsCount: number;
   adminHubUrl?: string;
+  desiredDeliveryAt?: string;
+  desiredDeliverySlotLabel?: string;
 };
 
 type AdminOrdersResponse = {
@@ -51,6 +54,14 @@ const formatDate = (value: string) => new Date(value).toLocaleString('fr-BE');
 
 const normalizePhone = (value: string) => value.replace(/\D/g, '');
 
+const formatSchedule = (value?: string, label?: string) => {
+  if (label) return label;
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString('fr-BE', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+};
+
 export const AdminDashboardPage: React.FC = () => {
   const [pin, setPin] = useState('');
   const [token, setToken] = useState<string | null>(null);
@@ -60,6 +71,8 @@ export const AdminDashboardPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
+  const [orderToDelete, setOrderToDelete] = useState<AdminOrderSummary | null>(null);
+  const [deleteToast, setDeleteToast] = useState<string | null>(null);
 
   const endpointBase = useMemo(() => resolveWorkerBaseUrl(), []);
 
@@ -73,34 +86,31 @@ export const AdminDashboardPage: React.FC = () => {
     }
   };
 
-  const fetchOrders = useCallback(
-    async (reset = false, tokenOverride?: string) => {
-      const activeToken = tokenOverride ?? token;
-      if (!activeToken) return;
-      setError(null);
-      setIsLoading(true);
-      try {
-        const params = new URLSearchParams({ limit: '50' });
-        if (!reset && cursor) params.set('cursor', cursor);
-        const response = await fetch(`${endpointBase}/admin/orders?${params.toString()}`, {
-          headers: { Authorization: `Bearer ${activeToken}` },
-        });
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}));
-          const message = payload?.message || 'Impossible de charger les commandes.';
-          throw new Error(message);
-        }
-        const data = (await response.json()) as AdminOrdersResponse;
-        setOrders((prev) => (reset ? data.orders : [...prev, ...data.orders]));
-        setCursor(data.cursor || undefined);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Impossible de charger les commandes.');
-      } finally {
-        setIsLoading(false);
+  async function fetchOrders(reset = false, tokenOverride?: string) {
+    const activeToken = tokenOverride ?? token;
+    if (!activeToken) return;
+    setError(null);
+    setIsLoading(true);
+    try {
+      const params = new URLSearchParams({ limit: '50' });
+      if (!reset && cursor) params.set('cursor', cursor);
+      const response = await fetch(`${endpointBase}/admin/orders?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = payload?.message || 'Impossible de charger les commandes.';
+        throw new Error(message);
       }
-    },
-    [cursor, endpointBase, token]
-  );
+      const data = (await response.json()) as AdminOrdersResponse;
+      setOrders((prev) => (reset ? data.orders : [...prev, ...data.orders]));
+      setCursor(data.cursor || undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Impossible de charger les commandes.');
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   useEffect(() => {
     const stored = typeof window !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
@@ -113,7 +123,7 @@ export const AdminDashboardPage: React.FC = () => {
     if (token && orders.length === 0) {
       void fetchOrders(true);
     }
-  }, [fetchOrders, orders.length, token]);
+  }, [orders.length, token]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -172,6 +182,31 @@ export const AdminDashboardPage: React.FC = () => {
     },
     [endpointBase, token]
   );
+
+  const handleDelete = useCallback(async () => {
+    if (!token || !orderToDelete) return;
+    setError(null);
+    try {
+      const response = await fetch(`${endpointBase}/admin/orders/${encodeURIComponent(orderToDelete.id)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = payload?.message || 'Suppression impossible.';
+        throw new Error(message);
+      }
+      setOrders((prev) => prev.filter((order) => order.id !== orderToDelete.id));
+      setDeleteToast('Commande supprimée ✅');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Suppression impossible.');
+    } finally {
+      setOrderToDelete(null);
+      window.setTimeout(() => setDeleteToast(null), 2000);
+    }
+  }, [endpointBase, orderToDelete, token]);
 
   const copyAdminLink = async (order: AdminOrderSummary) => {
     if (!order.adminHubUrl) return;
@@ -282,6 +317,13 @@ export const AdminDashboardPage: React.FC = () => {
                             À encaisser (espèces)
                           </span>
                         )}
+                        <button
+                          onClick={() => setOrderToDelete(order)}
+                          className="inline-flex items-center gap-2 rounded-full border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:border-red-400 transition-colors"
+                        >
+                          <Trash2 size={14} />
+                          Supprimer
+                        </button>
                       </div>
                     </div>
 
@@ -289,16 +331,21 @@ export const AdminDashboardPage: React.FC = () => {
                       <OrderTimeline status={order.status} />
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm text-gray-600">
-                      <div>
-                        <div className="text-xs uppercase text-gray-400 font-semibold">Paiement</div>
-                        <div>
-                          {order.paymentMethod === 'stripe'
-                            ? 'Carte (Stripe)'
-                            : 'Espèces'}{' '}
-                          • {formatCents(order.totalCents)}
-                        </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm text-gray-600">
+                  <div>
+                    <div className="text-xs uppercase text-gray-400 font-semibold">Paiement</div>
+                    <div>
+                      {order.paymentMethod === 'stripe'
+                        ? 'Carte (Stripe)'
+                        : 'Espèces'}{' '}
+                      • {formatCents(order.totalCents)}
+                    </div>
+                    {(order.desiredDeliveryAt || order.desiredDeliverySlotLabel) && (
+                      <div className="text-xs text-gray-500">
+                        Heure souhaitée : {formatSchedule(order.desiredDeliveryAt, order.desiredDeliverySlotLabel)}
                       </div>
+                    )}
+                  </div>
                       <div>
                         <div className="text-xs uppercase text-gray-400 font-semibold">Contact</div>
                         {order.phone ? (
@@ -386,6 +433,35 @@ export const AdminDashboardPage: React.FC = () => {
           </button>
         )}
       </div>
+
+      {orderToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+            <h2 className="text-xl font-display font-bold text-snack-black">Supprimer cette commande ?</h2>
+            <p className="text-sm text-gray-600">Cette action est irréversible.</p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => setOrderToDelete(null)}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 hover:border-snack-gold hover:text-snack-black transition-colors"
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleDelete}
+                className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 transition-colors"
+              >
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteToast && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 rounded-full bg-snack-black px-4 py-2 text-xs font-bold uppercase tracking-wide text-snack-gold shadow-lg">
+          {deleteToast}
+        </div>
+      )}
     </div>
   );
 };
