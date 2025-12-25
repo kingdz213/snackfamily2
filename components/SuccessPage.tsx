@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle, Home, MessageCircle } from 'lucide-react';
 import { Page } from '../types';
-import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone } from '../lib/whatsapp';
+import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone, resolvePublicOrigin } from '../lib/whatsapp';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
 
 interface SuccessPageProps {
@@ -42,11 +42,16 @@ export const SuccessPage: React.FC<SuccessPageProps> = ({ navigateTo }) => {
         setWhatsAppError('Commande introuvable pour WhatsApp.');
         return;
       }
-      const verifyUrl = `${window.location.origin}/order/${order.id}`;
+      const publicOrigin = resolvePublicOrigin() || window.location.origin;
+      const verifyUrl = `${publicOrigin}/order/${order.id}`;
+      const adminPin = (import.meta.env.VITE_ADMIN_PIN as string | undefined)?.trim();
+      const deliveredPin = adminPin && adminPin.length > 0 ? encodeURIComponent(adminPin) : 'PIN_A_REMPLACER';
+      const deliveredUrl = `${resolveWorkerBaseUrl()}/admin/orders/${order.id}/delivered?pin=${deliveredPin}`;
       const message = buildOrderMessage({
         orderId: order.id,
         paymentLabel: 'En ligne (confirmé)',
         verifyUrl,
+        deliveredUrl,
         lines: buildOrderLines(order),
       });
       const url = buildWhatsAppUrl(getWhatsAppPhone(), message);

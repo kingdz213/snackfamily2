@@ -3,8 +3,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, MapPin, Banknote } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { startCashOrder, startCheckout } from '../lib/stripe';
-import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone } from '../lib/whatsapp';
+import { resolveWorkerBaseUrl, startCashOrder, startCheckout } from '../lib/stripe';
+import { buildOrderMessage, buildWhatsAppUrl, getWhatsAppPhone, resolvePublicOrigin } from '../lib/whatsapp';
 import { Portal } from './Portal';
 import { getRecommendations, MIN_ORDER_EUR } from '../lib/recommendations';
 import { MENU_CATEGORIES } from '../data/menuData';
@@ -533,11 +533,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         deliveryLng: Number(deliveryLng),
       });
 
-      const verifyUrl = `${window.location.origin}/order/${orderId}`;
+      const publicOrigin = resolvePublicOrigin() || window.location.origin;
+      const verifyUrl = `${publicOrigin}/order/${orderId}`;
+      const adminPin = (import.meta.env.VITE_ADMIN_PIN as string | undefined)?.trim();
+      const deliveredPin = adminPin && adminPin.length > 0 ? encodeURIComponent(adminPin) : 'PIN_A_REMPLACER';
+      const deliveredUrl = `${resolveWorkerBaseUrl()}/admin/orders/${orderId}/delivered?pin=${deliveredPin}`;
       const message = buildOrderMessage({
         orderId,
         paymentLabel: 'À la livraison',
         verifyUrl,
+        deliveredUrl,
         lines: buildOrderLines(),
       });
 

@@ -17,6 +17,8 @@ type OrderResponse = {
   deliveryAddress: string;
   paymentMethod: 'STRIPE' | 'CASH';
   status: 'PENDING_PAYMENT' | 'PAID_ONLINE' | 'CASH_ON_DELIVERY';
+  fulfillmentStatus: 'RECEIVED' | 'IN_PREPARATION' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | 'CANCELLED';
+  fulfillmentUpdatedAt: string;
 };
 
 const formatCents = (value: number) => `${(value / 100).toFixed(2)} €`;
@@ -30,6 +32,29 @@ const statusLabels: Record<OrderResponse['status'], string> = {
 const paymentLabels: Record<OrderResponse['paymentMethod'], string> = {
   STRIPE: 'En ligne (Stripe)',
   CASH: 'À la livraison',
+};
+
+const fulfillmentCopy: Record<OrderResponse['fulfillmentStatus'], { title: string; subtitle: string }> = {
+  RECEIVED: {
+    title: 'Commande reçue',
+    subtitle: 'Votre commande a bien été prise en compte.',
+  },
+  IN_PREPARATION: {
+    title: 'En préparation',
+    subtitle: 'Votre commande est en cours de préparation.',
+  },
+  OUT_FOR_DELIVERY: {
+    title: 'En cours de livraison',
+    subtitle: 'Votre commande est en route. Merci de rester joignable.',
+  },
+  DELIVERED: {
+    title: 'Livrée',
+    subtitle: 'Votre commande a été livrée. Merci et à bientôt !',
+  },
+  CANCELLED: {
+    title: 'Annulée',
+    subtitle: 'Cette commande a été annulée.',
+  },
 };
 
 interface OrderStatusPageProps {
@@ -85,7 +110,12 @@ export const OrderStatusPage: React.FC<OrderStatusPageProps> = ({ orderId }) => 
       <div className="w-full max-w-3xl bg-white shadow-lg rounded-xl p-6 space-y-4">
         <div>
           <h1 className="text-2xl font-display font-bold text-snack-black uppercase">Commande #{order.id}</h1>
-          <p className="text-sm text-gray-500">Statut : {statusLabels[order.status]}</p>
+          <p className="text-sm text-gray-500">Paiement : {statusLabels[order.status]}</p>
+        </div>
+
+        <div className="rounded-lg border border-snack-gold/30 bg-snack-light px-4 py-3">
+          <p className="text-lg font-semibold text-snack-black">{fulfillmentCopy[order.fulfillmentStatus].title}</p>
+          <p className="text-sm text-gray-600">{fulfillmentCopy[order.fulfillmentStatus].subtitle}</p>
         </div>
 
         <div className="text-sm text-gray-700 space-y-1">

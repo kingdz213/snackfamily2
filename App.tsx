@@ -43,6 +43,8 @@ const getPageFromLocation = (): { page: Page; orderId?: string } => {
     const orderId = getOrderIdFromPath(pathname);
     if (orderId) return { page: 'orderStatus', orderId };
 
+    if (pathname.startsWith('/admin/orders')) return { page: 'admin' };
+
     const matchedEntry = Object.entries(pageToPath).find(([, path]) => path === pathname);
     if (matchedEntry) return { page: matchedEntry[0] as Page };
   } catch (e) {

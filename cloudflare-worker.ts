@@ -7,6 +7,7 @@ interface Env {
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   DEFAULT_ORIGIN?: string;
+  ADMIN_PIN?: string;
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
@@ -133,6 +134,7 @@ function subtotalCents(items: NormalizedItem[]) {
 
 type OrderStatus = "PENDING_PAYMENT" | "PAID_ONLINE" | "CASH_ON_DELIVERY";
 type PaymentMethod = "STRIPE" | "CASH";
+type FulfillmentStatus = "RECEIVED" | "IN_PREPARATION" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
 
 type OrderRecord = {
   id: string;
@@ -146,6 +148,8 @@ type OrderRecord = {
   deliveryLng: number;
   paymentMethod: PaymentMethod;
   status: OrderStatus;
+  fulfillmentStatus: FulfillmentStatus;
+  fulfillmentUpdatedAt: string;
   stripeCheckoutSessionId?: string;
   origin: string;
 };
@@ -206,6 +210,46 @@ async function readOrder(env: Env, orderId: string): Promise<OrderRecord | null>
   if (!env.ORDERS_KV) throw new Error("ORDERS_KV not bound");
   const raw = await env.ORDERS_KV.get(`order:${orderId}`);
   return raw ? (JSON.parse(raw) as OrderRecord) : null;
+}
+
+function ensureFulfillment(order: OrderRecord): OrderRecord {
+  if (!order.fulfillmentStatus) {
+    order.fulfillmentStatus = "RECEIVED";
+  }
+  if (!order.fulfillmentUpdatedAt) {
+    order.fulfillmentUpdatedAt = order.createdAt || nowIso();
+  }
+  return order;
+}
+
+function getAdminPin(env: Env) {
+  const pin = env.ADMIN_PIN?.trim();
+  return pin && pin.length > 0 ? pin : null;
+}
+
+function isAdminPinValid(env: Env, provided: string | null | undefined) {
+  const expected = getAdminPin(env);
+  if (!expected) return false;
+  return provided === expected;
+}
+
+async function listOrders(env: Env, limit = 50): Promise<OrderRecord[]> {
+  if (!env.ORDERS_KV) throw new Error("ORDERS_KV not bound");
+  const listing = await env.ORDERS_KV.list({ prefix: "order:", limit: Math.max(limit * 2, 100) });
+  const orderKeys = listing.keys
+    .map((entry) => entry.name)
+    .filter((name) => name.startsWith("order:") && !name.startsWith("order:session:"));
+  const orders = await Promise.all(
+    orderKeys.map(async (key) => {
+      const raw = await env.ORDERS_KV!.get(key);
+      return raw ? (JSON.parse(raw) as OrderRecord) : null;
+    })
+  );
+  return orders
+    .filter((order): order is OrderRecord => Boolean(order))
+    .map((order) => ensureFulfillment(order))
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .slice(0, limit);
 }
 
 // Haversine (km)
@@ -383,6 +427,8 @@ export default {
           deliveryLng,
           paymentMethod: "CASH",
           status: "CASH_ON_DELIVERY",
+          fulfillmentStatus: "RECEIVED",
+          fulfillmentUpdatedAt: nowIso(),
           origin: checkoutOrigin,
         };
 
@@ -456,6 +502,8 @@ export default {
           deliveryLng,
           paymentMethod: "STRIPE",
           status: "PENDING_PAYMENT",
+          fulfillmentStatus: "RECEIVED",
+          fulfillmentUpdatedAt: nowIso(),
           origin: checkoutOrigin,
         };
 
@@ -511,6 +559,7 @@ export default {
           if (orderId) {
             const existing = await readOrder(env, orderId);
             if (existing) {
+              ensureFulfillment(existing);
               existing.status = "PAID_ONLINE";
               existing.stripeCheckoutSessionId = existing.stripeCheckoutSessionId ?? event?.data?.object?.id;
               await saveOrder(env, existing);
@@ -521,11 +570,98 @@ export default {
         return json({ ok: true }, 200, cors);
       }
 
-      if (request.method === "GET" && url.pathname.startsWith("/order/")) {
-        const orderId = url.pathname.replace("/order/", "").trim();
+      if (request.method === "GET" && url.pathname === "/admin/orders") {
+        if (!getAdminPin(env)) {
+          return json({ error: "ADMIN_PIN_MISSING" }, 500, cors);
+        }
+        const pin = url.searchParams.get("pin");
+        if (!isAdminPinValid(env, pin)) {
+          return json({ error: "UNAUTHORIZED" }, 401, cors);
+        }
+        const orders = await listOrders(env, 50);
+        return json(
+          {
+            orders: orders.map((order) => ({
+              orderId: order.id,
+              createdAt: order.createdAt,
+              customer: order.deliveryAddress,
+              paymentMethod: order.paymentMethod,
+              paymentStatus: order.status,
+              fulfillmentStatus: order.fulfillmentStatus,
+              fulfillmentUpdatedAt: order.fulfillmentUpdatedAt,
+            })),
+          },
+          200,
+          cors
+        );
+      }
+
+      if (request.method === "POST" && url.pathname.startsWith("/admin/orders/") && url.pathname.endsWith("/fulfillment")) {
+        if (!getAdminPin(env)) {
+          return json({ error: "ADMIN_PIN_MISSING" }, 500, cors);
+        }
+        const match = url.pathname.match(/^\/admin\/orders\/([^/]+)\/fulfillment$/);
+        const orderId = match?.[1];
+        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+
+        const body: any = await request.json().catch(() => null);
+        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+        if (!isAdminPinValid(env, body.pin)) {
+          return json({ error: "UNAUTHORIZED" }, 401, cors);
+        }
+
+        const status = String(body.status ?? "").trim() as FulfillmentStatus;
+        const allowed: FulfillmentStatus[] = ["IN_PREPARATION", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"];
+        if (!allowed.includes(status)) {
+          return json({ error: "INVALID_STATUS" }, 400, cors);
+        }
+
+        const order = await readOrder(env, orderId);
+        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+
+        ensureFulfillment(order);
+        order.fulfillmentStatus = status;
+        order.fulfillmentUpdatedAt = nowIso();
+        await saveOrder(env, order);
+
+        return json(
+          { ok: true, fulfillmentStatus: order.fulfillmentStatus, fulfillmentUpdatedAt: order.fulfillmentUpdatedAt },
+          200,
+          cors
+        );
+      }
+
+      if (request.method === "GET" && url.pathname.startsWith("/admin/orders/") && url.pathname.endsWith("/delivered")) {
+        if (!getAdminPin(env)) {
+          return text("ADMIN_PIN_MISSING", 500, cors);
+        }
+        const match = url.pathname.match(/^\/admin\/orders\/([^/]+)\/delivered$/);
+        const orderId = match?.[1];
+        if (!orderId) return text("ORDER_ID_REQUIRED", 400, cors);
+        const pin = url.searchParams.get("pin");
+        if (!isAdminPinValid(env, pin)) {
+          return text("UNAUTHORIZED", 401, cors);
+        }
+
+        const order = await readOrder(env, orderId);
+        if (!order) return text("ORDER_NOT_FOUND", 404, cors);
+
+        ensureFulfillment(order);
+        order.fulfillmentStatus = "DELIVERED";
+        order.fulfillmentUpdatedAt = nowIso();
+        await saveOrder(env, order);
+
+        return text("OK", 200, cors);
+      }
+
+      if (request.method === "GET" && (url.pathname.startsWith("/order/") || url.pathname.startsWith("/orders/"))) {
+        const orderId = url.pathname.startsWith("/orders/")
+          ? url.pathname.replace("/orders/", "").trim()
+          : url.pathname.replace("/order/", "").trim();
         if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
         const order = await readOrder(env, orderId);
         if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        ensureFulfillment(order);
 
         return json(
           {
@@ -537,6 +673,8 @@ export default {
             deliveryAddress: order.deliveryAddress,
             paymentMethod: order.paymentMethod,
             status: order.status,
+            fulfillmentStatus: order.fulfillmentStatus,
+            fulfillmentUpdatedAt: order.fulfillmentUpdatedAt,
           },
           200,
           cors
@@ -550,6 +688,7 @@ export default {
         if (!orderId) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
         const order = await readOrder(env, orderId);
         if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        ensureFulfillment(order);
         return json({ orderId, status: order.status }, 200, cors);
       }
 
