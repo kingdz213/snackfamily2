@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Page } from '../types';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
+import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 
 type OrderItem = {
   name: string;
@@ -97,7 +98,7 @@ export const OrderStatusPage: React.FC<OrderStatusPageProps> = ({ orderId }) => 
     return (
       <div className="min-h-[50vh] flex flex-col items-center justify-center text-center px-4 py-16 bg-gray-50">
         <h1 className="text-3xl font-display font-bold text-snack-black uppercase mb-3">Commande</h1>
-        <p className="text-gray-500">Chargement de la commande…</p>
+        <LoadingSpinner label="Chargement de la commande…" size={28} />
       </div>
     );
   }

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { MENU_CATEGORIES } from '../data/menuData';
 import { MenuItem, MenuCategory, SAUCES } from '../types';
 import { Plus, Search } from 'lucide-react';
+import { prefersReducedMotion } from '@/src/lib/motion';
 
 interface MenuPageProps {
   openOrderModal: (item: MenuItem, category: MenuCategory) => void;
@@ -10,6 +11,7 @@ interface MenuPageProps {
 export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
   const [activeCategory, setActiveCategory] = useState(MENU_CATEGORIES[0].id);
   const [searchQuery, setSearchQuery] = useState('');
+  const reduceMotion = prefersReducedMotion();
 
   const scrollToCategory = (id: string) => {
     setActiveCategory(id);
@@ -99,7 +101,12 @@ export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {cat.items.map((item, idx) => {
                       return (
-                        <div key={idx} className="bg-white p-5 rounded-lg shadow-sm border border-gray-200 hover:border-snack-gold hover:scale-[1.02] hover:shadow-md transition-all duration-200 group flex flex-col justify-between h-full">
+                        <div
+                          key={idx}
+                          className={`bg-white p-5 rounded-lg shadow-sm border border-gray-200 group flex flex-col justify-between h-full ${
+                            reduceMotion ? 'transition-none' : 'transition-all duration-200 hover:border-snack-gold hover:shadow-md hover:-translate-y-1'
+                          }`}
+                        >
                           <div>
                             <div className="flex justify-between items-start mb-2">
                               <h3 className="font-bold text-lg text-snack-black group-hover:text-snack-gold transition-colors">

@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Menu, X, ShoppingBag } from 'lucide-react';
 import { Page } from '../types';
+import { motion } from 'framer-motion';
+import { prefersReducedMotion, motionSafeTransition } from '@/src/lib/motion';
 
 interface HeaderProps {
   currentPage: Page;
@@ -11,6 +13,9 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCount, toggleCart }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isBadgePopping, setIsBadgePopping] = useState(false);
+  const prevCountRef = useRef(cartCount);
+  const reduceMotion = prefersReducedMotion();
 
   const navLinks: { name: string; page: Page }[] = [
     { name: 'Accueil', page: 'home' },
@@ -23,6 +28,14 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
     navigateTo(page);
     setIsMenuOpen(false);
   };
+
+  useEffect(() => {
+    if (cartCount > prevCountRef.current && !reduceMotion) {
+      setIsBadgePopping(true);
+      window.setTimeout(() => setIsBadgePopping(false), 220);
+    }
+    prevCountRef.current = cartCount;
+  }, [cartCount, reduceMotion]);
 
   return (
     <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg min-h-[96px] sm:min-h-[104px]">
@@ -64,16 +77,26 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
               >
                   <ShoppingBag size={24} />
                   {cartCount > 0 && (
-                      <span className="absolute top-0 right-0 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center border border-snack-black">
-                      {cartCount}
-                      </span>
+                      <motion.span
+                        className="absolute top-0 right-0 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center border border-snack-black"
+                        animate={
+                          reduceMotion
+                            ? { scale: 1 }
+                            : isBadgePopping
+                            ? { scale: [1, 1.2, 1] }
+                            : { scale: 1 }
+                        }
+                        transition={reduceMotion ? { duration: 0 } : { ...motionSafeTransition, duration: 0.2 }}
+                      >
+                        {cartCount}
+                      </motion.span>
                   )}
               </button>
 
               {/* Commander Button - Navigates to Order Page */}
               <button 
                 onClick={() => handleNav('commander')}
-                className={`px-6 py-2.5 rounded font-display font-bold text-lg uppercase tracking-wide transition-all transform hover:-translate-y-0.5 shadow-lg ${
+                className={`px-6 py-2.5 rounded font-display font-bold text-lg uppercase tracking-wide transition-all transform shadow-lg glow-soft shine-sweep ${
                     currentPage === 'commander' 
                     ? 'bg-white text-snack-black' 
                     : 'bg-snack-gold hover:bg-white text-snack-black'
@@ -93,9 +116,19 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
             >
                <ShoppingBag size={30} />
                {cartCount > 0 && (
-                   <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center border border-snack-black">
+                   <motion.span
+                     className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center border border-snack-black"
+                     animate={
+                       reduceMotion
+                         ? { scale: 1 }
+                         : isBadgePopping
+                         ? { scale: [1, 1.2, 1] }
+                         : { scale: 1 }
+                     }
+                     transition={reduceMotion ? { duration: 0 } : { ...motionSafeTransition, duration: 0.2 }}
+                   >
                      {cartCount}
-                   </span>
+                   </motion.span>
                )}
             </button>
             <button 
@@ -131,7 +164,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
           ))}
           <button 
             onClick={() => handleNav('commander')}
-            className="w-full bg-snack-gold text-snack-black font-display font-bold text-xl uppercase tracking-wide py-4 text-center rounded mt-4 hover:bg-white transition-colors shadow-lg flex items-center justify-center gap-2"
+            className="w-full bg-snack-gold text-snack-black font-display font-bold text-xl uppercase tracking-wide py-4 text-center rounded mt-4 hover:bg-white transition-colors shadow-lg flex items-center justify-center gap-2 glow-soft shine-sweep"
           >
             <ShoppingBag size={20} />
             Commander

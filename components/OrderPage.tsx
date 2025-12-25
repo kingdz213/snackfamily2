@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { MENU_CATEGORIES } from '../data/menuData';
 import { MenuItem, MenuCategory } from '../types';
 import { Plus } from 'lucide-react';
+import { prefersReducedMotion } from '@/src/lib/motion';
 
 interface OrderPageProps {
   openOrderModal: (item: MenuItem, category: MenuCategory) => void;
@@ -9,6 +10,7 @@ interface OrderPageProps {
 
 export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
   const [activeCategory, setActiveCategory] = useState('assiettes');
+  const reduceMotion = prefersReducedMotion();
 
   const filteredCategory = MENU_CATEGORIES.find(c => c.id === activeCategory);
 
@@ -59,7 +61,9 @@ export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
                           return (
                             <div 
                                 key={idx}
-                                className={`text-left bg-white p-6 rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between h-full active:scale-[0.98] active:border-green-600 ${
+                                className={`text-left bg-white p-6 rounded-lg border border-gray-200 shadow-sm flex flex-col justify-between h-full ${
+                                    reduceMotion ? 'transition-none' : 'transition-all duration-200 hover:shadow-md hover:-translate-y-1'
+                                } ${reduceMotion ? '' : 'hover:border-snack-gold'} ${reduceMotion ? '' : 'active:scale-[0.98] active:border-green-600'} ${
                                     item.unavailable ? 'opacity-60 grayscale' : ''
                                 }`}
                             >
