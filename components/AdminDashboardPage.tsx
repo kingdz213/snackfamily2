@@ -63,19 +63,6 @@ export const AdminDashboardPage: React.FC = () => {
 
   const endpointBase = useMemo(() => resolveWorkerBaseUrl(), []);
 
-  useEffect(() => {
-    const stored = typeof window !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
-    if (stored) {
-      setToken(stored);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (token && orders.length === 0) {
-      void fetchOrders(true);
-    }
-  }, [fetchOrders, orders.length, token]);
-
   const persistToken = (value: string | null) => {
     setToken(value);
     if (typeof window === 'undefined') return;
@@ -114,6 +101,19 @@ export const AdminDashboardPage: React.FC = () => {
     },
     [cursor, endpointBase, token]
   );
+
+  useEffect(() => {
+    const stored = typeof window !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+    if (stored) {
+      setToken(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (token && orders.length === 0) {
+      void fetchOrders(true);
+    }
+  }, [fetchOrders, orders.length, token]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
