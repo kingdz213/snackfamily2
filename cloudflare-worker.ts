@@ -4,9 +4,10 @@
 // Paiement CASH = géré côté front (pas besoin du Worker). Le Worker sert uniquement pour Stripe.
 
 interface Env {
-  STRIPE_SECRET_KEY: string;
-  DEFAULT_ORIGIN?: string;
   ORDERS_KV?: KVNamespace;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  DEFAULT_ORIGIN?: string;
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
@@ -81,11 +82,11 @@ function text(data: string, status = 200, headers: Record<string, string> = {}) 
 }
 
 function hasOrdersKv(env: Env) {
-  return Boolean(env.ORDERS_KV && typeof env.ORDERS_KV.get === "function");
+  return Boolean(env.ORDERS_KV);
 }
 
 function hasStripeSecret(env: Env) {
-  return Boolean(env.STRIPE_SECRET_KEY && String(env.STRIPE_SECRET_KEY).trim());
+  return Boolean(env.STRIPE_SECRET_KEY);
 }
 
 // Accepte EUROS (14.50) OU CENTIMES (1450)
@@ -210,6 +211,7 @@ export default {
   async fetch(request: Request, env: Env) {
     const requestOrigin = normalizeOrigin(request.headers.get("Origin"));
     const cors = corsHeadersFor(requestOrigin);
+    const origin = env.DEFAULT_ORIGIN ?? FALLBACK_ORIGIN;
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
@@ -223,7 +225,7 @@ export default {
           ok: true,
           hasOrdersKV: hasOrdersKv(env),
           hasStripeSecret: hasStripeSecret(env),
-          origin: env.DEFAULT_ORIGIN || FALLBACK_ORIGIN,
+          origin,
         },
         200,
         cors
@@ -286,7 +288,7 @@ export default {
 
       const checkoutOrigin = isAllowedOrigin(requestOrigin)
         ? requestOrigin
-        : (env.DEFAULT_ORIGIN || FALLBACK_ORIGIN);
+        : origin;
 
       const result = await createCheckoutSession({
         items: validation.items,

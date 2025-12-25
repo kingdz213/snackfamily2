@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:worker": "wrangler deploy --config wrangler.toml",
+    "deploy:worker:versions": "wrangler versions upload --config wrangler.toml"
   },
   "dependencies": {
     "@stripe/stripe-js": "^2.0.0",
