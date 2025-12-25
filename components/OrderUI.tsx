@@ -1,6 +1,6 @@
 // components/OrderUI.tsx
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, MapPin, Banknote } from 'lucide-react';
+import { X, Minus, Plus, ShoppingBag, Trash2, CreditCard, AlertTriangle, MapPin, Banknote, CalendarClock } from 'lucide-react';
 import { MenuItem, MenuCategory, SAUCES, SUPPLEMENTS, VEGGIES, CartItem } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { startCashOrder, startCheckout } from '../lib/stripe';
@@ -10,6 +10,7 @@ import { getRecommendations, MIN_ORDER_EUR } from '../lib/recommendations';
 import { MENU_CATEGORIES } from '../data/menuData';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { prefersReducedMotion, motionSafeHover, motionSafeTap, motionSafeTransition } from '@/src/lib/motion';
+import { useAuth } from '@/src/auth/AuthProvider';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -43,6 +44,50 @@ type DeliveryInfo = {
   note: string;
 };
 
+type DeliveryWindow = {
+  start: string;
+  end: string;
+};
+
+const DELIVERY_WINDOWS: Record<number, DeliveryWindow | null> = {
+  0: { start: '16:30', end: '23:00' },
+  1: null,
+  2: { start: '11:00', end: '23:00' },
+  3: { start: '11:00', end: '23:00' },
+  4: { start: '11:00', end: '23:00' },
+  5: { start: '11:00', end: '23:00' },
+  6: { start: '11:00', end: '23:00' },
+};
+
+const DELIVERY_STEP_MINUTES = 15;
+
+const pad = (value: number) => String(value).padStart(2, '0');
+
+const formatDateTimeLocal = (date: Date) =>
+  `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(
+    date.getMinutes()
+  )}`;
+
+const minutesFromTime = (time: string) => {
+  const [hour, minute] = time.split(':').map((part) => Number(part));
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
+};
+
+const roundToStep = (date: Date, stepMinutes: number) => {
+  const stepMs = stepMinutes * 60 * 1000;
+  return new Date(Math.round(date.getTime() / stepMs) * stepMs);
+};
+
+const formatSlotLabel = (date: Date) =>
+  date.toLocaleString('fr-BE', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
 function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const R = 6371;
   const toRad = (v: number) => (v * Math.PI) / 180;
@@ -69,6 +114,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   clearCart,
   screenW,
 }) => {
+  const { getIdToken, profile } = useAuth();
   const [quantity, setQuantity] = useState(1);
   const [selectedSauce, setSelectedSauce] = useState<string>('Sans sauce');
   const [selectedSupplements, setSelectedSupplements] = useState<string[]>([]);
@@ -82,6 +128,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [deliveryFormError, setDeliveryFormError] = useState<string | null>(null);
   const [showDistanceBanner, setShowDistanceBanner] = useState(false);
   const [lastCashWhatsAppUrl, setLastCashWhatsAppUrl] = useState<string | null>(null);
+  const [deliveryScheduleMode, setDeliveryScheduleMode] = useState<'ASAP' | 'SCHEDULED'>('ASAP');
+  const [desiredDeliveryInputValue, setDesiredDeliveryInputValue] = useState('');
+  const [desiredDeliveryAt, setDesiredDeliveryAt] = useState<string | null>(null);
+  const [desiredDeliverySlotLabel, setDesiredDeliverySlotLabel] = useState<string | null>(null);
+  const [desiredDeliveryError, setDesiredDeliveryError] = useState<string | null>(null);
 
   // Paiement
   const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'cash'>('stripe');
@@ -151,6 +202,18 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       warnDev('[OrderUI] Failed to load delivery info', error);
     }
   }, []);
+
+  useEffect(() => {
+    if (!profile) return;
+    setDeliveryInfo((prev) => ({
+      ...prev,
+      name: prev.name || profile.name || '',
+      phone: prev.phone || profile.phone || '',
+      address: prev.address || profile.address || '',
+      postalCode: prev.postalCode || profile.postalCode || '',
+      city: prev.city || profile.city || '',
+    }));
+  }, [profile]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -435,6 +498,83 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setDeliveryFormError(null);
   };
 
+  const handleScheduleModeChange = (mode: 'ASAP' | 'SCHEDULED') => {
+    setDeliveryScheduleMode(mode);
+    if (mode === 'ASAP') {
+      setDesiredDeliveryInputValue('');
+      setDesiredDeliveryAt(null);
+      setDesiredDeliverySlotLabel(null);
+      setDesiredDeliveryError(null);
+    }
+  };
+
+  const handleScheduleInputChange = (value: string) => {
+    setDesiredDeliveryInputValue(value);
+    if (!value) {
+      setDesiredDeliveryAt(null);
+      setDesiredDeliverySlotLabel(null);
+      setDesiredDeliveryError(null);
+      return;
+    }
+    const rawDate = new Date(value);
+    if (Number.isNaN(rawDate.getTime())) {
+      setDesiredDeliveryAt(null);
+      setDesiredDeliverySlotLabel(null);
+      setDesiredDeliveryError('Merci de choisir une date valide.');
+      return;
+    }
+    const rounded = roundToStep(rawDate, DELIVERY_STEP_MINUTES);
+    setDesiredDeliveryInputValue(formatDateTimeLocal(rounded));
+    setDesiredDeliveryAt(rounded.toISOString());
+    setDesiredDeliverySlotLabel(formatSlotLabel(rounded));
+    setDesiredDeliveryError(null);
+  };
+
+  const validateScheduledDelivery = () => {
+    if (deliveryScheduleMode === 'ASAP') {
+      setDesiredDeliveryError(null);
+      return true;
+    }
+
+    if (!desiredDeliveryAt) {
+      setDesiredDeliveryError('Merci de choisir une date et une heure.');
+      return false;
+    }
+
+    const date = new Date(desiredDeliveryAt);
+    if (Number.isNaN(date.getTime())) {
+      setDesiredDeliveryError('Date invalide.');
+      return false;
+    }
+
+    if (date.getTime() < Date.now()) {
+      setDesiredDeliveryError('Merci de choisir un horaire futur.');
+      return false;
+    }
+
+    const window = DELIVERY_WINDOWS[date.getDay()] ?? null;
+    if (!window) {
+      setDesiredDeliveryError('Fermé.');
+      return false;
+    }
+
+    const startMinutes = minutesFromTime(window.start);
+    const endMinutes = minutesFromTime(window.end);
+    if (startMinutes == null || endMinutes == null) {
+      setDesiredDeliveryError('Horaires indisponibles pour ce jour.');
+      return false;
+    }
+
+    const currentMinutes = date.getHours() * 60 + date.getMinutes();
+    if (currentMinutes < startMinutes || currentMinutes > endMinutes) {
+      setDesiredDeliveryError(`Merci de choisir une heure entre ${window.start} et ${window.end}.`);
+      return false;
+    }
+
+    setDesiredDeliveryError(null);
+    return true;
+  };
+
   const handleDistanceBannerAck = () => {
     setShowDistanceBanner(false);
 
@@ -467,6 +607,9 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   const validateBeforeCheckout = (): boolean => {
     if (!validateDeliveryForm()) {
+      return false;
+    }
+    if (!validateScheduledDelivery()) {
       return false;
     }
     if (cartItems.length === 0) {
@@ -507,12 +650,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         quantity: Math.max(1, Math.trunc(it.quantity)),
       }));
 
+      const firebaseIdToken = await getIdToken();
       await startCheckout({
         origin: window.location.origin,
         items,
         deliveryAddress: deliveryAddress.trim(),
         deliveryLat: Number(deliveryLat),
         deliveryLng: Number(deliveryLng),
+        desiredDeliveryAt: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliveryAt : null,
+        desiredDeliverySlotLabel: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliverySlotLabel : null,
+        firebaseIdToken: firebaseIdToken ?? undefined,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
@@ -537,12 +684,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         quantity: Math.max(1, Math.trunc(it.quantity)),
       }));
 
+      const firebaseIdToken = await getIdToken();
       const { orderId, adminHubUrl, publicOrderUrl } = await startCashOrder({
         origin: window.location.origin,
         items,
         deliveryAddress: formattedDeliveryAddress.trim(),
         deliveryLat: Number(deliveryLat),
         deliveryLng: Number(deliveryLng),
+        desiredDeliveryAt: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliveryAt : null,
+        desiredDeliverySlotLabel: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliverySlotLabel : null,
+        firebaseIdToken: firebaseIdToken ?? undefined,
       });
 
       const publicOrigin = resolvePublicOrigin() || window.location.origin;
@@ -554,6 +705,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         publicOrderUrl: verifyUrl,
         adminHubUrl,
         lines: buildOrderLines(),
+        desiredDeliveryAt: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliveryAt : null,
+        desiredDeliverySlotLabel: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliverySlotLabel : null,
       });
 
       const url = buildWhatsAppUrl(getWhatsAppPhone(), message);
@@ -1035,6 +1188,55 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                               placeholder="Infos complémentaires"
                               className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium min-h-[80px]"
                             />
+                          </div>
+
+                          <div className="space-y-2 rounded-lg border border-gray-200 bg-white p-3">
+                            <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                              Quand souhaitez-vous être livré ?
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleScheduleModeChange('ASAP')}
+                                className={`rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                                  deliveryScheduleMode === 'ASAP'
+                                    ? 'border-snack-gold bg-snack-gold/10 text-snack-black'
+                                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                                }`}
+                              >
+                                Dès que possible
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleScheduleModeChange('SCHEDULED')}
+                                className={`rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                                  deliveryScheduleMode === 'SCHEDULED'
+                                    ? 'border-snack-gold bg-snack-gold/10 text-snack-black'
+                                    : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                                }`}
+                              >
+                                Programmer
+                              </button>
+                            </div>
+                            {deliveryScheduleMode === 'SCHEDULED' && (
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-xs text-gray-500">
+                                  <CalendarClock size={14} />
+                                  Horaires livraison : mar-sam 11:00-23:00 • dim 16:30-23:00 • lun fermé
+                                </div>
+                                <input
+                                  type="datetime-local"
+                                  value={desiredDeliveryInputValue}
+                                  onChange={(event) => handleScheduleInputChange(event.target.value)}
+                                  min={formatDateTimeLocal(new Date())}
+                                  step={DELIVERY_STEP_MINUTES * 60}
+                                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold"
+                                />
+                                {desiredDeliveryError && (
+                                  <div className="text-xs text-red-600 font-semibold">{desiredDeliveryError}</div>
+                                )}
+                              </div>
+                            )}
                           </div>
 
                           <button

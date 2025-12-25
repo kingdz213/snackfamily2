@@ -1,39 +1,54 @@
 importScripts('https://www.gstatic.com/firebasejs/11.0.2/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/11.0.2/firebase-messaging-compat.js');
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDWHgqFOblVcyy14qROkGth-gUqCyug0AY",
-  authDomain: "snackfamily2.firebaseapp.com",
-  projectId: "snackfamily2",
-  storageBucket: "snackfamily2.firebasestorage.app",
-  messagingSenderId: "749971984886",
-  appId: "1:749971984886:web:9d9f262fe288178efb77d7",
-  measurementId: "G-CLR14N1PER"
-};
+const DEFAULT_WORKER_BASE_URL = 'https://delicate-meadow-9436snackfamily2payments.squidih5.workers.dev';
 
-firebase.initializeApp(firebaseConfig);
-const messaging = firebase.messaging();
-
-messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || 'Nouvelle commande';
-  const body = payload.notification?.body || 'Commande en attente';
-
-  const notificationOptions = {
-    body,
-    tag: 'new-order',
-    renotify: true,
-    vibrate: [200, 100, 200, 100, 200],
-    data: {
-      url: payload?.fcmOptions?.link || payload?.data?.url || '/admin'
+async function fetchFirebaseConfig() {
+  const candidates = [self.location.origin, DEFAULT_WORKER_BASE_URL];
+  for (const base of candidates) {
+    try {
+      const response = await fetch(`${base}/firebase-config`);
+      if (!response.ok) continue;
+      return await response.json();
+    } catch (error) {
+      // try next base
     }
-  };
+  }
+  return null;
+}
 
-  self.registration.showNotification(title, notificationOptions);
-});
+async function initMessaging() {
+  const config = await fetchFirebaseConfig();
+  if (!config || !config.apiKey || !config.projectId) {
+    return;
+  }
+
+  firebase.initializeApp(config);
+  const messaging = firebase.messaging();
+
+  messaging.onBackgroundMessage((payload) => {
+    const title = payload.notification?.title || 'Snack Family 2';
+    const body = payload.notification?.body || 'Mise à jour de commande.';
+
+    const notificationOptions = {
+      body,
+      tag: payload?.data?.orderId || 'order-status',
+      renotify: true,
+      vibrate: [200, 100, 200, 100, 200],
+      data: {
+        url: payload?.data?.url || '/',
+      },
+    };
+
+    self.registration.showNotification(title, notificationOptions);
+  });
+}
+
+void initMessaging();
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = event.notification?.data?.url || '/admin';
+  const targetUrl = event.notification?.data?.url || '/';
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

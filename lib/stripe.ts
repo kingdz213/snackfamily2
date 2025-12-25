@@ -12,6 +12,9 @@ export type CheckoutPayload = {
   deliveryAddress: string;
   deliveryLat: number;
   deliveryLng: number;
+  desiredDeliveryAt?: string | null;
+  desiredDeliverySlotLabel?: string | null;
+  firebaseIdToken?: string;
 };
 
 export type CashOrderPayload = {
@@ -20,6 +23,9 @@ export type CashOrderPayload = {
   deliveryLat: number;
   deliveryLng: number;
   origin: string;
+  desiredDeliveryAt?: string | null;
+  desiredDeliverySlotLabel?: string | null;
+  firebaseIdToken?: string;
 };
 
 export type CheckoutResponse = {

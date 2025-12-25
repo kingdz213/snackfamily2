@@ -9,6 +9,12 @@ interface Env {
   DEFAULT_ORIGIN?: string;
   ADMIN_PIN?: string;
   ADMIN_SIGNING_SECRET?: string;
+  FIREBASE_API_KEY?: string;
+  FIREBASE_PROJECT_ID?: string;
+  FIREBASE_SERVICE_ACCOUNT_JSON?: string;
+  FIREBASE_AUTH_DOMAIN?: string;
+  FIREBASE_MESSAGING_SENDER_ID?: string;
+  FIREBASE_APP_ID?: string;
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
@@ -55,7 +61,7 @@ function corsHeadersFor(origin: string) {
   const allowed = isAllowedOrigin(origin) ? origin : FALLBACK_ORIGIN;
   return {
     "Access-Control-Allow-Origin": allowed,
-    "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
+    "Access-Control-Allow-Methods": "POST, OPTIONS, GET, DELETE",
     "Access-Control-Allow-Headers": "Content-Type, X-ADMIN-PIN, Authorization",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
@@ -82,6 +88,350 @@ function hasStripeSecret(env: Env) {
 
 function hasWebhookSecret(env: Env) {
   return Boolean(env.STRIPE_WEBHOOK_SECRET);
+}
+
+function getFirebaseApiKey(env: Env) {
+  const key = env.FIREBASE_API_KEY?.trim();
+  return key && key.length > 0 ? key : null;
+}
+
+function getFirebaseProjectId(env: Env) {
+  const value = env.FIREBASE_PROJECT_ID?.trim();
+  return value && value.length > 0 ? value : null;
+}
+
+type ServiceAccount = {
+  client_email: string;
+  private_key: string;
+  project_id?: string;
+};
+
+let cachedServiceAccount: ServiceAccount | null = null;
+
+function getServiceAccount(env: Env): ServiceAccount | null {
+  if (cachedServiceAccount) return cachedServiceAccount;
+  const raw = env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as ServiceAccount;
+    if (!parsed.client_email || !parsed.private_key) return null;
+    cachedServiceAccount = parsed;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function getFirebaseAuthDomain(env: Env) {
+  const value = env.FIREBASE_AUTH_DOMAIN?.trim();
+  return value && value.length > 0 ? value : null;
+}
+
+function getFirebaseMessagingSenderId(env: Env) {
+  const value = env.FIREBASE_MESSAGING_SENDER_ID?.trim();
+  return value && value.length > 0 ? value : null;
+}
+
+function getFirebaseAppId(env: Env) {
+  const value = env.FIREBASE_APP_ID?.trim();
+  return value && value.length > 0 ? value : null;
+}
+
+function extractBearerToken(request: Request) {
+  const header = request.headers.get("Authorization") || "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+async function lookupFirebaseUid(idToken: string, apiKey: string) {
+  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken }),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const data: any = await response.json().catch(() => null);
+  const localId = data?.users?.[0]?.localId;
+  return typeof localId === "string" && localId.length > 0 ? localId : null;
+}
+
+function userOrdersKey(uid: string) {
+  return `user_orders:${uid}`;
+}
+
+async function readUserOrders(env: Env, uid: string): Promise<string[]> {
+  if (!env.ORDERS_KV) throw new Error("ORDERS_KV not bound");
+  const raw = await env.ORDERS_KV.get(userOrdersKey(uid));
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+async function appendUserOrder(env: Env, uid: string, orderId: string) {
+  const existing = await readUserOrders(env, uid);
+  if (!existing.includes(orderId)) {
+    existing.push(orderId);
+  }
+  await env.ORDERS_KV!.put(userOrdersKey(uid), JSON.stringify(existing));
+}
+
+async function removeUserOrder(env: Env, uid: string, orderId: string) {
+  const existing = await readUserOrders(env, uid);
+  const next = existing.filter((id) => id !== orderId);
+  await env.ORDERS_KV!.put(userOrdersKey(uid), JSON.stringify(next));
+}
+
+function normalizePrivateKey(key: string) {
+  return key.replace(/\\n/g, "\n");
+}
+
+function pemToArrayBuffer(pem: string) {
+  const normalized = pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s+/g, "");
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+const tokenCache = new Map<string, { token: string; exp: number }>();
+
+async function getGoogleAccessToken(env: Env, scope: string): Promise<string | null> {
+  const serviceAccount = getServiceAccount(env);
+  if (!serviceAccount) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const cached = tokenCache.get(scope);
+  if (cached && cached.exp - 60 > now) {
+    return cached.token;
+  }
+
+  const header = { alg: "RS256", typ: "JWT" };
+  const payload = {
+    iss: serviceAccount.client_email,
+    sub: serviceAccount.client_email,
+    aud: "https://oauth2.googleapis.com/token",
+    scope,
+    iat: now,
+    exp: now + 3600,
+  };
+
+  const encodedHeader = base64UrlEncodeString(JSON.stringify(header));
+  const encodedPayload = base64UrlEncodeString(JSON.stringify(payload));
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const keyData = pemToArrayBuffer(normalizePrivateKey(serviceAccount.private_key));
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8",
+    keyData,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    new TextEncoder().encode(signingInput)
+  );
+  const jwt = `${signingInput}.${base64UrlEncodeBytes(new Uint8Array(signature))}`;
+
+  const form = new URLSearchParams();
+  form.set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer");
+  form.set("assertion", jwt);
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+
+  if (!response.ok) return null;
+  const data: any = await response.json().catch(() => null);
+  const token = data?.access_token;
+  const expiresIn = Number(data?.expires_in ?? 0);
+  if (!token || !Number.isFinite(expiresIn) || expiresIn <= 0) return null;
+  tokenCache.set(scope, { token, exp: now + expiresIn });
+  return token;
+}
+
+function statusNotificationCopy(status: OrderStatus) {
+  switch (status) {
+    case "RECEIVED":
+      return "Commande reçue";
+    case "IN_PREPARATION":
+      return "Commande en préparation";
+    case "OUT_FOR_DELIVERY":
+      return "Commande en cours de livraison";
+    case "DELIVERED":
+      return "Commande livrée — merci !";
+    case "PENDING_PAYMENT":
+      return "Commande enregistrée";
+    case "PAID_ONLINE":
+      return "Commande confirmée";
+    default:
+      return "Mise à jour de commande";
+  }
+}
+
+async function sendOrderStatusPush(env: Env, order: OrderRecord, overrideBody?: string) {
+  const projectId = getFirebaseProjectId(env) || getServiceAccount(env)?.project_id || null;
+  if (!projectId) return;
+  const accessToken = await getGoogleAccessToken(env, "https://www.googleapis.com/auth/firebase.messaging");
+  if (!accessToken) return;
+
+  const body = overrideBody ?? statusNotificationCopy(order.status);
+  const origin = order.origin || env.DEFAULT_ORIGIN || FALLBACK_ORIGIN;
+  const tokens = order.userUid ? await listUserFcmTokens(env, order.userUid) : [];
+  if (tokens.length === 0) return;
+
+  await Promise.all(
+    tokens.map(async (token) => {
+      const response = await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: {
+            token,
+            notification: {
+              title: "Snack Family 2 — Statut mis à jour",
+              body: `Votre commande #${order.id} est maintenant : ${body}`,
+            },
+            data: {
+              orderId: order.id,
+              status: order.status,
+              url: `${origin}/mes-commandes/${order.id}`,
+            },
+          },
+        }),
+      });
+
+      if (!response.ok && order.userUid) {
+        await deleteUserFcmToken(env, order.userUid, token);
+      }
+    })
+  );
+}
+
+async function firestoreRequest(env: Env, path: string, init?: RequestInit): Promise<Response | null> {
+  const projectId = getFirebaseProjectId(env) || getServiceAccount(env)?.project_id || null;
+  if (!projectId) return null;
+  const accessToken = await getGoogleAccessToken(env, "https://www.googleapis.com/auth/datastore");
+  if (!accessToken) return null;
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${path}`;
+  return fetch(url, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
+    },
+  });
+}
+
+function toFirestoreValue(value: any): any {
+  if (value === null) return { nullValue: null };
+  if (typeof value === "string") return { stringValue: value };
+  if (typeof value === "number") {
+    if (Number.isInteger(value)) return { integerValue: String(value) };
+    return { doubleValue: value };
+  }
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (Array.isArray(value)) {
+    return { arrayValue: { values: value.map((item) => toFirestoreValue(item)) } };
+  }
+  if (typeof value === "object" && value) {
+    const fields: Record<string, any> = {};
+    Object.entries(value).forEach(([key, val]) => {
+      if (val === undefined) return;
+      fields[key] = toFirestoreValue(val);
+    });
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(value) };
+}
+
+async function upsertOrderInFirestore(env: Env, order: OrderRecord) {
+  if (!order.userUid) return;
+  const response = await firestoreRequest(env, `orders/${order.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      fields: {
+        userId: toFirestoreValue(order.userUid),
+        status: toFirestoreValue(order.status),
+        createdAt: toFirestoreValue(order.createdAt),
+        updatedAt: toFirestoreValue(order.statusUpdatedAt || order.createdAt),
+        paymentMethod: toFirestoreValue(order.paymentMethod),
+        total: toFirestoreValue(order.total),
+        subtotal: toFirestoreValue(order.subtotal),
+        deliveryFee: toFirestoreValue(order.deliveryFee),
+        deliveryAddress: toFirestoreValue(order.deliveryAddress),
+        desiredDeliveryAt: toFirestoreValue(order.desiredDeliveryAt ?? null),
+        desiredDeliverySlotLabel: toFirestoreValue(order.desiredDeliverySlotLabel ?? null),
+        items: toFirestoreValue(
+          (order.items || []).map((item) => ({
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price,
+          }))
+        ),
+      },
+    }),
+  });
+  if (!response || response.ok) return;
+  throw new Error("Firestore upsert failed");
+}
+
+async function updateOrderStatusInFirestore(env: Env, order: OrderRecord) {
+  if (!order.userUid) return;
+  const response = await firestoreRequest(env, `orders/${order.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      fields: {
+        status: toFirestoreValue(order.status),
+        updatedAt: toFirestoreValue(order.statusUpdatedAt || order.createdAt),
+      },
+    }),
+  });
+  if (!response || response.ok) return;
+  throw new Error("Firestore update failed");
+}
+
+async function deleteOrderFromFirestore(env: Env, orderId: string) {
+  const response = await firestoreRequest(env, `orders/${orderId}`, { method: "DELETE" });
+  if (!response || response.ok || response.status === 404) return;
+  throw new Error("Firestore delete failed");
+}
+
+async function listUserFcmTokens(env: Env, uid: string): Promise<string[]> {
+  const response = await firestoreRequest(env, `users/${uid}/fcmTokens`, { method: "GET" });
+  if (!response || !response.ok) return [];
+  const data: any = await response.json().catch(() => null);
+  const docs = Array.isArray(data?.documents) ? data.documents : [];
+  return docs
+    .map((doc: any) => {
+      const name: string | undefined = doc?.name;
+      if (!name) return null;
+      const parts = name.split("/");
+      return parts[parts.length - 1] || null;
+    })
+    .filter((token: string | null): token is string => Boolean(token));
+}
+
+async function deleteUserFcmToken(env: Env, uid: string, token: string) {
+  const response = await firestoreRequest(env, `users/${uid}/fcmTokens/${token}`, { method: "DELETE" });
+  if (!response || response.ok || response.status === 404) return;
+  throw new Error("Firestore token delete failed");
 }
 
 // Accepte EUROS (14.50) OU CENTIMES (1450)
@@ -157,6 +507,9 @@ type OrderRecord = {
   stripeCheckoutSessionId?: string;
   adminHubUrl?: string;
   origin: string;
+  desiredDeliveryAt?: string;
+  desiredDeliverySlotLabel?: string;
+  userUid?: string;
 };
 
 function nowIso() {
@@ -465,6 +818,8 @@ type AdminOrderSummary = {
   amountDueCents: number;
   itemsCount: number;
   adminHubUrl?: string;
+  desiredDeliveryAt?: string;
+  desiredDeliverySlotLabel?: string;
 };
 
 function normalizePhone(value: string) {
@@ -508,6 +863,8 @@ function buildOrderSummary(order: OrderRecord): AdminOrderSummary {
     amountDueCents,
     itemsCount: Array.isArray(normalized.items) ? normalized.items.reduce((sum, item) => sum + (item?.quantity ?? 0), 0) : 0,
     adminHubUrl: normalized.adminHubUrl,
+    desiredDeliveryAt: normalized.desiredDeliveryAt,
+    desiredDeliverySlotLabel: normalized.desiredDeliverySlotLabel,
   };
 }
 
@@ -611,7 +968,31 @@ export default {
           hasOrdersKV: hasOrdersKv(env),
           hasStripeSecret: hasStripeSecret(env),
           hasWebhookSecret: hasWebhookSecret(env),
+          hasFirebaseProjectId: Boolean(getFirebaseProjectId(env)),
+          hasFirebaseServiceAccount: Boolean(getServiceAccount(env)),
           origin,
+        },
+        200,
+        cors
+      );
+    }
+
+      if (request.method === "GET" && url.pathname === "/firebase-config") {
+        const apiKey = getFirebaseApiKey(env);
+        const authDomain = getFirebaseAuthDomain(env);
+        const projectId = getFirebaseProjectId(env) || getServiceAccount(env)?.project_id || null;
+        const messagingSenderId = getFirebaseMessagingSenderId(env);
+        const appId = getFirebaseAppId(env);
+        if (!apiKey || !authDomain || !projectId || !messagingSenderId || !appId) {
+          return json({ error: "FIREBASE_CONFIG_MISSING" }, 500, cors);
+        }
+      return json(
+        {
+          apiKey,
+          authDomain,
+          projectId,
+          messagingSenderId,
+          appId,
         },
         200,
         cors
@@ -629,6 +1010,28 @@ export default {
 
         const validation = validateItems(body.items);
         if ("error" in validation) return json(validation, 400, cors);
+
+        const desiredDeliveryAtRaw = typeof body.desiredDeliveryAt === "string" ? body.desiredDeliveryAt : null;
+        const desiredDeliverySlotLabelRaw =
+          typeof body.desiredDeliverySlotLabel === "string" ? body.desiredDeliverySlotLabel.trim() : null;
+        if (desiredDeliveryAtRaw && Number.isNaN(Date.parse(desiredDeliveryAtRaw))) {
+          return json({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
+        }
+
+        const firebaseIdToken =
+          (typeof body.firebaseIdToken === "string" && body.firebaseIdToken.trim()) || extractBearerToken(request);
+        let userUid: string | undefined;
+        if (firebaseIdToken) {
+          const apiKey = getFirebaseApiKey(env);
+          if (!apiKey) {
+            return json({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
+          }
+          const uid = await lookupFirebaseUid(firebaseIdToken, apiKey);
+          if (!uid) {
+            return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+          }
+          userUid = uid;
+        }
 
         // Minimum 20€ hors livraison
         const sub = subtotalCents(validation.items);
@@ -697,9 +1100,20 @@ export default {
           status: "RECEIVED",
           adminHubUrl,
           origin: checkoutOrigin,
+          desiredDeliveryAt: desiredDeliveryAtRaw || undefined,
+          desiredDeliverySlotLabel: desiredDeliverySlotLabelRaw || undefined,
+          userUid,
         };
 
         await saveOrder(env, order);
+        if (userUid) {
+          await appendUserOrder(env, userUid, orderId);
+          try {
+            await upsertOrderInFirestore(env, order);
+          } catch {
+            // ignore firestore failure
+          }
+        }
         return json({ orderId, publicOrderUrl, adminHubUrl }, 200, cors);
       }
 
@@ -713,6 +1127,28 @@ export default {
 
         const validation = validateItems(body.items);
         if ("error" in validation) return json(validation, 400, cors);
+
+        const desiredDeliveryAtRaw = typeof body.desiredDeliveryAt === "string" ? body.desiredDeliveryAt : null;
+        const desiredDeliverySlotLabelRaw =
+          typeof body.desiredDeliverySlotLabel === "string" ? body.desiredDeliverySlotLabel.trim() : null;
+        if (desiredDeliveryAtRaw && Number.isNaN(Date.parse(desiredDeliveryAtRaw))) {
+          return json({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
+        }
+
+        const firebaseIdToken =
+          (typeof body.firebaseIdToken === "string" && body.firebaseIdToken.trim()) || extractBearerToken(request);
+        let userUid: string | undefined;
+        if (firebaseIdToken) {
+          const apiKey = getFirebaseApiKey(env);
+          if (!apiKey) {
+            return json({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
+          }
+          const uid = await lookupFirebaseUid(firebaseIdToken, apiKey);
+          if (!uid) {
+            return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+          }
+          userUid = uid;
+        }
 
         // Minimum 20€ hors livraison
         const sub = subtotalCents(validation.items);
@@ -780,9 +1216,20 @@ export default {
           status: "PENDING_PAYMENT",
           adminHubUrl,
           origin: checkoutOrigin,
+          desiredDeliveryAt: desiredDeliveryAtRaw || undefined,
+          desiredDeliverySlotLabel: desiredDeliverySlotLabelRaw || undefined,
+          userUid,
         };
 
         await saveOrder(env, order);
+        if (userUid) {
+          await appendUserOrder(env, userUid, orderId);
+          try {
+            await upsertOrderInFirestore(env, order);
+          } catch {
+            // ignore firestore failure
+          }
+        }
 
         const result = await createCheckoutSession({
           items: validation.items,
@@ -843,6 +1290,11 @@ export default {
               existing.statusUpdatedAt = nowIso();
               existing.stripeCheckoutSessionId = existing.stripeCheckoutSessionId ?? event?.data?.object?.id;
               await saveOrder(env, existing);
+              try {
+                await updateOrderStatusInFirestore(env, existing);
+              } catch {
+                // ignore firestore failure
+              }
             }
           }
         }
@@ -937,6 +1389,8 @@ export default {
               phone: order.customerPhone ?? "",
               notes: order.notes ?? "",
               adminHubUrl: order.adminHubUrl,
+              desiredDeliveryAt: order.desiredDeliveryAt,
+              desiredDeliverySlotLabel: order.desiredDeliverySlotLabel,
             },
             summary: buildOrderSummary(order),
           },
@@ -970,8 +1424,47 @@ export default {
         order.status = status;
         order.statusUpdatedAt = nowIso();
         await saveOrder(env, order);
+        try {
+          await updateOrderStatusInFirestore(env, order);
+        } catch {
+          // ignore firestore failure
+        }
+
+        try {
+          await sendOrderStatusPush(env, order);
+        } catch {
+          // ignore push failures
+        }
 
         return json({ ok: true, summary: buildOrderSummary(order) }, 200, cors);
+      }
+
+      if (request.method === "DELETE" && url.pathname.startsWith("/admin/orders/")) {
+        const auth = await verifyAdminRequest(request, env);
+        if (!auth.ok) {
+          return json({ error: auth.error, message: auth.message }, 401, cors);
+        }
+        const match = url.pathname.match(/^\/admin\/orders\/([^/]+)$/);
+        const orderId = match?.[1];
+        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+
+        const order = await readOrder(env, orderId);
+        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+
+        if (order.userUid) {
+          await removeUserOrder(env, order.userUid, orderId);
+        }
+        try {
+          await deleteOrderFromFirestore(env, orderId);
+        } catch {
+          // ignore firestore failure
+        }
+        if (order.stripeCheckoutSessionId) {
+          await env.ORDERS_KV!.delete(`order:session:${order.stripeCheckoutSessionId}`);
+        }
+        await env.ORDERS_KV!.delete(`order:${orderId}`);
+
+        return json({ ok: true }, 200, cors);
       }
 
       if (request.method === "POST" && url.pathname === "/admin/order-action") {
@@ -1015,6 +1508,16 @@ export default {
             order.status = "IN_PREPARATION";
             order.statusUpdatedAt = nowIso();
             await saveOrder(env, order);
+            try {
+              await updateOrderStatusInFirestore(env, order);
+            } catch {
+              // ignore firestore failure
+            }
+            try {
+              await sendOrderStatusPush(env, order);
+            } catch {
+              // ignore push failures
+            }
           }
 
           const deliveredExp = Date.now() + 24 * 60 * 60 * 1000;
@@ -1041,6 +1544,16 @@ export default {
           order.status = "DELIVERED";
           order.statusUpdatedAt = nowIso();
           await saveOrder(env, order);
+          try {
+            await updateOrderStatusInFirestore(env, order);
+          } catch {
+            // ignore firestore failure
+          }
+          try {
+            await sendOrderStatusPush(env, order);
+          } catch {
+            // ignore push failures
+          }
         }
 
         return json(
@@ -1107,12 +1620,94 @@ export default {
         order.status = status;
         order.statusUpdatedAt = nowIso();
         await saveOrder(env, order);
+        try {
+          await updateOrderStatusInFirestore(env, order);
+        } catch {
+          // ignore firestore failure
+        }
+
+        try {
+          await sendOrderStatusPush(env, order);
+        } catch {
+          // ignore push failures
+        }
 
         return json(
           { ok: true, status: order.status },
           200,
           cors
         );
+      }
+
+      if (request.method === "DELETE" && url.pathname.startsWith("/api/admin/orders/")) {
+        if (!getAdminPin(env)) {
+          return json({ error: "ADMIN_PIN_MISSING", message: "ADMIN_PIN not configured." }, 500, cors);
+        }
+        const match = url.pathname.match(/^\/api\/admin\/orders\/([^/]+)$/);
+        const orderId = match?.[1];
+        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        const pin = extractAdminPin(request, url);
+        if (!isAdminPinValid(env, pin)) {
+          return json({ error: "UNAUTHORIZED", message: "Admin PIN required." }, 401, cors);
+        }
+
+        const order = await readOrder(env, orderId);
+        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+
+        if (order.userUid) {
+          await removeUserOrder(env, order.userUid, orderId);
+        }
+        try {
+          await deleteOrderFromFirestore(env, orderId);
+        } catch {
+          // ignore firestore failure
+        }
+        if (order.stripeCheckoutSessionId) {
+          await env.ORDERS_KV!.delete(`order:session:${order.stripeCheckoutSessionId}`);
+        }
+        await env.ORDERS_KV!.delete(`order:${orderId}`);
+
+        return json({ ok: true }, 200, cors);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/my-orders") {
+        const token = extractBearerToken(request);
+        if (!token) {
+          return json({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
+        }
+        const apiKey = getFirebaseApiKey(env);
+        if (!apiKey) {
+          return json({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
+        }
+        const uid = await lookupFirebaseUid(token, apiKey);
+        if (!uid) {
+          return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+        }
+
+        const orderIds = await readUserOrders(env, uid);
+        if (orderIds.length === 0) {
+          return json({ orders: [] }, 200, cors);
+        }
+
+        const records = await Promise.all(orderIds.map((id) => readOrder(env, id)));
+        const orders = records
+          .filter((order): order is OrderRecord => Boolean(order))
+          .map((order) => {
+            const normalized = normalizeOrderStatus(order);
+            return {
+              id: normalized.id,
+              status: normalized.status,
+              createdAt: normalized.createdAt,
+              total: normalized.total,
+              paymentMethod: normalized.paymentMethod,
+              deliveryAddress: normalized.deliveryAddress,
+              desiredDeliveryAt: normalized.desiredDeliveryAt ?? null,
+              desiredDeliverySlotLabel: normalized.desiredDeliverySlotLabel ?? null,
+            };
+          })
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+
+        return json({ orders }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/api/orders/")) {
@@ -1130,15 +1725,17 @@ export default {
             subtotal: order.subtotal,
             deliveryFee: order.deliveryFee,
             total: order.total,
-          deliveryAddress: order.deliveryAddress,
-          paymentMethod: order.paymentMethod,
-          status: order.status,
-          statusUpdatedAt: order.statusUpdatedAt,
-          adminHubUrl: order.adminHubUrl,
-        },
-        200,
-        cors
-      );
+            deliveryAddress: order.deliveryAddress,
+            paymentMethod: order.paymentMethod,
+            status: order.status,
+            statusUpdatedAt: order.statusUpdatedAt,
+            adminHubUrl: order.adminHubUrl,
+            desiredDeliveryAt: order.desiredDeliveryAt,
+            desiredDeliverySlotLabel: order.desiredDeliverySlotLabel,
+          },
+          200,
+          cors
+        );
       }
 
       if (request.method === "GET" && (url.pathname.startsWith("/order/") || url.pathname.startsWith("/orders/"))) {
@@ -1158,15 +1755,17 @@ export default {
             subtotal: order.subtotal,
             deliveryFee: order.deliveryFee,
             total: order.total,
-          deliveryAddress: order.deliveryAddress,
-          paymentMethod: order.paymentMethod,
-          status: order.status,
-          statusUpdatedAt: order.statusUpdatedAt,
-          adminHubUrl: order.adminHubUrl,
-        },
-        200,
-        cors
-      );
+            deliveryAddress: order.deliveryAddress,
+            paymentMethod: order.paymentMethod,
+            status: order.status,
+            statusUpdatedAt: order.statusUpdatedAt,
+            adminHubUrl: order.adminHubUrl,
+            desiredDeliveryAt: order.desiredDeliveryAt,
+            desiredDeliverySlotLabel: order.desiredDeliverySlotLabel,
+          },
+          200,
+          cors
+        );
       }
 
       if (request.method === "GET" && url.pathname === "/order-by-session") {

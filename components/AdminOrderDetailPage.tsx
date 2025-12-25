@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
 import { OrderTimeline } from './OrderTimeline';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
@@ -40,6 +41,8 @@ type OrderDetail = {
   phone?: string;
   notes?: string;
   adminHubUrl?: string;
+  desiredDeliveryAt?: string | null;
+  desiredDeliverySlotLabel?: string | null;
 };
 
 const TOKEN_STORAGE_KEY = 'sf2_admin_token';
@@ -69,6 +72,9 @@ export const AdminOrderDetailPage: React.FC<AdminOrderDetailPageProps> = ({ navi
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteToast, setDeleteToast] = useState<string | null>(null);
 
   const endpointBase = useMemo(() => resolveWorkerBaseUrl(), []);
 
@@ -142,6 +148,34 @@ export const AdminOrderDetailPage: React.FC<AdminOrderDetailPageProps> = ({ navi
     }
   };
 
+  const handleDelete = async () => {
+    if (!token || !order) return;
+    setError(null);
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`${endpointBase}/admin/orders/${encodeURIComponent(order.id)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = payload?.message || 'Suppression impossible.';
+        throw new Error(message);
+      }
+      setDeleteToast('Commande supprimée ✅');
+      window.setTimeout(() => {
+        navigateTo('admin');
+      }, 800);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Suppression impossible.');
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   if (!token) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center bg-snack-light px-4 py-16">
@@ -196,12 +230,21 @@ export const AdminOrderDetailPage: React.FC<AdminOrderDetailPageProps> = ({ navi
               Statut : <span className="font-semibold text-snack-black">{statusLabels[order.status]}</span>
             </p>
           </div>
-          <button
-            onClick={() => navigateTo('admin')}
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 hover:border-snack-gold hover:text-snack-black transition-colors"
-          >
-            Retour au tableau
-          </button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <button
+              onClick={() => navigateTo('admin')}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 hover:border-snack-gold hover:text-snack-black transition-colors"
+            >
+              Retour au tableau
+            </button>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:border-red-400 hover:text-red-700 transition-colors"
+            >
+              <Trash2 size={16} />
+              Supprimer
+            </button>
+          </div>
         </div>
 
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
@@ -209,6 +252,17 @@ export const AdminOrderDetailPage: React.FC<AdminOrderDetailPageProps> = ({ navi
         <div className="rounded-2xl border border-gray-200 bg-white p-5 space-y-4 shadow-sm">
           <h2 className="text-lg font-semibold text-snack-black">Adresse</h2>
           <p className="text-gray-700">{order.deliveryAddress}</p>
+          {(order.desiredDeliveryAt || order.desiredDeliverySlotLabel) && (
+            <p className="text-sm text-gray-600">
+              Heure souhaitée :{' '}
+              {order.desiredDeliverySlotLabel ||
+                new Date(order.desiredDeliveryAt ?? '').toLocaleString('fr-BE', {
+                  weekday: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+            </p>
+          )}
           {order.customerName && <p className="text-sm text-gray-600">Client : {order.customerName}</p>}
           {order.phone ? (
             <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -305,6 +359,37 @@ export const AdminOrderDetailPage: React.FC<AdminOrderDetailPageProps> = ({ navi
           )}
         </div>
       </div>
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+            <h2 className="text-xl font-display font-bold text-snack-black">Supprimer la commande ?</h2>
+            <p className="text-sm text-gray-600">Supprimer définitivement cette commande ? Cette action est irréversible.</p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 hover:border-snack-gold hover:text-snack-black transition-colors"
+                disabled={isDeleting}
+              >
+                Annuler
+              </button>
+              <button
+                onClick={handleDelete}
+                className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 transition-colors disabled:opacity-70"
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Suppression...' : 'Supprimer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteToast && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 rounded-full bg-snack-black px-4 py-2 text-xs font-bold uppercase tracking-wide text-snack-gold shadow-lg">
+          {deleteToast}
+        </div>
+      )}
     </div>
   );
 };

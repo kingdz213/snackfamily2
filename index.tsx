@@ -2,6 +2,7 @@ import React from 'react';
 import './src/index.css';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { AuthProvider } from './src/auth/AuthProvider';
 
 console.log("App initializing...");
 
@@ -31,7 +32,9 @@ if (container) {
     const root = createRoot(container);
     root.render(
       <React.StrictMode>
-        <App />
+        <AuthProvider>
+          <App />
+        </AuthProvider>
       </React.StrictMode>
     );
     console.log("App rendered successfully.");

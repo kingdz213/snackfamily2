@@ -14,7 +14,11 @@ import { OrderUI } from './components/OrderUI';
 import { AdminOrderHubPage } from './components/AdminOrderHubPage';
 import { AdminDashboardPage } from './components/AdminDashboardPage';
 import { AdminOrderDetailPage } from './components/AdminOrderDetailPage';
+import { AccountPage } from './components/AccountPage';
+import { MyOrdersPage } from './components/MyOrdersPage';
+import { MyOrderDetailPage } from './components/MyOrderDetailPage';
 import { CartItem, MenuItem, MenuCategory, Page } from './types';
+import { subscribeToForegroundMessages } from './lib/notifications';
 
 const pageToPath: Record<Page, string> = {
   home: '/',
@@ -28,6 +32,9 @@ const pageToPath: Record<Page, string> = {
   success: '/success',
   cancel: '/cancel',
   orderStatus: '/order',
+  account: '/compte',
+  myOrders: '/mes-commandes',
+  myOrderDetail: '/mes-commandes',
 };
 
 const getOrderIdFromPath = (pathname: string): string | null => {
@@ -44,6 +51,13 @@ const getAdminOrderIdFromPath = (pathname: string): string | null => {
   return segments[2] || null;
 };
 
+const getMyOrderIdFromPath = (pathname: string): string | null => {
+  if (!pathname.startsWith('/mes-commandes/')) return null;
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.length < 2) return null;
+  return segments[1] || null;
+};
+
 const getPageFromLocation = (): { page: Page; orderId?: string; adminOrderId?: string } => {
   try {
     const { pathname, search } = window.location;
@@ -57,8 +71,12 @@ const getPageFromLocation = (): { page: Page; orderId?: string; adminOrderId?: s
     const adminOrderId = getAdminOrderIdFromPath(pathname);
     if (adminOrderId) return { page: 'adminOrderDetail', adminOrderId };
 
+    const myOrderId = getMyOrderIdFromPath(pathname);
+    if (myOrderId) return { page: 'myOrderDetail', orderId: myOrderId };
+
     if (pathname.startsWith('/admin/order')) return { page: 'adminOrderHub' };
     if (pathname.startsWith('/admin')) return { page: 'admin' };
+    if (pathname.startsWith('/mes-commandes')) return { page: 'myOrders' };
 
     const matchedEntry = Object.entries(pageToPath).find(([, path]) => path === pathname);
     if (matchedEntry) return { page: matchedEntry[0] as Page };
@@ -86,6 +104,7 @@ function App() {
   const [screenW, setScreenW] = useState<number>(() => getWindowWidth());
   const toastTimeoutRef = useRef<number | null>(null);
   const [showCartToast, setShowCartToast] = useState(false);
+  const [pushToast, setPushToast] = useState<string | null>(null);
 
   // Scroll en haut à chaque changement de page
   useEffect(() => {
@@ -136,7 +155,7 @@ function App() {
     }
 
     setCurrentPage(page);
-    if (page !== 'orderStatus') {
+    if (page !== 'orderStatus' && page !== 'myOrderDetail') {
       setOrderId(null);
     }
     if (page !== 'adminOrderDetail') {
@@ -219,6 +238,17 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const unsubscribe = subscribeToForegroundMessages((payload) => {
+      const title = payload.notification?.title || 'Snack Family 2';
+      const body = payload.notification?.body || 'Mise à jour de commande.';
+      setPushToast(`${title} — ${body}`);
+      window.setTimeout(() => setPushToast(null), 2500);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   // Rendu conditionnel des pages
   const renderPage = () => {
     switch (currentPage) {
@@ -233,6 +263,9 @@ function App() {
       case 'admin': return <AdminDashboardPage />;
       case 'adminOrderDetail': return adminOrderId ? <AdminOrderDetailPage navigateTo={navigateTo} /> : <AdminDashboardPage />;
       case 'adminOrderHub': return <AdminOrderHubPage />;
+      case 'account': return <AccountPage navigateTo={navigateTo} />;
+      case 'myOrders': return <MyOrdersPage navigateTo={navigateTo} />;
+      case 'myOrderDetail': return orderId ? <MyOrderDetailPage navigateTo={navigateTo} orderId={orderId} /> : <MyOrdersPage navigateTo={navigateTo} />;
       default: return <Home navigateTo={navigateTo} />;
     }
   };
@@ -284,6 +317,12 @@ function App() {
       {showCartToast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 transform rounded-full bg-snack-dark px-4 py-2 text-sm text-white shadow-lg">
           Ajouté au panier
+        </div>
+      )}
+
+      {pushToast && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 transform rounded-full bg-snack-black px-4 py-2 text-xs font-bold uppercase tracking-wide text-snack-gold shadow-lg">
+          {pushToast}
         </div>
       )}
 

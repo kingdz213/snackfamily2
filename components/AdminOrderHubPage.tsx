@@ -27,6 +27,8 @@ type OrderResponse = {
     | 'IN_PREPARATION'
     | 'OUT_FOR_DELIVERY'
     | 'DELIVERED';
+  desiredDeliveryAt?: string | null;
+  desiredDeliverySlotLabel?: string | null;
 };
 
 type DeliveredAction = {
@@ -204,6 +206,17 @@ export const AdminOrderHubPage: React.FC = () => {
               <div className="font-bold uppercase text-gray-500">Infos client</div>
               <div>Adresse : {order.deliveryAddress}</div>
               <div>Paiement : {order.paymentMethod === 'STRIPE' ? 'En ligne' : 'Cash'}</div>
+              {(order.desiredDeliveryAt || order.desiredDeliverySlotLabel) && (
+                <div>
+                  Heure souhaitée :{' '}
+                  {order.desiredDeliverySlotLabel ||
+                    new Date(order.desiredDeliveryAt ?? '').toLocaleString('fr-BE', {
+                      weekday: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                </div>
+              )}
             </div>
 
             {error && <p className="text-sm font-semibold text-red-600">{error}</p>}
