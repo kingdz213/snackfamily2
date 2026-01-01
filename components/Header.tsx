@@ -154,8 +154,8 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
 
       {/* Mobile Dropdown */}
       <div 
-        className={`lg:hidden absolute top-full left-0 w-full bg-snack-black border-t border-gray-800 shadow-2xl transition-all duration-300 ease-in-out overflow-hidden origin-top ${
-          isMenuOpen ? 'max-h-[500px] opacity-100' : 'max-h-0 opacity-0'
+        className={`lg:hidden absolute top-full left-0 w-full bg-snack-black border-t border-gray-800 shadow-2xl transition-all duration-300 ease-in-out origin-top ${
+          isMenuOpen ? 'max-h-[calc(100vh-96px)] opacity-100 overflow-y-auto' : 'max-h-0 opacity-0 overflow-hidden'
         }`}
       >
         <div className="flex flex-col p-8 space-y-6">
