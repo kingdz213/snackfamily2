@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MENU_CATEGORIES } from '../data/menuData';
 import { MenuItem, MenuCategory } from '../types';
 import { Plus } from 'lucide-react';
 import { prefersReducedMotion } from '@/src/lib/motion';
+import { applyAvailabilityOverrides, fetchAvailability } from '@/src/lib/menuAvailability';
+import { resolveWorkerBaseUrl } from '../lib/stripe';
 
 interface OrderPageProps {
   openOrderModal: (item: MenuItem, category: MenuCategory) => void;
@@ -10,9 +12,24 @@ interface OrderPageProps {
 
 export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
   const [activeCategory, setActiveCategory] = useState('assiettes');
+  const [categories, setCategories] = useState<MenuCategory[]>(MENU_CATEGORIES);
   const reduceMotion = prefersReducedMotion();
+  const endpointBase = useMemo(() => resolveWorkerBaseUrl(), []);
 
-  const filteredCategory = MENU_CATEGORIES.find(c => c.id === activeCategory);
+  useEffect(() => {
+    let isMounted = true;
+    const loadAvailability = async () => {
+      const unavailableById = await fetchAvailability(endpointBase);
+      if (!isMounted) return;
+      setCategories(applyAvailabilityOverrides(MENU_CATEGORIES, unavailableById));
+    };
+    void loadAvailability();
+    return () => {
+      isMounted = false;
+    };
+  }, [endpointBase]);
+
+  const filteredCategory = categories.find(c => c.id === activeCategory);
 
   return (
     <div className="bg-gray-100 min-h-screen h-full flex flex-col">
@@ -24,7 +41,7 @@ export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
               onChange={(e) => setActiveCategory(e.target.value)}
               className="w-full p-3 border border-gray-300 rounded font-bold uppercase text-sm"
           >
-              {MENU_CATEGORIES.map(cat => (
+              {categories.map(cat => (
                   <option key={cat.id} value={cat.id}>{cat.title}</option>
               ))}
           </select>
@@ -32,7 +49,7 @@ export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
 
       {/* Desktop Category Filter Bar */}
       <div className="hidden md:flex flex-wrap justify-center gap-2 p-6 bg-white shadow-sm sticky top-20 z-20">
-            {MENU_CATEGORIES.map(cat => (
+            {categories.map(cat => (
                 <button
                   key={cat.id}
                   onClick={() => setActiveCategory(cat.id)}

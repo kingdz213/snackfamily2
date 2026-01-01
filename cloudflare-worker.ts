@@ -18,6 +18,8 @@ interface Env {
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
+const MENU_AVAILABILITY_KEY = "menu:availability:v1";
+const MENU_AVAILABILITY_UPDATED_KEY = "menu:availability:updatedAt";
 
 // Business rules
 const MIN_ORDER_CENTS = 2000; // 20.00€ hors livraison
@@ -80,6 +82,17 @@ function json(data: any, status = 200, headers: Record<string, string> = {}) {
 
 function hasOrdersKv(env: Env) {
   return Boolean(env.ORDERS_KV);
+}
+
+function requireOrdersKv(env: Env, cors?: Record<string, string>) {
+  if (!env.ORDERS_KV) {
+    return json(
+      { ok: false, error: "KV_NOT_CONFIGURED", message: "ORDERS_KV non configuré." },
+      500,
+      cors ?? {}
+    );
+  }
+  return null;
 }
 
 function hasStripeSecret(env: Env) {
@@ -187,6 +200,43 @@ async function removeUserOrder(env: Env, uid: string, orderId: string) {
   const existing = await readUserOrders(env, uid);
   const next = existing.filter((id) => id !== orderId);
   await env.ORDERS_KV!.put(userOrdersKey(uid), JSON.stringify(next));
+}
+
+type MenuAvailabilityState = {
+  unavailableById: Record<string, boolean>;
+  updatedAt?: string | null;
+  kv: boolean;
+};
+
+function normalizeAvailabilityMap(raw: unknown): Record<string, boolean> {
+  if (!raw || typeof raw !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).filter(([, value]) => typeof value === "boolean")
+  );
+}
+
+async function readMenuAvailability(env: Env): Promise<MenuAvailabilityState> {
+  if (!env.ORDERS_KV) throw new Error("ORDERS_KV not bound");
+  const raw = await env.ORDERS_KV.get(MENU_AVAILABILITY_KEY);
+  if (!raw) {
+    return { unavailableById: {}, updatedAt: null, kv: false };
+  }
+  let parsed: Record<string, boolean> = {};
+  try {
+    parsed = normalizeAvailabilityMap(JSON.parse(raw));
+  } catch {
+    parsed = {};
+  }
+  const updatedAt = (await env.ORDERS_KV.get(MENU_AVAILABILITY_UPDATED_KEY)) || null;
+  return { unavailableById: parsed, updatedAt, kv: true };
+}
+
+async function writeMenuAvailability(env: Env, map: Record<string, boolean>) {
+  if (!env.ORDERS_KV) throw new Error("ORDERS_KV not bound");
+  await env.ORDERS_KV.put(MENU_AVAILABILITY_KEY, JSON.stringify(map));
+  const updatedAt = nowIso();
+  await env.ORDERS_KV.put(MENU_AVAILABILITY_UPDATED_KEY, updatedAt);
+  return updatedAt;
 }
 
 function normalizePrivateKey(key: string) {
@@ -1302,6 +1352,22 @@ export default {
         return json({ ok: true }, 200, cors);
       }
 
+      if (request.method === "GET" && url.pathname === "/menu/availability") {
+        const kvError = requireOrdersKv(env, cors);
+        if (kvError) return kvError;
+        const state = await readMenuAvailability(env);
+        return json(
+          {
+            ok: true,
+            unavailableById: state.unavailableById,
+            updatedAt: state.updatedAt ?? undefined,
+            kv: state.kv,
+          },
+          200,
+          cors
+        );
+      }
+
       if (request.method === "POST" && url.pathname === "/admin/login") {
         const adminPin = getAdminPin(env);
         const secret = getAdminSigningSecret(env);
@@ -1327,6 +1393,68 @@ export default {
 
         const token = await createAdminToken(secret);
         return json({ token, expiresIn: ADMIN_TOKEN_TTL_MS }, 200, cors);
+      }
+
+      if (request.method === "GET" && url.pathname === "/admin/menu/availability") {
+        const auth = await verifyAdminRequest(request, env);
+        if (!auth.ok) {
+          return json({ error: auth.error, message: auth.message }, 401, cors);
+        }
+        const kvError = requireOrdersKv(env, cors);
+        if (kvError) return kvError;
+        const state = await readMenuAvailability(env);
+        return json(
+          {
+            ok: true,
+            unavailableById: state.unavailableById,
+            updatedAt: state.updatedAt ?? undefined,
+            kv: state.kv,
+          },
+          200,
+          cors
+        );
+      }
+
+      if (request.method === "POST" && url.pathname.startsWith("/admin/menu/items/")) {
+        const auth = await verifyAdminRequest(request, env);
+        if (!auth.ok) {
+          return json({ error: auth.error, message: auth.message }, 401, cors);
+        }
+        const kvError = requireOrdersKv(env, cors);
+        if (kvError) return kvError;
+        const match = url.pathname.match(/^\/admin\/menu\/items\/(.+)$/);
+        const itemId = match?.[1] ? decodeURIComponent(match[1]) : "";
+        if (!itemId) return json({ error: "ITEM_ID_REQUIRED", message: "Item id requis." }, 400, cors);
+
+        const body: any = await request.json().catch(() => null);
+        if (!body || typeof body.unavailable !== "boolean") {
+          return json({ error: "INVALID_JSON", message: "Champ unavailable requis." }, 400, cors);
+        }
+
+        const state = await readMenuAvailability(env);
+        const nextMap = { ...state.unavailableById };
+        if (body.unavailable) {
+          nextMap[itemId] = true;
+        } else {
+          delete nextMap[itemId];
+        }
+        const updatedAt = await writeMenuAvailability(env, nextMap);
+        return json(
+          { ok: true, itemId, unavailable: body.unavailable, updatedAt },
+          200,
+          cors
+        );
+      }
+
+      if (request.method === "POST" && url.pathname === "/admin/menu/reset") {
+        const auth = await verifyAdminRequest(request, env);
+        if (!auth.ok) {
+          return json({ error: auth.error, message: auth.message }, 401, cors);
+        }
+        const kvError = requireOrdersKv(env, cors);
+        if (kvError) return kvError;
+        const updatedAt = await writeMenuAvailability(env, {});
+        return json({ ok: true, unavailableById: {}, updatedAt }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/admin/orders") {

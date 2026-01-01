@@ -3,6 +3,9 @@ import { resolveWorkerBaseUrl } from '../lib/stripe';
 import { OrderTimeline } from './OrderTimeline';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { Trash2 } from 'lucide-react';
+import { MENU_CATEGORIES } from '../data/menuData';
+import { MenuCategory, MenuItem } from '../types';
+import { applyAvailabilityOverrides } from '@/src/lib/menuAvailability';
 
 type OrderStatus =
   | 'RECEIVED'
@@ -35,6 +38,12 @@ type AdminOrderSummary = {
 type AdminOrdersResponse = {
   orders: AdminOrderSummary[];
   cursor?: string;
+};
+
+type AvailabilityResponse = {
+  ok: boolean;
+  unavailableById?: Record<string, boolean>;
+  updatedAt?: string;
 };
 
 const TOKEN_STORAGE_KEY = 'sf2_admin_token';
@@ -73,6 +82,17 @@ export const AdminDashboardPage: React.FC = () => {
   const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
   const [orderToDelete, setOrderToDelete] = useState<AdminOrderSummary | null>(null);
   const [deleteToast, setDeleteToast] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'orders' | 'availability'>('orders');
+  const [availabilityCategories, setAvailabilityCategories] = useState<MenuCategory[]>(MENU_CATEGORIES);
+  const [availabilityMap, setAvailabilityMap] = useState<Record<string, boolean>>({});
+  const [availabilityUpdatedAt, setAvailabilityUpdatedAt] = useState<string | null>(null);
+  const [availabilitySearch, setAvailabilitySearch] = useState('');
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [availabilityToast, setAvailabilityToast] = useState<string | null>(null);
+  const [availabilityLoaded, setAvailabilityLoaded] = useState(false);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [showUnavailableOnly, setShowUnavailableOnly] = useState(false);
+  const [isResettingAvailability, setIsResettingAvailability] = useState(false);
 
   const endpointBase = useMemo(() => resolveWorkerBaseUrl(), []);
 
@@ -85,6 +105,36 @@ export const AdminDashboardPage: React.FC = () => {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
     }
   };
+
+  const syncAvailability = useCallback((map: Record<string, boolean>, updatedAt?: string) => {
+    setAvailabilityMap(map);
+    setAvailabilityCategories(applyAvailabilityOverrides(MENU_CATEGORIES, map));
+    setAvailabilityUpdatedAt(updatedAt ?? null);
+  }, []);
+
+  const fetchAvailability = useCallback(async () => {
+    if (!token) return;
+    setAvailabilityError(null);
+    setAvailabilityLoading(true);
+    try {
+      const response = await fetch(`${endpointBase}/admin/menu/availability`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = payload?.message || 'Impossible de charger les disponibilités.';
+        throw new Error(message);
+      }
+      const data = (await response.json()) as AvailabilityResponse;
+      const unavailableById = data.unavailableById ?? {};
+      syncAvailability(unavailableById, data.updatedAt);
+      setAvailabilityLoaded(true);
+    } catch (err) {
+      setAvailabilityError(err instanceof Error ? err.message : 'Impossible de charger les disponibilités.');
+    } finally {
+      setAvailabilityLoading(false);
+    }
+  }, [endpointBase, syncAvailability, token]);
 
   async function fetchOrders(reset = false, tokenOverride?: string) {
     const activeToken = tokenOverride ?? token;
@@ -124,6 +174,23 @@ export const AdminDashboardPage: React.FC = () => {
       void fetchOrders(true);
     }
   }, [orders.length, token]);
+
+  useEffect(() => {
+    if (activeTab === 'availability' && token && !availabilityLoaded) {
+      void fetchAvailability();
+    }
+  }, [activeTab, availabilityLoaded, fetchAvailability, token]);
+
+  useEffect(() => {
+    if (!token) {
+      setAvailabilityLoaded(false);
+      syncAvailability({});
+      setAvailabilitySearch('');
+      setShowUnavailableOnly(false);
+      setAvailabilityError(null);
+      setAvailabilityToast(null);
+    }
+  }, [syncAvailability, token]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -182,6 +249,72 @@ export const AdminDashboardPage: React.FC = () => {
     },
     [endpointBase, token]
   );
+
+  const updateItemAvailability = useCallback(
+    async (item: MenuItem, unavailable: boolean) => {
+      if (!token) return;
+      const previousMap = availabilityMap;
+      const nextMap = { ...availabilityMap };
+      if (unavailable) {
+        nextMap[item.id] = true;
+      } else {
+        delete nextMap[item.id];
+      }
+      syncAvailability(nextMap, availabilityUpdatedAt ?? undefined);
+      setAvailabilityError(null);
+      try {
+        const response = await fetch(`${endpointBase}/admin/menu/items/${encodeURIComponent(item.id)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ unavailable }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          const message = payload?.message || 'Mise à jour impossible.';
+          throw new Error(message);
+        }
+        const payload = (await response.json()) as { updatedAt?: string };
+        setAvailabilityUpdatedAt(payload.updatedAt ?? null);
+        setAvailabilityToast(unavailable ? 'Article rendu indisponible ✅' : 'Article remis disponible ✅');
+      } catch (err) {
+        syncAvailability(previousMap, availabilityUpdatedAt ?? undefined);
+        setAvailabilityError(err instanceof Error ? err.message : 'Mise à jour impossible.');
+      } finally {
+        window.setTimeout(() => setAvailabilityToast(null), 1800);
+      }
+    },
+    [availabilityMap, availabilityUpdatedAt, endpointBase, syncAvailability, token]
+  );
+
+  const resetAvailability = useCallback(async () => {
+    if (!token) return;
+    setAvailabilityError(null);
+    setIsResettingAvailability(true);
+    try {
+      const response = await fetch(`${endpointBase}/admin/menu/reset`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = payload?.message || 'Réinitialisation impossible.';
+        throw new Error(message);
+      }
+      const payload = (await response.json()) as { updatedAt?: string };
+      syncAvailability({}, payload.updatedAt);
+      setAvailabilityToast('Toutes les disponibilités ont été réinitialisées ✅');
+    } catch (err) {
+      setAvailabilityError(err instanceof Error ? err.message : 'Réinitialisation impossible.');
+    } finally {
+      setIsResettingAvailability(false);
+      window.setTimeout(() => setAvailabilityToast(null), 1800);
+    }
+  }, [endpointBase, syncAvailability, token]);
 
   const handleDelete = useCallback(async () => {
     if (!token || !orderToDelete) return;
@@ -262,12 +395,21 @@ export const AdminDashboardPage: React.FC = () => {
             <p className="text-sm text-gray-600">Toutes les commandes, au même endroit.</p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2">
-            <button
-              onClick={() => fetchOrders(true)}
-              className="rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-gold transition-colors"
-            >
-              Actualiser
-            </button>
+            {activeTab === 'orders' ? (
+              <button
+                onClick={() => fetchOrders(true)}
+                className="rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-gold transition-colors"
+              >
+                Actualiser
+              </button>
+            ) : (
+              <button
+                onClick={() => fetchAvailability()}
+                className="rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-gold transition-colors"
+              >
+                Actualiser disponibilités
+              </button>
+            )}
             <button
               onClick={() => persistToken(null)}
               className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-600 hover:border-snack-gold hover:text-snack-black transition-colors"
@@ -277,160 +419,294 @@ export const AdminDashboardPage: React.FC = () => {
           </div>
         </div>
 
-        {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+        <div className="flex flex-wrap gap-2 border-b border-gray-200">
+          <button
+            onClick={() => setActiveTab('orders')}
+            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition-colors ${
+              activeTab === 'orders'
+                ? 'border border-b-0 border-gray-200 bg-white text-snack-black'
+                : 'text-gray-500 hover:text-snack-black'
+            }`}
+          >
+            Commandes
+          </button>
+          <button
+            onClick={() => setActiveTab('availability')}
+            className={`rounded-t-lg px-4 py-2 text-sm font-semibold transition-colors ${
+              activeTab === 'availability'
+                ? 'border border-b-0 border-gray-200 bg-white text-snack-black'
+                : 'text-gray-500 hover:text-snack-black'
+            }`}
+          >
+            Disponibilités
+          </button>
+        </div>
 
-        <section className="space-y-4">
-          {orders.length === 0 && !isLoading ? (
-            <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-500">
-              Aucune commande à afficher pour le moment.
-            </div>
-          ) : (
-            orders.map((order) => {
-              const isStripePaid = order.paymentMethod === 'stripe' && order.amountDueCents === 0;
-              const isCashDue = order.paymentMethod === 'cash' && order.amountDueCents > 0;
-              const whatsappTarget = order.phone ? normalizePhone(order.phone) : '';
-
-              return (
-                <div key={order.id} className="border border-gray-200 rounded-2xl bg-white p-5 shadow-sm space-y-4">
-                  <div className="flex flex-col gap-3">
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="text-xs uppercase tracking-wide text-gray-400 font-semibold">
-                          Commande #{order.id}
-                        </div>
-                        <h2 className="text-xl font-semibold text-snack-black">{order.address}</h2>
-                        <p className="text-xs text-gray-500">
-                          Dernière mise à jour : {formatDate(order.updatedAt)}
-                        </p>
-                      </div>
-                      <div className="flex flex-col items-start gap-2">
-                        <span className="inline-flex items-center rounded-full bg-snack-gold/15 px-3 py-1 text-xs font-semibold text-snack-black">
-                          {statusLabels[order.status]}
-                        </span>
-                        {isStripePaid && (
-                          <span className="inline-flex items-center rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
-                            Payée en ligne
-                          </span>
-                        )}
-                        {isCashDue && (
-                          <span className="inline-flex items-center rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-700">
-                            À encaisser (espèces)
-                          </span>
-                        )}
-                        <button
-                          onClick={() => setOrderToDelete(order)}
-                          className="inline-flex items-center gap-2 rounded-full border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:border-red-400 transition-colors"
-                        >
-                          <Trash2 size={14} />
-                          Supprimer
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
-                      <OrderTimeline status={order.status} />
-                    </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm text-gray-600">
-                  <div>
-                    <div className="text-xs uppercase text-gray-400 font-semibold">Paiement</div>
-                    <div>
-                      {order.paymentMethod === 'stripe'
-                        ? 'Carte (Stripe)'
-                        : 'Espèces'}{' '}
-                      • {formatCents(order.totalCents)}
-                    </div>
-                    {(order.desiredDeliveryAt || order.desiredDeliverySlotLabel) && (
-                      <div className="text-xs text-gray-500">
-                        Heure souhaitée : {formatSchedule(order.desiredDeliveryAt, order.desiredDeliverySlotLabel)}
-                      </div>
-                    )}
-                  </div>
-                      <div>
-                        <div className="text-xs uppercase text-gray-400 font-semibold">Contact</div>
-                        {order.phone ? (
-                          <div className="flex items-center gap-2">
-                            <span>{order.phone}</span>
-                            {whatsappTarget && (
-                              <a
-                                href={`https://wa.me/${whatsappTarget}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-snack-gold font-semibold hover:underline"
-                              >
-                                Contacter
-                              </a>
-                            )}
-                          </div>
-                        ) : (
-                          <div>Numéro indisponible</div>
-                        )}
-                        {order.customerName && <div className="text-xs text-gray-500">Client : {order.customerName}</div>}
-                      </div>
-                      <div>
-                        <div className="text-xs uppercase text-gray-400 font-semibold">Articles</div>
-                        <div>{order.itemsCount} article(s)</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-bold uppercase">
-                    <button
-                      onClick={() => updateStatus(order.id, 'IN_PREPARATION')}
-                      className="rounded-lg border border-snack-gold bg-snack-gold/10 px-2 py-3 text-snack-black hover:bg-snack-gold transition-colors"
-                    >
-                      En préparation
-                    </button>
-                    <button
-                      onClick={() => updateStatus(order.id, 'OUT_FOR_DELIVERY')}
-                      className="rounded-lg border border-snack-gold bg-snack-gold/10 px-2 py-3 text-snack-black hover:bg-snack-gold transition-colors"
-                    >
-                      En livraison
-                    </button>
-                    <button
-                      onClick={() => updateStatus(order.id, 'DELIVERED')}
-                      className="rounded-lg border border-green-500 bg-green-50 px-2 py-3 text-green-700 hover:bg-green-500 hover:text-white transition-colors"
-                    >
-                      Livrée
-                    </button>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <a
-                      href={`/admin/orders/${order.id}`}
-                      className="inline-flex items-center justify-center rounded-lg border border-gray-200 px-4 py-2 text-xs font-bold uppercase tracking-wide text-snack-black hover:border-snack-gold transition-colors"
-                    >
-                      Voir détails
-                    </a>
-                    {order.adminHubUrl && (
-                      <button
-                        onClick={() => copyAdminLink(order)}
-                        className="inline-flex items-center justify-center rounded-lg border border-snack-gold/60 px-4 py-2 text-xs font-bold uppercase tracking-wide text-snack-black hover:border-snack-gold transition-colors"
-                      >
-                        {copiedOrderId === order.id ? 'Lien copié ✅' : 'Copier lien admin'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </section>
-
-        {isLoading && (
-          <div className="flex items-center justify-center py-6">
-            <LoadingSpinner label="Chargement..." size={24} />
+        {activeTab === 'orders' && error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+        )}
+        {activeTab === 'availability' && availabilityError && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {availabilityError}
           </div>
         )}
 
-        {cursor && (
-          <button
-            onClick={() => fetchOrders(false)}
-            disabled={isLoading}
-            className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm font-bold uppercase tracking-wide text-snack-black hover:border-snack-gold transition-colors disabled:opacity-60"
-          >
-            Charger plus
-          </button>
+        {activeTab === 'orders' && (
+          <>
+            <section className="space-y-4">
+              {orders.length === 0 && !isLoading ? (
+                <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-6 text-center text-sm text-gray-500">
+                  Aucune commande à afficher pour le moment.
+                </div>
+              ) : (
+                orders.map((order) => {
+                  const isStripePaid = order.paymentMethod === 'stripe' && order.amountDueCents === 0;
+                  const isCashDue = order.paymentMethod === 'cash' && order.amountDueCents > 0;
+                  const whatsappTarget = order.phone ? normalizePhone(order.phone) : '';
+
+                  return (
+                    <div key={order.id} className="border border-gray-200 rounded-2xl bg-white p-5 shadow-sm space-y-4">
+                      <div className="flex flex-col gap-3">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="text-xs uppercase tracking-wide text-gray-400 font-semibold">
+                              Commande #{order.id}
+                            </div>
+                            <h2 className="text-xl font-semibold text-snack-black">{order.address}</h2>
+                            <p className="text-xs text-gray-500">
+                              Dernière mise à jour : {formatDate(order.updatedAt)}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-start gap-2">
+                            <span className="inline-flex items-center rounded-full bg-snack-gold/15 px-3 py-1 text-xs font-semibold text-snack-black">
+                              {statusLabels[order.status]}
+                            </span>
+                            {isStripePaid && (
+                              <span className="inline-flex items-center rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
+                                Payée en ligne
+                              </span>
+                            )}
+                            {isCashDue && (
+                              <span className="inline-flex items-center rounded-full bg-orange-100 px-3 py-1 text-xs font-semibold text-orange-700">
+                                À encaisser (espèces)
+                              </span>
+                            )}
+                            <button
+                              onClick={() => setOrderToDelete(order)}
+                              className="inline-flex items-center gap-2 rounded-full border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 hover:border-red-400 transition-colors"
+                            >
+                              <Trash2 size={14} />
+                              Supprimer
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                          <OrderTimeline status={order.status} />
+                        </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm text-gray-600">
+                      <div>
+                        <div className="text-xs uppercase text-gray-400 font-semibold">Paiement</div>
+                        <div>
+                          {order.paymentMethod === 'stripe'
+                            ? 'Carte (Stripe)'
+                            : 'Espèces'}{' '}
+                          • {formatCents(order.totalCents)}
+                        </div>
+                        {(order.desiredDeliveryAt || order.desiredDeliverySlotLabel) && (
+                          <div className="text-xs text-gray-500">
+                            Heure souhaitée : {formatSchedule(order.desiredDeliveryAt, order.desiredDeliverySlotLabel)}
+                          </div>
+                        )}
+                      </div>
+                          <div>
+                            <div className="text-xs uppercase text-gray-400 font-semibold">Contact</div>
+                            {order.phone ? (
+                              <div className="flex items-center gap-2">
+                                <span>{order.phone}</span>
+                                {whatsappTarget && (
+                                  <a
+                                    href={`https://wa.me/${whatsappTarget}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-snack-gold font-semibold hover:underline"
+                                  >
+                                    Contacter
+                                  </a>
+                                )}
+                              </div>
+                            ) : (
+                              <div>Numéro indisponible</div>
+                            )}
+                            {order.customerName && <div className="text-xs text-gray-500">Client : {order.customerName}</div>}
+                          </div>
+                          <div>
+                            <div className="text-xs uppercase text-gray-400 font-semibold">Articles</div>
+                            <div>{order.itemsCount} article(s)</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-bold uppercase">
+                        <button
+                          onClick={() => updateStatus(order.id, 'IN_PREPARATION')}
+                          className="rounded-lg border border-snack-gold bg-snack-gold/10 px-2 py-3 text-snack-black hover:bg-snack-gold transition-colors"
+                        >
+                          En préparation
+                        </button>
+                        <button
+                          onClick={() => updateStatus(order.id, 'OUT_FOR_DELIVERY')}
+                          className="rounded-lg border border-snack-gold bg-snack-gold/10 px-2 py-3 text-snack-black hover:bg-snack-gold transition-colors"
+                        >
+                          En livraison
+                        </button>
+                        <button
+                          onClick={() => updateStatus(order.id, 'DELIVERED')}
+                          className="rounded-lg border border-green-500 bg-green-50 px-2 py-3 text-green-700 hover:bg-green-500 hover:text-white transition-colors"
+                        >
+                          Livrée
+                        </button>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <a
+                          href={`/admin/orders/${order.id}`}
+                          className="inline-flex items-center justify-center rounded-lg border border-gray-200 px-4 py-2 text-xs font-bold uppercase tracking-wide text-snack-black hover:border-snack-gold transition-colors"
+                        >
+                          Voir détails
+                        </a>
+                        {order.adminHubUrl && (
+                          <button
+                            onClick={() => copyAdminLink(order)}
+                            className="inline-flex items-center justify-center rounded-lg border border-snack-gold/60 px-4 py-2 text-xs font-bold uppercase tracking-wide text-snack-black hover:border-snack-gold transition-colors"
+                          >
+                            {copiedOrderId === order.id ? 'Lien copié ✅' : 'Copier lien admin'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </section>
+
+            {isLoading && (
+              <div className="flex items-center justify-center py-6">
+                <LoadingSpinner label="Chargement..." size={24} />
+              </div>
+            )}
+
+            {cursor && (
+              <button
+                onClick={() => fetchOrders(false)}
+                disabled={isLoading}
+                className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm font-bold uppercase tracking-wide text-snack-black hover:border-snack-gold transition-colors disabled:opacity-60"
+              >
+                Charger plus
+              </button>
+            )}
+          </>
+        )}
+
+        {activeTab === 'availability' && (
+          <section className="space-y-6">
+            <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-snack-black">Gestion des disponibilités</h2>
+                  <p className="text-xs text-gray-500">
+                    {availabilityUpdatedAt
+                      ? `Dernière mise à jour : ${formatDate(availabilityUpdatedAt)}`
+                      : 'Dernière mise à jour indisponible'}
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button
+                    onClick={resetAvailability}
+                    disabled={isResettingAvailability}
+                    className="rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 hover:border-red-400 transition-colors disabled:opacity-60"
+                  >
+                    Tout remettre disponible
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <input
+                  type="text"
+                  value={availabilitySearch}
+                  onChange={(event) => setAvailabilitySearch(event.target.value)}
+                  placeholder="Rechercher un article"
+                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold"
+                />
+                <label className="flex items-center gap-2 text-sm text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={showUnavailableOnly}
+                    onChange={(event) => setShowUnavailableOnly(event.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-snack-gold focus:ring-snack-gold"
+                  />
+                  Afficher seulement indisponibles
+                </label>
+              </div>
+            </div>
+
+            {availabilityLoading ? (
+              <div className="flex items-center justify-center py-6">
+                <LoadingSpinner label="Chargement..." size={24} />
+              </div>
+            ) : (
+              availabilityCategories
+                .map((category) => {
+                  const filteredItems = category.items.filter((item) => {
+                    const matchesSearch = item.name.toLowerCase().includes(availabilitySearch.toLowerCase());
+                    const matchesAvailability = showUnavailableOnly ? item.unavailable : true;
+                    return matchesSearch && matchesAvailability;
+                  });
+                  if (filteredItems.length === 0) return null;
+                  return { ...category, items: filteredItems };
+                })
+                .filter((category): category is MenuCategory => Boolean(category))
+                .map((category) => (
+                  <div key={category.id} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-base font-semibold text-snack-black">{category.title}</h3>
+                      <span className="text-xs text-gray-400">{category.items.length} article(s)</span>
+                    </div>
+                    <div className="space-y-3">
+                      {category.items.map((item) => (
+                        <div key={item.id} className="flex flex-col gap-2 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-snack-black">{item.name}</span>
+                              {item.unavailable && (
+                                <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase text-red-600">
+                                  Indisponible
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {Number(item.price).toFixed(2)} €
+                              {item.priceSecondary && ` • ${Number(item.priceSecondary).toFixed(2)} €`}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => updateItemAvailability(item, !item.unavailable)}
+                            className={`rounded-full px-4 py-2 text-xs font-semibold uppercase transition-colors ${
+                              item.unavailable
+                                ? 'border border-green-500 text-green-700 hover:bg-green-50'
+                                : 'border border-red-500 text-red-600 hover:bg-red-50'
+                            }`}
+                          >
+                            {item.unavailable ? 'Remettre disponible' : 'Mettre indisponible'}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+            )}
+          </section>
         )}
       </div>
 
@@ -460,6 +736,12 @@ export const AdminDashboardPage: React.FC = () => {
       {deleteToast && (
         <div className="fixed top-24 left-1/2 -translate-x-1/2 rounded-full bg-snack-black px-4 py-2 text-xs font-bold uppercase tracking-wide text-snack-gold shadow-lg">
           {deleteToast}
+        </div>
+      )}
+
+      {availabilityToast && (
+        <div className="fixed top-36 left-1/2 -translate-x-1/2 rounded-full bg-snack-black px-4 py-2 text-xs font-bold uppercase tracking-wide text-snack-gold shadow-lg">
+          {availabilityToast}
         </div>
       )}
     </div>

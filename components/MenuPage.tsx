@@ -1,17 +1,40 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MENU_CATEGORIES } from '../data/menuData';
 import { MenuItem, MenuCategory, SAUCES } from '../types';
 import { Plus, Search } from 'lucide-react';
 import { prefersReducedMotion } from '@/src/lib/motion';
+import { applyAvailabilityOverrides, fetchAvailability } from '@/src/lib/menuAvailability';
+import { resolveWorkerBaseUrl } from '../lib/stripe';
 
 interface MenuPageProps {
   openOrderModal: (item: MenuItem, category: MenuCategory) => void;
 }
 
 export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
+  const [categories, setCategories] = useState<MenuCategory[]>(MENU_CATEGORIES);
   const [activeCategory, setActiveCategory] = useState(MENU_CATEGORIES[0].id);
   const [searchQuery, setSearchQuery] = useState('');
   const reduceMotion = prefersReducedMotion();
+  const endpointBase = useMemo(() => resolveWorkerBaseUrl(), []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadAvailability = async () => {
+      const unavailableById = await fetchAvailability(endpointBase);
+      if (!isMounted) return;
+      setCategories(applyAvailabilityOverrides(MENU_CATEGORIES, unavailableById));
+    };
+    void loadAvailability();
+    return () => {
+      isMounted = false;
+    };
+  }, [endpointBase]);
+
+  useEffect(() => {
+    if (!categories.find((category) => category.id === activeCategory) && categories[0]) {
+      setActiveCategory(categories[0].id);
+    }
+  }, [activeCategory, categories]);
 
   const scrollToCategory = (id: string) => {
     setActiveCategory(id);
@@ -22,7 +45,7 @@ export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
   };
 
   // Filter categories and items based on search query
-  const filteredCategories = MENU_CATEGORIES.map(category => {
+  const filteredCategories = categories.map(category => {
     if (!searchQuery) return category;
 
     const filteredItems = category.items.filter(item => 
