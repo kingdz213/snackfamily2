@@ -1,5 +1,8 @@
 import { MenuCategory, MenuItem, MenuOptionGroup } from '../types';
 
+type RawMenuItem = Omit<MenuItem, 'id'> & { id?: string };
+type RawMenuCategory = Omit<MenuCategory, 'items'> & { items: RawMenuItem[] };
+
 function parsePrice(v: string | number | undefined | null): number | undefined {
   if (typeof v === 'number') return Number.isFinite(v) ? v : undefined;
   if (typeof v !== 'string') return undefined;
@@ -8,7 +11,7 @@ function parsePrice(v: string | number | undefined | null): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-const FALLBACK_DESSERT_CATEGORY: MenuCategory = {
+const FALLBACK_DESSERT_CATEGORY: RawMenuCategory = {
   id: 'desserts',
   title: '11. Desserts',
   description: 'Fait maison.',
@@ -32,7 +35,7 @@ const DURUM_FRIES_OPTION_GROUP: MenuOptionGroup = {
   ],
 };
 
-const DURUM_ITEMS: MenuItem[] = [
+const DURUM_ITEMS: RawMenuItem[] = [
   { name: 'Dürüm Poulet', price: 6.50 },
   { name: 'Dürüm Pita', price: 6.50 },
   { name: 'Dürüm Mixte', price: 6.00 },
@@ -44,7 +47,7 @@ const DURUM_ITEMS: MenuItem[] = [
   optionGroups: [DURUM_FRIES_OPTION_GROUP],
 }));
 
-const RAW_MENU_CATEGORIES: MenuCategory[] = [
+const RAW_MENU_CATEGORIES: RawMenuCategory[] = [
   {
     id: 'assiettes',
     title: '1. Assiettes',
@@ -247,7 +250,19 @@ const RAW_MENU_CATEGORIES: MenuCategory[] = [
   }
 ];
 
-const sanitizeItem = (item: MenuItem, categoryTitle: string): MenuItem => {
+const slugify = (value: string) => {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-+/g, '-');
+};
+
+const buildItemId = (categoryId: string, itemName: string) => `${categoryId}:${slugify(itemName)}`;
+
+const sanitizeItem = (item: RawMenuItem, category: RawMenuCategory): MenuItem => {
   const price = parsePrice(item.price);
   const priceSecondary = item.priceSecondary !== undefined
     ? parsePrice(item.priceSecondary)
@@ -256,9 +271,10 @@ const sanitizeItem = (item: MenuItem, categoryTitle: string): MenuItem => {
   const hasInvalidPrimary = price === undefined;
   const hasInvalidSecondary = item.priceSecondary !== undefined && priceSecondary === undefined;
   const hasInvalidPrice = hasInvalidPrimary || hasInvalidSecondary;
+  const resolvedId = item.id?.trim() || buildItemId(category.id, item.name);
 
   if (import.meta.env.DEV && hasInvalidPrice) {
-    console.warn(`[menuData] Prix invalide pour "${item.name}" dans "${categoryTitle}"`, {
+    console.warn(`[menuData] Prix invalide pour "${item.name}" dans "${category.title}"`, {
       price: item.price,
       priceSecondary: item.priceSecondary,
     });
@@ -266,6 +282,7 @@ const sanitizeItem = (item: MenuItem, categoryTitle: string): MenuItem => {
 
   return {
     ...item,
+    id: resolvedId,
     price: price ?? 0,
     priceSecondary,
     unavailable: item.unavailable ?? hasInvalidPrice,
@@ -278,5 +295,5 @@ const MENU_CATEGORY_SOURCE = RAW_MENU_CATEGORIES.some((category) => category.id 
 
 export const MENU_CATEGORIES: MenuCategory[] = MENU_CATEGORY_SOURCE.map((category) => ({
   ...category,
-  items: category.items.map((item) => sanitizeItem(item, category.title)),
+  items: category.items.map((item) => sanitizeItem(item, category)),
 }));
