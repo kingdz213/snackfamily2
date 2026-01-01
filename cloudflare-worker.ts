@@ -12,6 +12,9 @@ interface Env {
   FIREBASE_API_KEY?: string;
   FIREBASE_PROJECT_ID?: string;
   FIREBASE_SERVICE_ACCOUNT_JSON?: string;
+  FIREBASE_SERVICE_ACCOUNT?: string | Record<string, unknown>;
+  FIREBASE_PRIVATE_KEY?: string;
+  FIREBASE_CLIENT_EMAIL?: string;
   FIREBASE_AUTH_DOMAIN?: string;
   FIREBASE_MESSAGING_SENDER_ID?: string;
   FIREBASE_APP_ID?: string;
@@ -136,18 +139,47 @@ type ServiceAccount = {
 
 let cachedServiceAccount: ServiceAccount | null = null;
 
+function parseServiceAccount(raw: unknown): ServiceAccount | null {
+  if (!raw) return null;
+  const parsed =
+    typeof raw === "string"
+      ? (() => {
+          try {
+            return JSON.parse(raw) as ServiceAccount;
+          } catch {
+            return null;
+          }
+        })()
+      : raw;
+  if (!parsed || typeof parsed !== "object") return null;
+  const candidate = parsed as ServiceAccount;
+  if (!candidate.client_email || !candidate.private_key) return null;
+  return candidate;
+}
+
 function getServiceAccount(env: Env): ServiceAccount | null {
   if (cachedServiceAccount) return cachedServiceAccount;
-  const raw = env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as ServiceAccount;
-    if (!parsed.client_email || !parsed.private_key) return null;
-    cachedServiceAccount = parsed;
-    return parsed;
-  } catch {
-    return null;
+  const clientEmail = env.FIREBASE_CLIENT_EMAIL?.trim();
+  const privateKey = env.FIREBASE_PRIVATE_KEY?.trim();
+  const projectId = env.FIREBASE_PROJECT_ID?.trim();
+  if (clientEmail && privateKey) {
+    cachedServiceAccount = {
+      client_email: clientEmail,
+      private_key: privateKey.replace(/\\n/g, "\n"),
+      project_id: projectId || undefined,
+    };
+    return cachedServiceAccount;
   }
+
+  const raw = env.FIREBASE_SERVICE_ACCOUNT_JSON ?? env.FIREBASE_SERVICE_ACCOUNT;
+  const parsed = parseServiceAccount(raw);
+  if (!parsed) return null;
+  cachedServiceAccount = {
+    ...parsed,
+    private_key: parsed.private_key.replace(/\\n/g, "\n"),
+    project_id: parsed.project_id || projectId || undefined,
+  };
+  return cachedServiceAccount;
 }
 
 function getFirebaseAuthDomain(env: Env) {
@@ -772,6 +804,15 @@ function normalizeStoreSettings(input: Partial<StoreSettings> | null): StoreSett
 }
 
 async function writeStoreSettings(env: Env, settings: StoreSettings) {
+  const result = await writeStoreSettingsDetailed(env, settings);
+  if (!result.ok) return null;
+  return result.settings;
+}
+
+async function writeStoreSettingsDetailed(
+  env: Env,
+  settings: StoreSettings
+): Promise<{ ok: true; settings: StoreSettings } | { ok: false; details: string; code?: string }> {
   const updated = { ...settings, updatedAt: nowIso() };
   const encoded = toFirestoreValue(updated);
   const fields = encoded.mapValue?.fields ?? {};
@@ -779,8 +820,31 @@ async function writeStoreSettings(env: Env, settings: StoreSettings) {
     method: "PATCH",
     body: JSON.stringify({ fields }),
   });
-  if (!response || !response.ok) return null;
-  return updated;
+  if (!response) {
+    return {
+      ok: false,
+      details: "Requête Firestore impossible (projectId ou credentials manquants).",
+    };
+  }
+  if (!response.ok) {
+    const cloned = response.clone();
+    let details = `Firestore ${response.status}`;
+    let code: string | undefined;
+    try {
+      const payload: any = await cloned.json();
+      if (payload?.error) {
+        code = payload.error.status ? String(payload.error.status) : payload.error.code ? String(payload.error.code) : undefined;
+        details = payload.error.message ? String(payload.error.message) : JSON.stringify(payload.error);
+      } else if (payload) {
+        details = JSON.stringify(payload);
+      }
+    } catch {
+      const text = await cloned.text().catch(() => "");
+      if (text) details = text;
+    }
+    return { ok: false, details, code };
+  }
+  return { ok: true, settings: updated };
 }
 
 async function getOrInitStoreSettings(env: Env): Promise<StoreSettings> {
@@ -924,7 +988,7 @@ function validateStoreSettingsPayload(body: any):
   if (!mode) {
     return { ok: false, error: "MODE_INVALID", message: "Mode invalide." };
   }
-  if (!body.weeklyHours || typeof body.weeklyHours !== "object") {
+  if (body.weeklyHours != null && typeof body.weeklyHours !== "object") {
     return { ok: false, error: "WEEKLY_HOURS_INVALID", message: "Horaires hebdomadaires invalides." };
   }
   const holidayEnabled =
@@ -939,6 +1003,10 @@ function validateStoreSettingsPayload(body: any):
   const weeklyHours: WeeklyHours = { ...DEFAULT_WEEKLY_HOURS };
   for (let day = 0; day <= 6; day += 1) {
     const raw = body.weeklyHours?.[day] ?? body.weeklyHours?.[String(day)];
+    if (raw === undefined) {
+      weeklyHours[day] = DEFAULT_WEEKLY_HOURS[day];
+      continue;
+    }
     if (raw === null) {
       weeklyHours[day] = null;
       continue;
@@ -953,7 +1021,7 @@ function validateStoreSettingsPayload(body: any):
     }
     weeklyHours[day] = { start, end };
   }
-  if (body.exceptions !== undefined && !Array.isArray(body.exceptions)) {
+  if (body.exceptions != null && !Array.isArray(body.exceptions)) {
     return { ok: false, error: "EXCEPTIONS_INVALID", message: "Liste d'exceptions invalide." };
   }
   const exceptionsInput = Array.isArray(body.exceptions) ? body.exceptions : [];
@@ -1710,7 +1778,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/admin/store-settings") {
       const auth = await verifyAdminRequest(request, env);
       if (!auth.ok) {
-        return json({ message: "Non autorisé" }, 401, cors);
+        return json({ error: auth.error, message: auth.message }, 401, cors);
       }
       try {
         let body: any = null;
@@ -1731,16 +1799,27 @@ export default {
             cors
           );
         }
-        const saved = await writeStoreSettings(env, validation.settings);
-        if (!saved) {
-          return json({ message: "Erreur Firestore" }, 500, cors);
+        const saved = await writeStoreSettingsDetailed(env, validation.settings);
+        if (!saved.ok) {
+          console.error("Firestore store settings write failed", saved);
+          return json(
+            {
+              message: "Erreur Firestore",
+              details: saved.details,
+              code: saved.code,
+            },
+            500,
+            cors
+          );
         }
-        return json(saved, 200, cors);
+        return json(saved.settings, 200, cors);
       } catch (err) {
+        console.error("Firestore store settings error", err);
+        const details = err instanceof Error ? `${err.message}${err.stack ? `\n${err.stack}` : ""}` : String(err);
         return json(
           {
             message: "Erreur Firestore",
-            details: serializeError(err),
+            details,
           },
           500,
           cors
