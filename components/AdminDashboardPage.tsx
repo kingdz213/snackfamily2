@@ -494,13 +494,15 @@ export const AdminDashboardPage: React.FC = () => {
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const message = payload?.message || payload?.error || 'Impossible de sauvegarder.';
+        const details = typeof payload?.details === 'string' ? payload.details.trim() : '';
+        const fullMessage = details ? `${message} (${details})` : message;
         if (import.meta.env.DEV) {
           console.warn('Store settings save failed', {
             status: response.status,
             payload,
           });
         }
-        throw new Error(message);
+        throw new Error(fullMessage);
       }
       if (!payload) {
         throw new Error('Réponse invalide du serveur.');
