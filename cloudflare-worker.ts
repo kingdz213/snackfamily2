@@ -80,6 +80,13 @@ function json(data: any, status = 200, headers: Record<string, string> = {}) {
   });
 }
 
+function sanitizeNotes(input: unknown): string | undefined {
+  if (typeof input !== "string") return undefined;
+  const trimmed = input.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, 500);
+}
+
 function hasOrdersKv(env: Env) {
   return Boolean(env.ORDERS_KV);
 }
@@ -1183,10 +1190,7 @@ export default {
         if (desiredDeliveryAtRaw && Number.isNaN(Date.parse(desiredDeliveryAtRaw))) {
           return json({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
         }
-        const notesRaw = typeof body.notes === "string" ? body.notes.trim() : "";
-        const notes = notesRaw ? notesRaw.slice(0, 500) : undefined;
-        const notesRaw = typeof body.notes === "string" ? body.notes.trim() : "";
-        const notes = notesRaw ? notesRaw.slice(0, 500) : undefined;
+        const notes = sanitizeNotes(body.notes);
 
         const firebaseIdToken =
           (typeof body.firebaseIdToken === "string" && body.firebaseIdToken.trim()) || extractBearerToken(request);

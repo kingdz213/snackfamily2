@@ -12,7 +12,7 @@ import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { prefersReducedMotion, motionSafeHover, motionSafeTap, motionSafeTransition } from '@/src/lib/motion';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { clearCustomerProfile, loadCustomerProfile, saveCustomerProfile } from '@/src/lib/customerProfile';
-import { isOpenNow, getNextOpenSlot } from '@/src/lib/openingHours';
+import { getOpenStatus } from '@/src/lib/openingHours';
 import { DELIVERY_STEP_MINUTES, DELIVERY_WINDOWS } from '@/src/config/delivery';
 import { isValidPhoneBasic, normalizePhoneDigits } from '@/src/lib/phone';
 
@@ -269,12 +269,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   useEffect(() => {
     const refreshOpeningInfo = () => {
-      const now = new Date();
-      const isOpen = isOpenNow(now);
-      const nextOpen = isOpen ? null : getNextOpenSlot(now);
-      setOpeningInfo({ isOpen, nextLabel: nextOpen?.label ?? null });
+      const status = getOpenStatus();
+      setOpeningInfo({ isOpen: status.isOpen, nextLabel: status.nextChangeLabel ?? null });
 
-      if (!isOpen && deliveryScheduleMode === 'ASAP') {
+      if (!status.isOpen && deliveryScheduleMode === 'ASAP') {
         setDeliveryScheduleMode('SCHEDULED');
         setCheckoutInfo('Snack fermé — sélectionnez un créneau pour programmer.');
       }
@@ -1406,7 +1404,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                             </div>
                             {!openingInfo.isOpen && (
                               <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
-                                Fermé actuellement. {openingInfo.nextLabel ? `Prochaine ouverture : ${openingInfo.nextLabel}.` : 'Prochaine ouverture à venir.'}
+                                Fermé actuellement. {openingInfo.nextLabel ? `${openingInfo.nextLabel}.` : 'Prochaine ouverture à venir.'}
                               </div>
                             )}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
