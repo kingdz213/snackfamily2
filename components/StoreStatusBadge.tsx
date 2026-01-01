@@ -4,9 +4,14 @@ import { useStoreStatus } from '@/src/lib/storeStatus';
 type StoreStatusBadgeProps = {
   className?: string;
   size?: 'sm' | 'md';
+  variant?: 'default' | 'header';
 };
 
-export const StoreStatusBadge: React.FC<StoreStatusBadgeProps> = ({ className = '', size = 'md' }) => {
+export const StoreStatusBadge: React.FC<StoreStatusBadgeProps> = ({
+  className = '',
+  size = 'md',
+  variant = 'default',
+}) => {
   const { status } = useStoreStatus();
 
   if (!status) {
@@ -14,8 +19,17 @@ export const StoreStatusBadge: React.FC<StoreStatusBadgeProps> = ({ className = 
   }
 
   const isOpen = status.isOpen;
-  const titleSize = size === 'sm' ? 'text-xs' : 'text-sm';
-  const detailSize = size === 'sm' ? 'text-[11px]' : 'text-xs';
+  const isHeader = variant === 'header';
+  const titleSize = isHeader
+    ? 'text-[11px] sm:text-xs'
+    : size === 'sm'
+    ? 'text-xs'
+    : 'text-sm';
+  const detailSize = isHeader
+    ? 'text-[10px] sm:text-[11px]'
+    : size === 'sm'
+    ? 'text-[11px]'
+    : 'text-xs';
   const dotColor = isOpen ? 'bg-emerald-400' : 'bg-red-500';
   const textColor = isOpen ? 'text-snack-gold' : 'text-red-400';
 
@@ -25,7 +39,9 @@ export const StoreStatusBadge: React.FC<StoreStatusBadgeProps> = ({ className = 
         <span className={`h-2 w-2 rounded-full ${dotColor}`} />
         {status.statusLabel}
       </span>
-      <span className={`${detailSize} text-gray-400`}>{status.detail}</span>
+      <span className={`${detailSize} text-gray-400 ${isHeader ? 'whitespace-normal leading-snug' : ''}`}>
+        {status.detail}
+      </span>
     </div>
   );
 };
