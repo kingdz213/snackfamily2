@@ -1,6 +1,6 @@
-import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { getToken } from 'firebase/messaging';
-import { db, getFirebaseMessaging } from '@/src/firebase';
+import { getFirebaseMessaging } from '@/src/firebase';
+import { resolveWorkerBaseUrl } from '@/lib/stripe';
 
 const PUSH_TOKEN_STORAGE_KEY = 'sf2_push_token';
 
@@ -27,12 +27,9 @@ type PushRegistrationResult = {
   token?: string;
 };
 
-export const requestPushPermissionAndRegister = async (uid: string): Promise<PushRegistrationResult> => {
+export const requestPushPermissionAndRegister = async (firebaseIdToken: string): Promise<PushRegistrationResult> => {
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return { status: 'unsupported', message: 'Notifications non supportées.' };
-  }
-  if (!db) {
-    return { status: 'error', message: 'Configuration Firebase incomplète.' };
   }
 
   const permission = await Notification.requestPermission();
@@ -59,25 +56,28 @@ export const requestPushPermissionAndRegister = async (uid: string): Promise<Pus
   if (!token) {
     return { status: 'error', message: 'Impossible de récupérer le token.' };
   }
-  await setDoc(
-    doc(db, 'users', uid, 'fcmTokens', token),
-    {
-      createdAt: serverTimestamp(),
-      platform: 'web',
-      userAgent: navigator.userAgent,
+
+  const response = await fetch(`${resolveWorkerBaseUrl()}/me/push/subscribe`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${firebaseIdToken}`,
     },
-    { merge: true }
-  );
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const message = payload?.message || 'Impossible de sauvegarder le token.';
+    return { status: 'error', message };
+  }
 
   setStoredPushToken(token);
   return { status: 'granted', message: 'Notifications activées ✅', token };
 };
 
-export const unregisterPushToken = async (uid: string) => {
-  if (!db) return;
+export const unregisterPushToken = async () => {
   const token = getStoredPushToken();
   if (!token) return;
-  await deleteDoc(doc(db, 'users', uid, 'fcmTokens', token));
   try {
     localStorage.removeItem(PUSH_TOKEN_STORAGE_KEY);
   } catch {

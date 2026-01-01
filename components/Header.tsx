@@ -3,6 +3,7 @@ import { Menu, X, ShoppingBag } from 'lucide-react';
 import { Page } from '../types';
 import { motion } from 'framer-motion';
 import { prefersReducedMotion, motionSafeTransition } from '@/src/lib/motion';
+import { getNextOpenSlot, isOpenNow } from '@/src/lib/openingHours';
 
 interface HeaderProps {
   currentPage: Page;
@@ -14,6 +15,10 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCount, toggleCart }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isBadgePopping, setIsBadgePopping] = useState(false);
+  const [openingInfo, setOpeningInfo] = useState<{ isOpen: boolean; nextLabel: string | null }>({
+    isOpen: true,
+    nextLabel: null,
+  });
   const prevCountRef = useRef(cartCount);
   const reduceMotion = prefersReducedMotion();
 
@@ -39,6 +44,19 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
     prevCountRef.current = cartCount;
   }, [cartCount, reduceMotion]);
 
+  useEffect(() => {
+    const refreshOpeningInfo = () => {
+      const now = new Date();
+      const isOpen = isOpenNow(now);
+      const nextOpen = isOpen ? null : getNextOpenSlot(now);
+      setOpeningInfo({ isOpen, nextLabel: nextOpen?.label ?? null });
+    };
+
+    refreshOpeningInfo();
+    const interval = window.setInterval(refreshOpeningInfo, 60 * 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
 
   return (
     <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg min-h-[96px] sm:min-h-[104px]">
@@ -52,6 +70,18 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
             <span className="text-gray-400 text-[11px] font-bold tracking-[0.4em] uppercase mt-1 group-hover:text-white transition-colors">
                 Colfontaine
             </span>
+            <span
+              className={`mt-2 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                openingInfo.isOpen ? 'bg-emerald-500/15 text-emerald-200' : 'bg-red-500/15 text-red-200'
+              }`}
+            >
+              {openingInfo.isOpen ? 'Ouvert maintenant ✅' : 'Fermé ❌'}
+            </span>
+            {!openingInfo.isOpen && openingInfo.nextLabel && (
+              <span className="mt-1 text-[11px] text-gray-400 font-semibold">
+                Prochaine ouverture : {openingInfo.nextLabel}
+              </span>
+            )}
         </button>
 
         {/* Desktop Navigation */}

@@ -9,7 +9,8 @@ interface AccountPageProps {
 }
 
 export const AccountPage: React.FC<AccountPageProps> = ({ navigateTo }) => {
-  const { user, loading, login, register, loginAnonymously, logout, profile, saveProfile, isAnonymous } = useAuth();
+  const { user, loading, login, register, loginAnonymously, logout, profile, saveProfile, isAnonymous, getIdToken } =
+    useAuth();
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
@@ -118,11 +119,16 @@ export const AccountPage: React.FC<AccountPageProps> = ({ navigateTo }) => {
     setError(null);
     try {
       if (notificationsEnabled) {
-        await unregisterPushToken(user.uid);
+        await unregisterPushToken();
         setNotificationsEnabled(false);
         setToast('Notifications désactivées');
       } else {
-        const result = await requestPushPermissionAndRegister(user.uid);
+        const token = await getIdToken();
+        if (!token) {
+          setToast('Impossible de récupérer le token.');
+          return;
+        }
+        const result = await requestPushPermissionAndRegister(token);
         if (result.status === 'granted') {
           setNotificationsEnabled(true);
         }

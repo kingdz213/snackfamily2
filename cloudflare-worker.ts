@@ -172,6 +172,104 @@ async function lookupFirebaseUid(idToken: string, apiKey: string) {
   return typeof localId === "string" && localId.length > 0 ? localId : null;
 }
 
+type FirebaseJwksCache = {
+  exp: number;
+  keys: Record<string, JsonWebKey>;
+};
+
+let firebaseJwksCache: FirebaseJwksCache | null = null;
+
+function base64UrlToUint8Array(input: string) {
+  const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function decodeJwtPart(input: string) {
+  const bytes = base64UrlToUint8Array(input);
+  return new TextDecoder().decode(bytes);
+}
+
+function parseCacheMaxAge(header: string | null) {
+  if (!header) return 0;
+  const match = header.match(/max-age=(\\d+)/);
+  return match ? Number(match[1]) : 0;
+}
+
+async function getFirebaseJwks(): Promise<Record<string, JsonWebKey> | null> {
+  const now = Date.now();
+  if (firebaseJwksCache && firebaseJwksCache.exp > now) {
+    return firebaseJwksCache.keys;
+  }
+  const response = await fetch("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com");
+  if (!response.ok) return null;
+  const data: any = await response.json().catch(() => null);
+  const keys = Array.isArray(data?.keys) ? data.keys : [];
+  const mapped: Record<string, JsonWebKey> = {};
+  keys.forEach((key: JsonWebKey) => {
+    if (key.kid) mapped[key.kid] = key;
+  });
+  const maxAge = parseCacheMaxAge(response.headers.get("Cache-Control"));
+  firebaseJwksCache = {
+    keys: mapped,
+    exp: now + (Number.isFinite(maxAge) && maxAge > 0 ? maxAge * 1000 : 60 * 60 * 1000),
+  };
+  return mapped;
+}
+
+async function verifyFirebaseIdToken(env: Env, idToken: string): Promise<string | null> {
+  const projectId = getFirebaseProjectId(env) || getServiceAccount(env)?.project_id || null;
+  if (!projectId) return null;
+  const parts = idToken.split(".");
+  if (parts.length !== 3) return null;
+  const [headerPart, payloadPart, signaturePart] = parts;
+
+  let header: any = null;
+  let payload: any = null;
+  try {
+    header = JSON.parse(decodeJwtPart(headerPart));
+    payload = JSON.parse(decodeJwtPart(payloadPart));
+  } catch {
+    return null;
+  }
+
+  if (!header || header.alg !== "RS256" || !header.kid) return null;
+  const jwks = await getFirebaseJwks();
+  const jwk = jwks?.[header.kid];
+  if (!jwk) return null;
+
+  const key = await crypto.subtle.importKey(
+    "jwk",
+    jwk,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["verify"]
+  );
+  const signature = base64UrlToUint8Array(signaturePart);
+  const data = new TextEncoder().encode(`${headerPart}.${payloadPart}`);
+  const verified = await crypto.subtle.verify(
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    key,
+    signature,
+    data
+  );
+  if (!verified) return null;
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (payload.aud !== projectId) return null;
+  if (payload.iss !== `https://securetoken.google.com/${projectId}`) return null;
+  if (typeof payload.exp !== "number" || payload.exp < nowSeconds) return null;
+  if (typeof payload.iat !== "number" || payload.iat > nowSeconds) return null;
+
+  const uid = typeof payload.user_id === "string" ? payload.user_id : typeof payload.sub === "string" ? payload.sub : null;
+  return uid && uid.length > 0 ? uid : null;
+}
+
 function userOrdersKey(uid: string) {
   return `user_orders:${uid}`;
 }
@@ -317,11 +415,11 @@ function statusNotificationCopy(status: OrderStatus) {
     case "RECEIVED":
       return "Commande reçue";
     case "IN_PREPARATION":
-      return "Commande en préparation";
+      return "En préparation";
     case "OUT_FOR_DELIVERY":
-      return "Commande en cours de livraison";
+      return "En livraison";
     case "DELIVERED":
-      return "Commande livrée — merci !";
+      return "Livrée — merci !";
     case "PENDING_PAYMENT":
       return "Commande enregistrée";
     case "PAID_ONLINE":
@@ -426,6 +524,7 @@ async function upsertOrderInFirestore(env: Env, order: OrderRecord) {
         subtotal: toFirestoreValue(order.subtotal),
         deliveryFee: toFirestoreValue(order.deliveryFee),
         deliveryAddress: toFirestoreValue(order.deliveryAddress),
+        notes: toFirestoreValue(order.notes ?? null),
         desiredDeliveryAt: toFirestoreValue(order.desiredDeliveryAt ?? null),
         desiredDeliverySlotLabel: toFirestoreValue(order.desiredDeliverySlotLabel ?? null),
         items: toFirestoreValue(
@@ -461,6 +560,21 @@ async function deleteOrderFromFirestore(env: Env, orderId: string) {
   const response = await firestoreRequest(env, `orders/${orderId}`, { method: "DELETE" });
   if (!response || response.ok || response.status === 404) return;
   throw new Error("Firestore delete failed");
+}
+
+async function upsertUserFcmToken(env: Env, uid: string, token: string, userAgent?: string | null) {
+  const response = await firestoreRequest(env, `users/${uid}/fcmTokens/${token}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      fields: {
+        createdAt: toFirestoreValue(nowIso()),
+        platform: toFirestoreValue("web"),
+        userAgent: toFirestoreValue(userAgent ?? ""),
+      },
+    }),
+  });
+  if (!response || response.ok) return;
+  throw new Error("Firestore token upsert failed");
 }
 
 async function listUserFcmTokens(env: Env, uid: string): Promise<string[]> {
@@ -867,6 +981,7 @@ type AdminOrderSummary = {
   totalCents: number;
   amountDueCents: number;
   itemsCount: number;
+  notes?: string;
   adminHubUrl?: string;
   desiredDeliveryAt?: string;
   desiredDeliverySlotLabel?: string;
@@ -912,6 +1027,7 @@ function buildOrderSummary(order: OrderRecord): AdminOrderSummary {
     totalCents,
     amountDueCents,
     itemsCount: Array.isArray(normalized.items) ? normalized.items.reduce((sum, item) => sum + (item?.quantity ?? 0), 0) : 0,
+    notes: normalized.notes || undefined,
     adminHubUrl: normalized.adminHubUrl,
     desiredDeliveryAt: normalized.desiredDeliveryAt,
     desiredDeliverySlotLabel: normalized.desiredDeliverySlotLabel,
@@ -1067,6 +1183,10 @@ export default {
         if (desiredDeliveryAtRaw && Number.isNaN(Date.parse(desiredDeliveryAtRaw))) {
           return json({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
         }
+        const notesRaw = typeof body.notes === "string" ? body.notes.trim() : "";
+        const notes = notesRaw ? notesRaw.slice(0, 500) : undefined;
+        const notesRaw = typeof body.notes === "string" ? body.notes.trim() : "";
+        const notes = notesRaw ? notesRaw.slice(0, 500) : undefined;
 
         const firebaseIdToken =
           (typeof body.firebaseIdToken === "string" && body.firebaseIdToken.trim()) || extractBearerToken(request);
@@ -1152,6 +1272,7 @@ export default {
           origin: checkoutOrigin,
           desiredDeliveryAt: desiredDeliveryAtRaw || undefined,
           desiredDeliverySlotLabel: desiredDeliverySlotLabelRaw || undefined,
+          notes,
           userUid,
         };
 
@@ -1268,6 +1389,7 @@ export default {
           origin: checkoutOrigin,
           desiredDeliveryAt: desiredDeliveryAtRaw || undefined,
           desiredDeliverySlotLabel: desiredDeliverySlotLabelRaw || undefined,
+          notes,
           userUid,
         };
 
@@ -1838,6 +1960,64 @@ export default {
         return json({ orders }, 200, cors);
       }
 
+      if (request.method === "GET" && url.pathname === "/me/orders") {
+        const token = extractBearerToken(request);
+        if (!token) {
+          return json({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
+        }
+        const uid = await verifyFirebaseIdToken(env, token);
+        if (!uid) {
+          return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+        }
+
+        const rawLimit = Number(url.searchParams.get("limit") ?? "30");
+        const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 30)) : 30;
+        const orderIds = await readUserOrders(env, uid);
+        if (orderIds.length === 0) {
+          return json({ orders: [] }, 200, cors);
+        }
+
+        const records = await Promise.all(orderIds.map((id) => readOrder(env, id)));
+        const orders = records
+          .filter((order): order is OrderRecord => Boolean(order))
+          .map((order) => {
+            const normalized = normalizeOrderStatus(order);
+            return {
+              id: normalized.id,
+              status: normalized.status,
+              createdAt: normalized.createdAt,
+              total: normalized.total,
+              paymentMethod: normalized.paymentMethod,
+              deliveryAddress: normalized.deliveryAddress,
+              desiredDeliveryAt: normalized.desiredDeliveryAt ?? null,
+              desiredDeliverySlotLabel: normalized.desiredDeliverySlotLabel ?? null,
+            };
+          })
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+          .slice(0, limit);
+
+        return json({ orders }, 200, cors);
+      }
+
+      if (request.method === "POST" && url.pathname === "/me/push/subscribe") {
+        const token = extractBearerToken(request);
+        if (!token) {
+          return json({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
+        }
+        const uid = await verifyFirebaseIdToken(env, token);
+        if (!uid) {
+          return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+        }
+        const body: any = await request.json().catch(() => null);
+        const fcmToken = typeof body?.token === "string" ? body.token.trim() : "";
+        if (!fcmToken) {
+          return json({ error: "TOKEN_REQUIRED", message: "Token requis." }, 400, cors);
+        }
+
+        await upsertUserFcmToken(env, uid, fcmToken, request.headers.get("User-Agent"));
+        return json({ ok: true }, 200, cors);
+      }
+
       if (request.method === "GET" && url.pathname.startsWith("/api/orders/")) {
         const orderId = url.pathname.replace("/api/orders/", "").trim();
         if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
@@ -1858,6 +2038,7 @@ export default {
             status: order.status,
             statusUpdatedAt: order.statusUpdatedAt,
             adminHubUrl: order.adminHubUrl,
+            notes: order.notes ?? null,
             desiredDeliveryAt: order.desiredDeliveryAt,
             desiredDeliverySlotLabel: order.desiredDeliverySlotLabel,
           },
@@ -1888,6 +2069,7 @@ export default {
             status: order.status,
             statusUpdatedAt: order.statusUpdatedAt,
             adminHubUrl: order.adminHubUrl,
+            notes: order.notes ?? null,
             desiredDeliveryAt: order.desiredDeliveryAt,
             desiredDeliverySlotLabel: order.desiredDeliverySlotLabel,
           },

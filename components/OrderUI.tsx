@@ -12,6 +12,9 @@ import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { prefersReducedMotion, motionSafeHover, motionSafeTap, motionSafeTransition } from '@/src/lib/motion';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { clearCustomerProfile, loadCustomerProfile, saveCustomerProfile } from '@/src/lib/customerProfile';
+import { isOpenNow, getNextOpenSlot } from '@/src/lib/openingHours';
+import { DELIVERY_STEP_MINUTES, DELIVERY_WINDOWS } from '@/src/config/delivery';
+import { isValidPhoneBasic, normalizePhoneDigits } from '@/src/lib/phone';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -45,23 +48,6 @@ type DeliveryInfo = {
   city: string;
   note: string;
 };
-
-type DeliveryWindow = {
-  start: string;
-  end: string;
-};
-
-const DELIVERY_WINDOWS: Record<number, DeliveryWindow | null> = {
-  0: { start: '16:30', end: '23:00' },
-  1: null,
-  2: { start: '11:00', end: '23:00' },
-  3: { start: '11:00', end: '23:00' },
-  4: { start: '11:00', end: '23:00' },
-  5: { start: '11:00', end: '23:00' },
-  6: { start: '11:00', end: '23:00' },
-};
-
-const DELIVERY_STEP_MINUTES = 15;
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
@@ -132,6 +118,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [deliveryFormError, setDeliveryFormError] = useState<string | null>(null);
   const [showDistanceBanner, setShowDistanceBanner] = useState(false);
   const [lastCashWhatsAppUrl, setLastCashWhatsAppUrl] = useState<string | null>(null);
+  const [openingInfo, setOpeningInfo] = useState<{ isOpen: boolean; nextLabel: string | null }>({
+    isOpen: true,
+    nextLabel: null,
+  });
   const [deliveryScheduleMode, setDeliveryScheduleMode] = useState<'ASAP' | 'SCHEDULED'>('ASAP');
   const [desiredDeliveryInputValue, setDesiredDeliveryInputValue] = useState('');
   const [desiredDeliveryAt, setDesiredDeliveryAt] = useState<string | null>(null);
@@ -237,7 +227,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       setDeliveryInfo((prev) => ({
         ...prev,
         name: prev.name || saved?.deliveryInfo?.name || '',
-        phone: prev.phone || saved?.deliveryInfo?.phone || '',
+        phone: prev.phone || normalizePhoneDigits(saved?.deliveryInfo?.phone || ''),
         address: prev.address || saved?.deliveryInfo?.address || '',
         postalCode: prev.postalCode || saved?.deliveryInfo?.postalCode || '',
         city: prev.city || saved?.deliveryInfo?.city || '',
@@ -270,12 +260,30 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setDeliveryInfo((prev) => ({
       ...prev,
       name: prev.name || profile.name || '',
-      phone: prev.phone || profile.phone || '',
+      phone: prev.phone || normalizePhoneDigits(profile.phone || ''),
       address: prev.address || profile.address || '',
       postalCode: prev.postalCode || profile.postalCode || '',
       city: prev.city || profile.city || '',
     }));
   }, [profile]);
+
+  useEffect(() => {
+    const refreshOpeningInfo = () => {
+      const now = new Date();
+      const isOpen = isOpenNow(now);
+      const nextOpen = isOpen ? null : getNextOpenSlot(now);
+      setOpeningInfo({ isOpen, nextLabel: nextOpen?.label ?? null });
+
+      if (!isOpen && deliveryScheduleMode === 'ASAP') {
+        setDeliveryScheduleMode('SCHEDULED');
+        setCheckoutInfo('Snack fermé — sélectionnez un créneau pour programmer.');
+      }
+    };
+
+    refreshOpeningInfo();
+    const interval = window.setInterval(refreshOpeningInfo, 60 * 1000);
+    return () => window.clearInterval(interval);
+  }, [deliveryScheduleMode]);
 
   useEffect(() => {
     try {
@@ -596,7 +604,8 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   };
 
   const handleDeliveryChange = (field: keyof DeliveryInfo) => (value: string) => {
-    setDeliveryInfo((prev) => ({ ...prev, [field]: value }));
+    const nextValue = field === 'phone' ? normalizePhoneDigits(value) : value;
+    setDeliveryInfo((prev) => ({ ...prev, [field]: nextValue }));
     setDeliveryFormError(null);
   };
 
@@ -717,12 +726,23 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       return false;
     }
 
+    if (!isValidPhoneBasic(deliveryInfo.phone)) {
+      setDeliveryFormError('Numéro de téléphone invalide.');
+      checkoutFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return false;
+    }
+
     setDeliveryFormError(null);
     return true;
   };
 
   const validateBeforeCheckout = (): boolean => {
     if (!validateDeliveryForm()) {
+      return false;
+    }
+    if (!openingInfo.isOpen && deliveryScheduleMode === 'ASAP') {
+      setCheckoutError('Snack fermé — choisissez un créneau pour programmer.');
+      setDeliveryScheduleMode('SCHEDULED');
       return false;
     }
     if (!validateScheduledDelivery()) {
@@ -781,6 +801,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         desiredDeliveryAt: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliveryAt : null,
         desiredDeliverySlotLabel: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliverySlotLabel : null,
         firebaseIdToken: firebaseIdToken ?? undefined,
+        notes: deliveryInfo.note.trim() || undefined,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Impossible de finaliser le paiement.';
@@ -820,6 +841,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         desiredDeliveryAt: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliveryAt : null,
         desiredDeliverySlotLabel: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliverySlotLabel : null,
         firebaseIdToken: firebaseIdToken ?? undefined,
+        notes: deliveryInfo.note.trim() || undefined,
       });
 
       const publicOrigin = resolvePublicOrigin() || window.location.origin;
@@ -833,6 +855,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
         lines: buildOrderLines(),
         desiredDeliveryAt: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliveryAt : null,
         desiredDeliverySlotLabel: deliveryScheduleMode === 'SCHEDULED' ? desiredDeliverySlotLabel : null,
+        notes: deliveryInfo.note.trim() || undefined,
       });
 
       const url = buildWhatsAppUrl(getWhatsAppPhone(), message);
@@ -1368,11 +1391,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Note (porte, étage...)</label>
+                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Instructions (sans oignons, etc.)</label>
                             <textarea
                               value={deliveryInfo.note}
                               onChange={(e) => handleDeliveryChange('note')(e.target.value)}
-                              placeholder="Infos complémentaires"
+                              placeholder="Ex: sans oignons, sauce à part"
                               className="w-full p-3 border border-gray-300 rounded focus:border-snack-gold focus:ring-1 focus:ring-snack-gold outline-none bg-white font-medium min-h-[80px]"
                             />
                           </div>
@@ -1381,15 +1404,21 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                             <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">
                               Quand souhaitez-vous être livré ?
                             </div>
+                            {!openingInfo.isOpen && (
+                              <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+                                Fermé actuellement. {openingInfo.nextLabel ? `Prochaine ouverture : ${openingInfo.nextLabel}.` : 'Prochaine ouverture à venir.'}
+                              </div>
+                            )}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleScheduleModeChange('ASAP')}
+                                disabled={!openingInfo.isOpen}
                                 className={`rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
                                   deliveryScheduleMode === 'ASAP'
                                     ? 'border-snack-gold bg-snack-gold/10 text-snack-black'
                                     : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                                }`}
+                                } ${!openingInfo.isOpen ? 'opacity-60 cursor-not-allowed' : ''}`}
                               >
                                 Dès que possible
                               </button>

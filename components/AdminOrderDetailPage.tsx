@@ -4,6 +4,7 @@ import { resolveWorkerBaseUrl } from '../lib/stripe';
 import { OrderTimeline } from './OrderTimeline';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { Page } from '../types';
+import { toWhatsAppDigits } from '@/src/lib/phone';
 
 interface AdminOrderDetailPageProps {
   navigateTo: (page: Page) => void;
@@ -57,8 +58,6 @@ const statusLabels: Record<OrderStatus, string> = {
 };
 
 const formatCents = (value: number) => `${(value / 100).toFixed(2).replace('.', ',')} €`;
-
-const normalizePhone = (value: string) => value.replace(/\D/g, '');
 
 export const AdminOrderDetailPage: React.FC<AdminOrderDetailPageProps> = ({ navigateTo }) => {
   const orderId = useMemo(() => {
@@ -218,7 +217,7 @@ export const AdminOrderDetailPage: React.FC<AdminOrderDetailPageProps> = ({ navi
     );
   }
 
-  const phoneDigits = order.phone ? normalizePhone(order.phone) : '';
+  const phoneDigits = order.phone ? toWhatsAppDigits(order.phone) : '';
 
   return (
     <div className="min-h-screen bg-snack-light pt-24 pb-16 px-4">
