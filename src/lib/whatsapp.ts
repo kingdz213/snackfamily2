@@ -1,3 +1,5 @@
+import { toWhatsAppDigits } from '@/src/lib/phone';
+
 type OrderMessageParams = {
   orderId: string;
   paymentLabel: string;
@@ -6,11 +8,8 @@ type OrderMessageParams = {
   lines: string[];
   desiredDeliveryAt?: string | null;
   desiredDeliverySlotLabel?: string | null;
+  notes?: string | null;
 };
-
-function sanitizePhone(phone: string) {
-  return phone.replace(/\s+/g, '').replace(/[^+\d]/g, '').replace(/^\+/, '');
-}
 
 export function getWhatsAppPhone(): string {
   return (import.meta.env.VITE_WHATSAPP_ORDER_PHONE || '+32465671893').trim();
@@ -26,7 +25,7 @@ export function resolvePublicOrigin(): string {
 }
 
 export function buildWhatsAppUrl(phone: string, message: string): string {
-  const sanitized = sanitizePhone(phone);
+  const sanitized = toWhatsAppDigits(phone);
   const baseUrl = sanitized ? `https://wa.me/${sanitized}` : 'https://wa.me/';
   const encoded = encodeURIComponent(message);
   return `${baseUrl}?text=${encoded}`;
@@ -40,17 +39,20 @@ export function buildOrderMessage({
   lines,
   desiredDeliveryAt,
   desiredDeliverySlotLabel,
+  notes,
 }: OrderMessageParams): string {
   const recap = lines.length > 0 ? lines.join('\n') : '- (aucun article)';
   const desiredLabel =
     desiredDeliverySlotLabel ||
     (desiredDeliveryAt ? new Date(desiredDeliveryAt).toLocaleString('fr-BE') : null);
   const scheduledLine = desiredLabel ? `Heure souhaitée: ${desiredLabel}\n` : '';
+  const notesLine = notes ? `Instructions: ${notes}\n` : '';
   const adminLine = adminHubUrl ? `✅ Terminer la commande (admin): ${adminHubUrl}\n` : '';
   return (
     `Nouvelle commande #${orderId}\n` +
     `Paiement: ${paymentLabel}\n` +
     scheduledLine +
+    notesLine +
     adminLine +
     `📦 Suivi client: ${publicOrderUrl}\n` +
     `\n` +

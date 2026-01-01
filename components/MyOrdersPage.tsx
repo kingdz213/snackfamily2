@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { CalendarClock, ChevronRight } from 'lucide-react';
-import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
-import { db } from '@/src/firebase';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { Page } from '../types';
+import { resolveWorkerBaseUrl } from '../lib/stripe';
+import { getStoredPushToken, requestPushPermissionAndRegister } from '@/src/lib/push';
 
 interface MyOrdersPageProps {
   navigateTo: (page: Page) => void;
@@ -56,10 +56,25 @@ const formatSchedule = (value?: string | null, label?: string | null) => {
 };
 
 export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({ navigateTo }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, getIdToken } = useAuth();
   const [orders, setOrders] = useState<MyOrder[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [supportsPush, setSupportsPush] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [pushMessage, setPushMessage] = useState<string | null>(null);
+  const [pushLoading, setPushLoading] = useState(false);
+
+  const endpointBase = resolveWorkerBaseUrl();
+
+  useEffect(() => {
+    setNotificationsEnabled(Boolean(getStoredPushToken()));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setSupportsPush('Notification' in window);
+  }, []);
 
   useEffect(() => {
     if (!user) {
@@ -67,34 +82,64 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({ navigateTo }) => {
       setIsLoading(false);
       return;
     }
-    if (!db) {
-      setOrders([]);
-      setError('Configuration Firebase incomplète.');
-      setIsLoading(false);
-      return;
-    }
 
     setError(null);
     setIsLoading(true);
-    const q = query(collection(db, 'orders'), where('userId', '==', user.uid), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const next = snapshot.docs.map((docSnap) => {
-          const data = docSnap.data() as Omit<MyOrder, 'id'>;
-          return { id: docSnap.id, ...data };
+    const controller = new AbortController();
+
+    const fetchOrders = async () => {
+      try {
+        const token = await getIdToken();
+        if (!token) {
+          setError('Connexion expirée. Merci de vous reconnecter.');
+          setOrders([]);
+          return;
+        }
+        const response = await fetch(`${endpointBase}/me/orders?limit=30`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
         });
-        setOrders(next);
-        setIsLoading(false);
-      },
-      (err) => {
-        setError(err.message || 'Impossible de charger vos commandes.');
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          const message = payload?.message || 'Impossible de charger vos commandes.';
+          throw new Error(message);
+        }
+        const data = (await response.json()) as { orders: MyOrder[] };
+        setOrders(data.orders ?? []);
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setError(err instanceof Error ? err.message : 'Impossible de charger vos commandes.');
+      } finally {
         setIsLoading(false);
       }
-    );
+    };
 
-    return () => unsubscribe();
-  }, [user]);
+    void fetchOrders();
+    return () => controller.abort();
+  }, [endpointBase, getIdToken, user]);
+
+  const handlePushEnable = async () => {
+    if (!user) return;
+    setPushMessage(null);
+    setPushLoading(true);
+    try {
+      const token = await getIdToken();
+      if (!token) {
+        setPushMessage('Impossible de récupérer le token.');
+        return;
+      }
+      const result = await requestPushPermissionAndRegister(token);
+      if (result.status === 'granted') {
+        setNotificationsEnabled(true);
+      }
+      setPushMessage(result.message ?? 'Notifications mises à jour');
+    } catch (err) {
+      setPushMessage(err instanceof Error ? err.message : 'Notifications impossibles.');
+    } finally {
+      setPushLoading(false);
+      window.setTimeout(() => setPushMessage(null), 2200);
+    }
+  };
 
   if (!loading && !user) {
     return (
@@ -116,15 +161,30 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({ navigateTo }) => {
   return (
     <div className="min-h-screen bg-snack-light pt-24 pb-16 px-4">
       <div className="max-w-4xl mx-auto space-y-6">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-display font-bold text-snack-black">Mes commandes</h1>
             <p className="text-sm text-gray-600">Historique et statuts en temps réel.</p>
           </div>
-          <div className="text-xs text-gray-500">Synchronisation automatique</div>
+          <div className="flex flex-col items-start sm:items-end gap-2">
+            <div className="text-xs text-gray-500">Synchronisation automatique</div>
+            <button
+              type="button"
+              onClick={handlePushEnable}
+              disabled={!supportsPush || pushLoading || notificationsEnabled}
+              className={`rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
+                notificationsEnabled
+                  ? 'bg-snack-black text-snack-gold'
+                  : 'border border-snack-gold bg-snack-gold/10 text-snack-black hover:bg-snack-gold'
+              } ${!supportsPush || pushLoading ? 'opacity-60 cursor-not-allowed' : ''}`}
+            >
+              {notificationsEnabled ? 'Notifications activées' : pushLoading ? 'Activation...' : 'Activer notifications'}
+            </button>
+          </div>
         </div>
 
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+        {pushMessage && <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-4 py-2 text-xs text-emerald-700">{pushMessage}</div>}
 
         {isLoading ? (
           <div className="flex items-center justify-center py-10">
@@ -161,15 +221,15 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({ navigateTo }) => {
                     </div>
                   </div>
                   <div className="text-sm text-gray-600">{order.deliveryAddress}</div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                      window.history.pushState({}, '', `/mes-commandes/${order.id}`);
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.history.pushState({}, '', `/order/${order.id}`);
                       window.dispatchEvent(new PopStateEvent('popstate'));
-                      }}
-                      className="inline-flex items-center gap-2 text-sm font-semibold text-snack-black hover:text-snack-gold transition-colors"
-                    >
-                    Détails
+                    }}
+                    className="inline-flex items-center gap-2 text-sm font-semibold text-snack-black hover:text-snack-gold transition-colors"
+                  >
+                    Voir
                     <ChevronRight size={16} />
                   </button>
                 </div>

@@ -6,6 +6,7 @@ import { Trash2 } from 'lucide-react';
 import { MENU_CATEGORIES } from '../data/menuData';
 import { MenuCategory, MenuItem } from '../types';
 import { applyAvailabilityOverrides } from '@/src/lib/menuAvailability';
+import { toWhatsAppDigits } from '@/src/lib/phone';
 
 type OrderStatus =
   | 'RECEIVED'
@@ -33,6 +34,7 @@ type AdminOrderSummary = {
   adminHubUrl?: string;
   desiredDeliveryAt?: string;
   desiredDeliverySlotLabel?: string;
+  notes?: string;
 };
 
 type AdminOrdersResponse = {
@@ -60,8 +62,6 @@ const statusLabels: Record<OrderStatus, string> = {
 const formatCents = (value: number) => `${(value / 100).toFixed(2).replace('.', ',')} €`;
 
 const formatDate = (value: string) => new Date(value).toLocaleString('fr-BE');
-
-const normalizePhone = (value: string) => value.replace(/\D/g, '');
 
 const formatSchedule = (value?: string, label?: string) => {
   if (label) return label;
@@ -462,7 +462,7 @@ export const AdminDashboardPage: React.FC = () => {
                 orders.map((order) => {
                   const isStripePaid = order.paymentMethod === 'stripe' && order.amountDueCents === 0;
                   const isCashDue = order.paymentMethod === 'cash' && order.amountDueCents > 0;
-                  const whatsappTarget = order.phone ? normalizePhone(order.phone) : '';
+                  const whatsappTarget = order.phone ? toWhatsAppDigits(order.phone) : '';
 
                   return (
                     <div key={order.id} className="border border-gray-200 rounded-2xl bg-white p-5 shadow-sm space-y-4">
@@ -505,21 +505,21 @@ export const AdminDashboardPage: React.FC = () => {
                           <OrderTimeline status={order.status} />
                         </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm text-gray-600">
-                      <div>
-                        <div className="text-xs uppercase text-gray-400 font-semibold">Paiement</div>
-                        <div>
-                          {order.paymentMethod === 'stripe'
-                            ? 'Carte (Stripe)'
-                            : 'Espèces'}{' '}
-                          • {formatCents(order.totalCents)}
-                        </div>
-                        {(order.desiredDeliveryAt || order.desiredDeliverySlotLabel) && (
-                          <div className="text-xs text-gray-500">
-                            Heure souhaitée : {formatSchedule(order.desiredDeliveryAt, order.desiredDeliverySlotLabel)}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm text-gray-600">
+                          <div>
+                            <div className="text-xs uppercase text-gray-400 font-semibold">Paiement</div>
+                            <div>
+                              {order.paymentMethod === 'stripe'
+                                ? 'Carte (Stripe)'
+                                : 'Espèces'}{' '}
+                              • {formatCents(order.totalCents)}
+                            </div>
+                            {(order.desiredDeliveryAt || order.desiredDeliverySlotLabel) && (
+                              <div className="text-xs text-gray-500">
+                                Heure souhaitée : {formatSchedule(order.desiredDeliveryAt, order.desiredDeliverySlotLabel)}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
                           <div>
                             <div className="text-xs uppercase text-gray-400 font-semibold">Contact</div>
                             {order.phone ? (
@@ -546,6 +546,11 @@ export const AdminDashboardPage: React.FC = () => {
                             <div>{order.itemsCount} article(s)</div>
                           </div>
                         </div>
+                        {order.notes && (
+                          <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                            Instructions : {order.notes}
+                          </div>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-bold uppercase">

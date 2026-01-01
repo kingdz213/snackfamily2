@@ -14,6 +14,7 @@ export type CheckoutPayload = {
   deliveryLng: number;
   desiredDeliveryAt?: string | null;
   desiredDeliverySlotLabel?: string | null;
+  notes?: string;
   firebaseIdToken?: string;
 };
 
@@ -25,6 +26,7 @@ export type CashOrderPayload = {
   origin: string;
   desiredDeliveryAt?: string | null;
   desiredDeliverySlotLabel?: string | null;
+  notes?: string;
   firebaseIdToken?: string;
 };
 
