@@ -3,7 +3,7 @@ import { MENU_CATEGORIES } from '../data/menuData';
 import { MenuItem, MenuCategory } from '../types';
 import { Plus } from 'lucide-react';
 import { prefersReducedMotion } from '@/src/lib/motion';
-import { applyAvailabilityOverrides, fetchAvailability } from '@/src/lib/menuAvailability';
+import { applyAvailabilityToMenu, fetchMenuAvailability } from '@/src/lib/menuAvailability';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
 
 interface OrderPageProps {
@@ -19,9 +19,9 @@ export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
   useEffect(() => {
     let isMounted = true;
     const loadAvailability = async () => {
-      const unavailableById = await fetchAvailability(endpointBase);
+      const availability = await fetchMenuAvailability(endpointBase);
       if (!isMounted) return;
-      setCategories(applyAvailabilityOverrides(MENU_CATEGORIES, unavailableById));
+      setCategories(applyAvailabilityToMenu(MENU_CATEGORIES, availability));
     };
     void loadAvailability();
     return () => {
