@@ -11,6 +11,7 @@ import { MENU_CATEGORIES } from '../data/menuData';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { prefersReducedMotion, motionSafeHover, motionSafeTap, motionSafeTransition } from '@/src/lib/motion';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { clearCustomerProfile, loadCustomerProfile, saveCustomerProfile } from '@/src/lib/customerProfile';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -213,16 +214,54 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    try {
-      const saved = localStorage.getItem('sf2_delivery');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object') {
-          setDeliveryInfo((prev) => ({ ...prev, ...parsed }));
+
+    let saved = loadCustomerProfile();
+
+    if (!saved) {
+      try {
+        const legacy = localStorage.getItem('sf2_delivery');
+        if (legacy) {
+          const parsed = JSON.parse(legacy);
+          if (parsed && typeof parsed === 'object') {
+            saveCustomerProfile({ deliveryInfo: parsed });
+            localStorage.removeItem('sf2_delivery');
+            saved = loadCustomerProfile();
+          }
+        }
+      } catch (error) {
+        warnDev('[OrderUI] Failed to migrate legacy delivery info', error);
+      }
+    }
+
+    if (saved?.deliveryInfo) {
+      setDeliveryInfo((prev) => ({
+        ...prev,
+        name: prev.name || saved?.deliveryInfo?.name || '',
+        phone: prev.phone || saved?.deliveryInfo?.phone || '',
+        address: prev.address || saved?.deliveryInfo?.address || '',
+        postalCode: prev.postalCode || saved?.deliveryInfo?.postalCode || '',
+        city: prev.city || saved?.deliveryInfo?.city || '',
+        note: prev.note || saved?.deliveryInfo?.note || '',
+      }));
+    }
+
+    if (Number.isFinite(saved?.deliveryLat)) {
+      setDeliveryLat(saved?.deliveryLat);
+    }
+    if (Number.isFinite(saved?.deliveryLng)) {
+      setDeliveryLng(saved?.deliveryLng);
+    }
+
+    if (saved?.deliveryScheduleMode) {
+      setDeliveryScheduleMode(saved.deliveryScheduleMode);
+      if (saved.deliveryScheduleMode === 'SCHEDULED' && saved.desiredDeliveryAt) {
+        setDesiredDeliveryAt(saved.desiredDeliveryAt ?? null);
+        setDesiredDeliverySlotLabel(saved.desiredDeliverySlotLabel ?? null);
+        const desiredDate = new Date(saved.desiredDeliveryAt);
+        if (!Number.isNaN(desiredDate.getTime())) {
+          setDesiredDeliveryInputValue(formatDateTimeLocal(desiredDate));
         }
       }
-    } catch (error) {
-      warnDev('[OrderUI] Failed to load delivery info', error);
     }
   }, []);
 
@@ -239,13 +278,19 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   }, [profile]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
     try {
-      localStorage.setItem('sf2_delivery', JSON.stringify(deliveryInfo));
+      saveCustomerProfile({
+        deliveryInfo,
+        deliveryLat,
+        deliveryLng,
+        deliveryScheduleMode,
+        desiredDeliveryAt,
+        desiredDeliverySlotLabel,
+      });
     } catch (error) {
-      warnDev('[OrderUI] Failed to save delivery info', error);
+      warnDev('[OrderUI] Failed to save customer profile', error);
     }
-  }, [deliveryInfo]);
+  }, [deliveryInfo, deliveryLat, deliveryLng, deliveryScheduleMode, desiredDeliveryAt, desiredDeliverySlotLabel]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -584,6 +629,20 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setDesiredDeliveryInputValue(formatDateTimeLocal(rounded));
     setDesiredDeliveryAt(rounded.toISOString());
     setDesiredDeliverySlotLabel(formatSlotLabel(rounded));
+    setDesiredDeliveryError(null);
+  };
+
+  const handleClearCustomerInfo = () => {
+    if (typeof window === 'undefined') return;
+    if (!window.confirm('Supprimer vos informations enregistrées ?')) return;
+    clearCustomerProfile();
+    setDeliveryInfo({ name: '', phone: '', address: '', postalCode: '', city: '', note: '' });
+    setDeliveryLat(undefined);
+    setDeliveryLng(undefined);
+    setDeliveryScheduleMode('ASAP');
+    setDesiredDeliveryInputValue('');
+    setDesiredDeliveryAt(null);
+    setDesiredDeliverySlotLabel(null);
     setDesiredDeliveryError(null);
   };
 
@@ -1242,8 +1301,17 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
                         {/* Livraison obligatoire */}
                         <div ref={checkoutFormRef} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                        <div className="font-bold text-snack-black uppercase text-sm tracking-wider">
-                          Livraison <span className="text-gray-500 normal-case">( +{DELIVERY_FEE_EUR.toFixed(2)}€ )</span>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="font-bold text-snack-black uppercase text-sm tracking-wider">
+                            Livraison <span className="text-gray-500 normal-case">( +{DELIVERY_FEE_EUR.toFixed(2)}€ )</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleClearCustomerInfo}
+                            className="text-xs font-bold uppercase text-gray-400 hover:text-red-600 underline"
+                          >
+                            Effacer mes infos
+                          </button>
                         </div>
 
                         <div className="mt-3 space-y-3">
