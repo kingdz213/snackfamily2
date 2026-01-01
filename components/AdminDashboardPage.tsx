@@ -139,6 +139,7 @@ export const AdminDashboardPage: React.FC = () => {
   const [storeSettingsLoading, setStoreSettingsLoading] = useState(false);
   const [storeSettingsSaving, setStoreSettingsSaving] = useState(false);
   const [storeSettingsError, setStoreSettingsError] = useState<string | null>(null);
+  const [storeSettingsErrorDetails, setStoreSettingsErrorDetails] = useState<Record<string, unknown> | null>(null);
   const [storeSettingsToast, setStoreSettingsToast] = useState<string | null>(null);
   const [newExceptionDate, setNewExceptionDate] = useState('');
 
@@ -278,6 +279,7 @@ export const AdminDashboardPage: React.FC = () => {
       setAvailabilityToast(null);
       setStoreSettings(DEFAULT_STORE_SETTINGS);
       setStoreSettingsError(null);
+      setStoreSettingsErrorDetails(null);
       setStoreSettingsToast(null);
     }
   }, [syncAvailability, token]);
@@ -475,6 +477,7 @@ export const AdminDashboardPage: React.FC = () => {
   const saveStoreSettings = async () => {
     if (!token) return;
     setStoreSettingsError(null);
+    setStoreSettingsErrorDetails(null);
     setStoreSettingsSaving(true);
     const requestBody = {
       mode: storeSettings.mode,
@@ -494,18 +497,23 @@ export const AdminDashboardPage: React.FC = () => {
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
         const message = payload?.message || payload?.error || 'Impossible de sauvegarder.';
-        const details = typeof payload?.details === 'string' ? payload.details.trim() : '';
-        const fullMessage = details ? `${message} (${details})` : message;
+        const code = payload?.code ? String(payload.code) : '';
+        const hint = payload?.hint ? String(payload.hint) : '';
+        const fullMessage = `${message}${code ? ` (${code})` : ''}${hint ? ` — ${hint}` : ''}`;
         if (import.meta.env.DEV) {
           console.warn('Store settings save failed', {
             status: response.status,
             payload,
           });
         }
-        throw new Error(fullMessage);
+        setStoreSettingsError(fullMessage);
+        setStoreSettingsErrorDetails(payload && typeof payload === 'object' ? payload : null);
+        return;
       }
       if (!payload) {
-        throw new Error('Réponse invalide du serveur.');
+        setStoreSettingsError('Réponse invalide du serveur.');
+        setStoreSettingsErrorDetails(null);
+        return;
       }
       hydrateStoreSettings(payload);
       setStoreSettingsToast('Sauvegardé ✅');
@@ -964,7 +972,15 @@ export const AdminDashboardPage: React.FC = () => {
 
           {storeSettingsError && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {storeSettingsError}
+              <div className="font-semibold">{storeSettingsError}</div>
+              {storeSettingsErrorDetails && (
+                <details className="mt-2 text-xs text-red-800">
+                  <summary className="cursor-pointer font-semibold">Détails</summary>
+                  <pre className="mt-2 whitespace-pre-wrap rounded-md bg-red-100 p-2 text-[11px] text-red-900">
+                    {JSON.stringify(storeSettingsErrorDetails, null, 2)}
+                  </pre>
+                </details>
+              )}
             </div>
           )}
           {storeSettingsToast && (
