@@ -15,6 +15,8 @@ import { clearCustomerProfile, loadCustomerProfile, saveCustomerProfile } from '
 import { useStoreStatus } from '@/src/lib/storeStatus';
 import { DELIVERY_STEP_MINUTES, DELIVERY_WINDOWS } from '@/src/config/delivery';
 import { isValidPhoneBasic, normalizePhoneDigits } from '@/src/lib/phone';
+import { applyAvailabilityToMenu, fetchMenuAvailability } from '@/src/lib/menuAvailability';
+import { resolveWorkerBaseUrl } from '../lib/stripe';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -110,6 +112,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [selectedVeggies, setSelectedVeggies] = useState<string[]>([]);
   const [variant, setVariant] = useState<'Menu/Frites' | 'Solo'>('Menu/Frites');
   const [selectedOptions, setSelectedOptions] = useState<CartSelectedOption[]>([]);
+  const [availabilityCategories, setAvailabilityCategories] = useState<MenuCategory[]>(MENU_CATEGORIES);
 
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
@@ -118,6 +121,20 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [deliveryFormError, setDeliveryFormError] = useState<string | null>(null);
   const [showDistanceBanner, setShowDistanceBanner] = useState(false);
   const [lastCashWhatsAppUrl, setLastCashWhatsAppUrl] = useState<string | null>(null);
+  const endpointBase = useMemo(() => resolveWorkerBaseUrl(), []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadAvailability = async () => {
+      const availability = await fetchMenuAvailability(endpointBase);
+      if (!isMounted) return;
+      setAvailabilityCategories(applyAvailabilityToMenu(MENU_CATEGORIES, availability));
+    };
+    void loadAvailability();
+    return () => {
+      isMounted = false;
+    };
+  }, [endpointBase]);
   const { status: storeStatus } = useStoreStatus();
   const isStoreClosed = storeStatus?.isOpen === false;
   const storeDetail = storeStatus?.detail ?? null;
@@ -427,7 +444,10 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const itemsSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalWithDelivery = itemsSubtotal + DELIVERY_FEE_EUR;
   const isSelectedItemUnavailable = selectedItem?.unavailable ?? false;
-  const recommendations = useMemo(() => getRecommendations(cartItems, MENU_CATEGORIES), [cartItems]);
+  const recommendations = useMemo(
+    () => getRecommendations(cartItems, availabilityCategories),
+    [cartItems, availabilityCategories]
+  );
   const recommendationMissing = recommendations.missing;
   const hasCompletionSuggestions = recommendationMissing > 0 && recommendations.suggestions.length > 0;
   const hasUpsellSuggestions = recommendationMissing <= 0 && recommendations.suggestions.length > 0;

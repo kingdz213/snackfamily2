@@ -18,9 +18,8 @@ interface Env {
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
-const MENU_AVAILABILITY_KEY = "menu:availability:v1";
-const MENU_AVAILABILITY_UPDATED_KEY = "menu:availability:updatedAt";
 const STORE_SETTINGS_PATH = "settings/store";
+const MENU_AVAILABILITY_PATH = "settings/menuAvailability";
 const BRUSSELS_TIME_ZONE = "Europe/Brussels";
 
 // Business rules
@@ -309,40 +308,73 @@ async function removeUserOrder(env: Env, uid: string, orderId: string) {
   await env.ORDERS_KV!.put(userOrdersKey(uid), JSON.stringify(next));
 }
 
-type MenuAvailabilityState = {
-  unavailableById: Record<string, boolean>;
-  updatedAt?: string | null;
-  kv: boolean;
+type MenuAvailabilityOverride = {
+  unavailable: boolean;
+  until?: string | null;
 };
 
-function normalizeAvailabilityMap(raw: unknown): Record<string, boolean> {
+type MenuAvailabilityState = {
+  overrides: Record<string, MenuAvailabilityOverride>;
+  updatedAt?: string | null;
+};
+
+function normalizeAvailabilityOverride(raw: unknown): MenuAvailabilityOverride | null {
+  if (typeof raw === "boolean") return { unavailable: raw, until: null };
+  if (!raw || typeof raw !== "object") return null;
+  const data = raw as { unavailable?: unknown; until?: unknown };
+  if (typeof data.unavailable !== "boolean") return null;
+  let until: string | null | undefined;
+  if (data.until === null) {
+    until = null;
+  } else if (typeof data.until === "string") {
+    until = data.until;
+  }
+  return { unavailable: data.unavailable, ...(until !== undefined ? { until } : {}) };
+}
+
+function normalizeAvailabilityMap(raw: unknown): Record<string, MenuAvailabilityOverride> {
   if (!raw || typeof raw !== "object") return {};
   return Object.fromEntries(
-    Object.entries(raw as Record<string, unknown>).filter(([, value]) => typeof value === "boolean")
+    Object.entries(raw as Record<string, unknown>)
+      .map(([key, value]) => {
+        const normalized = normalizeAvailabilityOverride(value);
+        return normalized ? [key, normalized] : null;
+      })
+      .filter((entry): entry is [string, MenuAvailabilityOverride] => Boolean(entry))
   );
 }
 
 async function readMenuAvailability(env: Env): Promise<MenuAvailabilityState> {
-  if (!env.ORDERS_KV) throw new Error("ORDERS_KV not bound");
-  const raw = await env.ORDERS_KV.get(MENU_AVAILABILITY_KEY);
-  if (!raw) {
-    return { unavailableById: {}, updatedAt: null, kv: false };
+  const response = await firestoreRequest(env, MENU_AVAILABILITY_PATH, { method: "GET" });
+  if (!response) {
+    return { overrides: {}, updatedAt: null };
   }
-  let parsed: Record<string, boolean> = {};
-  try {
-    parsed = normalizeAvailabilityMap(JSON.parse(raw));
-  } catch {
-    parsed = {};
+  if (response.status === 404) {
+    return { overrides: {}, updatedAt: null };
   }
-  const updatedAt = (await env.ORDERS_KV.get(MENU_AVAILABILITY_UPDATED_KEY)) || null;
-  return { unavailableById: parsed, updatedAt, kv: true };
+  if (!response.ok) {
+    return { overrides: {}, updatedAt: null };
+  }
+  const doc: any = await response.json().catch(() => null);
+  const parsed = fromFirestoreValue({ mapValue: { fields: doc?.fields ?? {} } });
+  const overrides = normalizeAvailabilityMap(parsed?.overrides ?? parsed?.availability ?? {});
+  const updatedAt = typeof parsed?.updatedAt === "string" ? parsed.updatedAt : null;
+  return { overrides, updatedAt };
 }
 
-async function writeMenuAvailability(env: Env, map: Record<string, boolean>) {
-  if (!env.ORDERS_KV) throw new Error("ORDERS_KV not bound");
-  await env.ORDERS_KV.put(MENU_AVAILABILITY_KEY, JSON.stringify(map));
+async function writeMenuAvailability(env: Env, map: Record<string, MenuAvailabilityOverride>) {
   const updatedAt = nowIso();
-  await env.ORDERS_KV.put(MENU_AVAILABILITY_UPDATED_KEY, updatedAt);
+  const payload = {
+    overrides: normalizeAvailabilityMap(map),
+    updatedAt,
+  };
+  const encoded = toFirestoreValue(payload);
+  const fields = encoded.mapValue?.fields ?? {};
+  const response = await firestoreRequest(env, MENU_AVAILABILITY_PATH, {
+    method: "PATCH",
+    body: JSON.stringify({ fields }),
+  });
+  if (!response || !response.ok) return null;
   return updatedAt;
 }
 
@@ -566,6 +598,50 @@ function getBrusselsParts(date: Date) {
     isoDate,
     dayOfWeek: utcDate.getUTCDay(),
   };
+}
+
+function timeZoneOffsetMs(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const utcDate = Date.UTC(
+    Number(lookup.year),
+    Number(lookup.month) - 1,
+    Number(lookup.day),
+    Number(lookup.hour),
+    Number(lookup.minute),
+    Number(lookup.second)
+  );
+  return utcDate - date.getTime();
+}
+
+function zonedTimeToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  millisecond: number,
+  timeZone: string
+) {
+  const utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millisecond));
+  const offset = timeZoneOffsetMs(utcDate, timeZone);
+  return new Date(utcDate.getTime() - offset);
+}
+
+function getBrusselsEndOfDayIso(now: Date = new Date()) {
+  const parts = getBrusselsParts(now);
+  const endUtc = zonedTimeToUtc(parts.year, parts.month, parts.day, 23, 59, 59, 999, BRUSSELS_TIME_ZONE);
+  return endUtc.toISOString();
 }
 
 function getDayLabel(year: number, month: number, day: number) {
@@ -1921,16 +1997,13 @@ export default {
         return json({ ok: true }, 200, cors);
       }
 
-      if (request.method === "GET" && url.pathname === "/menu/availability") {
-        const kvError = requireOrdersKv(env, cors);
-        if (kvError) return kvError;
+      if (request.method === "GET" && (url.pathname === "/menu/availability" || url.pathname === "/store/menu-availability")) {
         const state = await readMenuAvailability(env);
         return json(
           {
             ok: true,
-            unavailableById: state.unavailableById,
+            availability: state.overrides,
             updatedAt: state.updatedAt ?? undefined,
-            kv: state.kv,
           },
           200,
           cors
@@ -1969,15 +2042,48 @@ export default {
         if (!auth.ok) {
           return json({ error: auth.error, message: auth.message }, 401, cors);
         }
-        const kvError = requireOrdersKv(env, cors);
-        if (kvError) return kvError;
         const state = await readMenuAvailability(env);
         return json(
           {
             ok: true,
-            unavailableById: state.unavailableById,
+            availability: state.overrides,
             updatedAt: state.updatedAt ?? undefined,
-            kv: state.kv,
+          },
+          200,
+          cors
+        );
+      }
+
+      if (request.method === "POST" && url.pathname === "/admin/menu-availability") {
+        const auth = await verifyAdminRequest(request, env);
+        if (!auth.ok) {
+          return json({ error: auth.error, message: auth.message }, 401, cors);
+        }
+        const body: any = await request.json().catch(() => null);
+        const itemKey = typeof body?.itemKey === "string" ? body.itemKey.trim() : "";
+        const mode = typeof body?.mode === "string" ? body.mode.trim().toUpperCase() : "";
+        if (!itemKey) {
+          return json({ error: "ITEM_KEY_REQUIRED", message: "Item key requis." }, 400, cors);
+        }
+        if (mode !== "AVAILABLE" && mode !== "TODAY" && mode !== "MANUAL") {
+          return json({ error: "INVALID_MODE", message: "Mode invalide." }, 400, cors);
+        }
+        const state = await readMenuAvailability(env);
+        const nextMap = { ...state.overrides };
+        if (mode === "AVAILABLE") {
+          delete nextMap[itemKey];
+        } else if (mode === "TODAY") {
+          nextMap[itemKey] = { unavailable: true, until: getBrusselsEndOfDayIso() };
+        } else {
+          nextMap[itemKey] = { unavailable: true, until: null };
+        }
+        const updatedAt = await writeMenuAvailability(env, nextMap);
+        return json(
+          {
+            ok: true,
+            itemKey,
+            mode,
+            updatedAt: updatedAt ?? undefined,
           },
           200,
           cors
@@ -1989,8 +2095,6 @@ export default {
         if (!auth.ok) {
           return json({ error: auth.error, message: auth.message }, 401, cors);
         }
-        const kvError = requireOrdersKv(env, cors);
-        if (kvError) return kvError;
         const match = url.pathname.match(/^\/admin\/menu\/items\/(.+)$/);
         const itemId = match?.[1] ? decodeURIComponent(match[1]) : "";
         if (!itemId) return json({ error: "ITEM_ID_REQUIRED", message: "Item id requis." }, 400, cors);
@@ -2001,18 +2105,14 @@ export default {
         }
 
         const state = await readMenuAvailability(env);
-        const nextMap = { ...state.unavailableById };
+        const nextMap = { ...state.overrides };
         if (body.unavailable) {
-          nextMap[itemId] = true;
+          nextMap[itemId] = { unavailable: true, until: null };
         } else {
           delete nextMap[itemId];
         }
         const updatedAt = await writeMenuAvailability(env, nextMap);
-        return json(
-          { ok: true, itemId, unavailable: body.unavailable, updatedAt },
-          200,
-          cors
-        );
+        return json({ ok: true, itemId, unavailable: body.unavailable, updatedAt: updatedAt ?? undefined }, 200, cors);
       }
 
       if (request.method === "POST" && url.pathname === "/admin/menu/reset") {
@@ -2020,10 +2120,8 @@ export default {
         if (!auth.ok) {
           return json({ error: auth.error, message: auth.message }, 401, cors);
         }
-        const kvError = requireOrdersKv(env, cors);
-        if (kvError) return kvError;
         const updatedAt = await writeMenuAvailability(env, {});
-        return json({ ok: true, unavailableById: {}, updatedAt }, 200, cors);
+        return json({ ok: true, availability: {}, updatedAt: updatedAt ?? undefined }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/admin/orders") {

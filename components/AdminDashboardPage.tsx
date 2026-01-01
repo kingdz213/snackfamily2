@@ -5,7 +5,12 @@ import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { Trash2 } from 'lucide-react';
 import { MENU_CATEGORIES } from '../data/menuData';
 import { MenuCategory, MenuItem } from '../types';
-import { applyAvailabilityOverrides } from '@/src/lib/menuAvailability';
+import {
+  applyAvailabilityToMenu,
+  getBrusselsEndOfDayIso,
+  resolveMenuItemKey,
+  type MenuAvailabilityMap,
+} from '@/src/lib/menuAvailability';
 import { toWhatsAppDigits } from '@/src/lib/phone';
 
 type OrderStatus =
@@ -44,9 +49,11 @@ type AdminOrdersResponse = {
 
 type AvailabilityResponse = {
   ok: boolean;
-  unavailableById?: Record<string, boolean>;
+  availability?: MenuAvailabilityMap;
   updatedAt?: string;
 };
+
+type AvailabilityMode = 'AVAILABLE' | 'TODAY' | 'MANUAL';
 
 type StoreMode = 'AUTO' | 'OPEN' | 'CLOSED';
 
@@ -119,7 +126,7 @@ export const AdminDashboardPage: React.FC = () => {
   const [deleteToast, setDeleteToast] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'orders' | 'availability'>('orders');
   const [availabilityCategories, setAvailabilityCategories] = useState<MenuCategory[]>(MENU_CATEGORIES);
-  const [availabilityMap, setAvailabilityMap] = useState<Record<string, boolean>>({});
+  const [availabilityMap, setAvailabilityMap] = useState<MenuAvailabilityMap>({});
   const [availabilityUpdatedAt, setAvailabilityUpdatedAt] = useState<string | null>(null);
   const [availabilitySearch, setAvailabilitySearch] = useState('');
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
@@ -147,9 +154,9 @@ export const AdminDashboardPage: React.FC = () => {
     }
   };
 
-  const syncAvailability = useCallback((map: Record<string, boolean>, updatedAt?: string) => {
+  const syncAvailability = useCallback((map: MenuAvailabilityMap, updatedAt?: string) => {
     setAvailabilityMap(map);
-    setAvailabilityCategories(applyAvailabilityOverrides(MENU_CATEGORIES, map));
+    setAvailabilityCategories(applyAvailabilityToMenu(MENU_CATEGORIES, map));
     setAvailabilityUpdatedAt(updatedAt ?? null);
   }, []);
 
@@ -200,8 +207,8 @@ export const AdminDashboardPage: React.FC = () => {
         throw new Error(message);
       }
       const data = (await response.json()) as AvailabilityResponse;
-      const unavailableById = data.unavailableById ?? {};
-      syncAvailability(unavailableById, data.updatedAt);
+      const availability = data.availability ?? {};
+      syncAvailability(availability, data.updatedAt);
       setAvailabilityLoaded(true);
     } catch (err) {
       setAvailabilityError(err instanceof Error ? err.message : 'Impossible de charger les disponibilités.');
@@ -333,26 +340,42 @@ export const AdminDashboardPage: React.FC = () => {
     [endpointBase, token]
   );
 
+  const getItemAvailabilityMode = useCallback(
+    (item: MenuItem): AvailabilityMode => {
+      const itemKey = resolveMenuItemKey(item);
+      const override = availabilityMap[itemKey];
+      if (!override || !override.unavailable) return 'AVAILABLE';
+      if (override.until == null) return 'MANUAL';
+      const untilMs = Date.parse(override.until);
+      if (!Number.isFinite(untilMs) || Date.now() < untilMs) return 'TODAY';
+      return 'AVAILABLE';
+    },
+    [availabilityMap]
+  );
+
   const updateItemAvailability = useCallback(
-    async (item: MenuItem, unavailable: boolean) => {
+    async (item: MenuItem, category: MenuCategory, mode: AvailabilityMode) => {
       if (!token) return;
       const previousMap = availabilityMap;
-      const nextMap = { ...availabilityMap };
-      if (unavailable) {
-        nextMap[item.id] = true;
+      const nextMap: MenuAvailabilityMap = { ...availabilityMap };
+      const itemKey = resolveMenuItemKey(item, category);
+      if (mode === 'AVAILABLE') {
+        delete nextMap[itemKey];
+      } else if (mode === 'TODAY') {
+        nextMap[itemKey] = { unavailable: true, until: getBrusselsEndOfDayIso() };
       } else {
-        delete nextMap[item.id];
+        nextMap[itemKey] = { unavailable: true, until: null };
       }
       syncAvailability(nextMap, availabilityUpdatedAt ?? undefined);
       setAvailabilityError(null);
       try {
-        const response = await fetch(`${endpointBase}/admin/menu/items/${encodeURIComponent(item.id)}`, {
+        const response = await fetch(`${endpointBase}/admin/menu-availability`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ unavailable }),
+          body: JSON.stringify({ itemKey, mode }),
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({}));
@@ -361,7 +384,7 @@ export const AdminDashboardPage: React.FC = () => {
         }
         const payload = (await response.json()) as { updatedAt?: string };
         setAvailabilityUpdatedAt(payload.updatedAt ?? null);
-        setAvailabilityToast(unavailable ? 'Article rendu indisponible ✅' : 'Article remis disponible ✅');
+        setAvailabilityToast('Disponibilité mise à jour ✅');
       } catch (err) {
         syncAvailability(previousMap, availabilityUpdatedAt ?? undefined);
         setAvailabilityError(err instanceof Error ? err.message : 'Mise à jour impossible.');
@@ -846,34 +869,56 @@ export const AdminDashboardPage: React.FC = () => {
                       <span className="text-xs text-gray-400">{category.items.length} article(s)</span>
                     </div>
                     <div className="space-y-3">
-                      {category.items.map((item) => (
-                        <div key={item.id} className="flex flex-col gap-2 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold text-snack-black">{item.name}</span>
-                              {item.unavailable && (
-                                <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase text-red-600">
-                                  Indisponible
-                                </span>
-                              )}
+                      {category.items.map((item) => {
+                        const currentMode = getItemAvailabilityMode(item);
+                        return (
+                          <div
+                            key={item.id}
+                            className="flex flex-col gap-3 rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+                          >
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-snack-black">{item.name}</span>
+                                {item.unavailable && (
+                                  <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase text-red-600">
+                                    Indisponible
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {Number(item.price).toFixed(2)} €
+                                {item.priceSecondary && ` • ${Number(item.priceSecondary).toFixed(2)} €`}
+                              </div>
                             </div>
-                            <div className="text-xs text-gray-500">
-                              {Number(item.price).toFixed(2)} €
-                              {item.priceSecondary && ` • ${Number(item.priceSecondary).toFixed(2)} €`}
+                            <div className="flex flex-wrap gap-2">
+                              {([
+                                { value: 'AVAILABLE', label: 'Disponible' },
+                                { value: 'TODAY', label: 'Indispo aujourd’hui' },
+                                { value: 'MANUAL', label: 'Indispo jusqu’à modif' },
+                              ] as Array<{ value: AvailabilityMode; label: string }>).map((option) => (
+                                <label
+                                  key={option.value}
+                                  className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase transition-colors ${
+                                    currentMode === option.value
+                                      ? 'border-snack-gold bg-snack-gold/10 text-snack-black'
+                                      : 'border-gray-200 text-gray-500'
+                                  }`}
+                                >
+                                  <input
+                                    type="radio"
+                                    name={`availability-${item.id}`}
+                                    value={option.value}
+                                    checked={currentMode === option.value}
+                                    onChange={() => updateItemAvailability(item, category, option.value)}
+                                    className="accent-snack-gold"
+                                  />
+                                  {option.label}
+                                </label>
+                              ))}
                             </div>
                           </div>
-                          <button
-                            onClick={() => updateItemAvailability(item, !item.unavailable)}
-                            className={`rounded-full px-4 py-2 text-xs font-semibold uppercase transition-colors ${
-                              item.unavailable
-                                ? 'border border-green-500 text-green-700 hover:bg-green-50'
-                                : 'border border-red-500 text-red-600 hover:bg-red-50'
-                            }`}
-                          >
-                            {item.unavailable ? 'Remettre disponible' : 'Mettre indisponible'}
-                          </button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ))
