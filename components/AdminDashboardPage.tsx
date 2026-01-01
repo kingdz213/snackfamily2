@@ -493,14 +493,13 @@ export const AdminDashboardPage: React.FC = () => {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        const message = `Erreur ${response.status}: ${
-          payload?.message || payload?.error || 'Impossible de sauvegarder.'
-        }`;
-        console.warn('Store settings save failed', {
-          status: response.status,
-          payload,
-          requestBody,
-        });
+        const message = payload?.message || payload?.error || 'Impossible de sauvegarder.';
+        if (import.meta.env.DEV) {
+          console.warn('Store settings save failed', {
+            status: response.status,
+            payload,
+          });
+        }
         throw new Error(message);
       }
       if (!payload) {

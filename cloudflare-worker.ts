@@ -859,8 +859,7 @@ function resolveStoreStatus(settings: StoreSettings, now: Date = new Date()): St
   );
 
   if (settings.mode === "OPEN") {
-    const detail = schedule ? `Ferme à ${schedule.end}` : "Ouvert (mode gérant)";
-    return { isOpen: true, statusLabel: "Ouvert", detail, mode: settings.mode };
+    return { isOpen: true, statusLabel: "Ouvert", detail: "Override gérant", mode: settings.mode };
   }
 
   if (settings.mode === "CLOSED") {
@@ -869,12 +868,29 @@ function resolveStoreStatus(settings: StoreSettings, now: Date = new Date()): St
     return { isOpen: false, statusLabel: "Fermé", detail, mode: settings.mode };
   }
 
-  const isClosedToday = schedule ? isDateClosed(settings, parts.isoDate) : true;
+  if (isExceptionClosed) {
+    const nextOpen = getNextOpenSlot(settings, parts, nowMinutes);
+    return {
+      isOpen: false,
+      statusLabel: "Fermé",
+      detail: nextOpen ? buildNextOpenLabel(nextOpen) : "Fermé actuellement",
+      mode: settings.mode,
+    };
+  }
+
+  if (isHolidayToday) {
+    return {
+      isOpen: false,
+      statusLabel: "Fermé",
+      detail: "Férié",
+      mode: settings.mode,
+    };
+  }
+
   const startMinutes = schedule ? minutesFromTime(schedule.start) : null;
   const endMinutes = schedule ? minutesFromTime(schedule.end) : null;
   const isOpen =
     Boolean(schedule) &&
-    !isClosedToday &&
     startMinutes != null &&
     endMinutes != null &&
     nowMinutes >= startMinutes &&
@@ -890,24 +906,6 @@ function resolveStoreStatus(settings: StoreSettings, now: Date = new Date()): St
   }
 
   const nextOpen = getNextOpenSlot(settings, parts, nowMinutes);
-  if (isHolidayToday) {
-    const detail = nextOpen ? `Férié — ${buildNextOpenLabel(nextOpen)}` : "Férié";
-    return {
-      isOpen: false,
-      statusLabel: "Fermé",
-      detail,
-      mode: settings.mode,
-    };
-  }
-  if (isExceptionClosed) {
-    const detail = nextOpen ? buildNextOpenLabel(nextOpen) : "Fermé actuellement";
-    return {
-      isOpen: false,
-      statusLabel: "Fermé",
-      detail,
-      mode: settings.mode,
-    };
-  }
   return {
     isOpen: false,
     statusLabel: "Fermé",
@@ -926,11 +924,17 @@ function validateStoreSettingsPayload(body: any):
   if (!mode) {
     return { ok: false, error: "MODE_INVALID", message: "Mode invalide." };
   }
-  if (typeof body.autoHolidaysBE !== "boolean") {
-    return { ok: false, error: "HOLIDAYS_INVALID", message: "Champ autoHolidaysBE invalide." };
-  }
   if (!body.weeklyHours || typeof body.weeklyHours !== "object") {
     return { ok: false, error: "WEEKLY_HOURS_INVALID", message: "Horaires hebdomadaires invalides." };
+  }
+  const holidayEnabled =
+    typeof body.autoHolidaysBE === "boolean"
+      ? body.autoHolidaysBE
+      : typeof body.holidayEnabled === "boolean"
+      ? body.holidayEnabled
+      : null;
+  if (holidayEnabled === null) {
+    return { ok: false, error: "HOLIDAYS_INVALID", message: "Champ holidayEnabled invalide." };
   }
   const weeklyHours: WeeklyHours = { ...DEFAULT_WEEKLY_HOURS };
   for (let day = 0; day <= 6; day += 1) {
@@ -949,6 +953,9 @@ function validateStoreSettingsPayload(body: any):
     }
     weeklyHours[day] = { start, end };
   }
+  if (body.exceptions !== undefined && !Array.isArray(body.exceptions)) {
+    return { ok: false, error: "EXCEPTIONS_INVALID", message: "Liste d'exceptions invalide." };
+  }
   const exceptionsInput = Array.isArray(body.exceptions) ? body.exceptions : [];
   const exceptions: StoreException[] = [];
   for (const entry of exceptionsInput) {
@@ -964,7 +971,7 @@ function validateStoreSettingsPayload(body: any):
     settings: {
       mode,
       weeklyHours,
-      autoHolidaysBE: body.autoHolidaysBE,
+      autoHolidaysBE: holidayEnabled,
       exceptions,
       updatedAt: nowIso(),
     },
@@ -1703,33 +1710,36 @@ export default {
     if (request.method === "POST" && url.pathname === "/admin/store-settings") {
       const auth = await verifyAdminRequest(request, env);
       if (!auth.ok) {
-        return json({ error: auth.error, message: auth.message }, 401, cors);
-      }
-      let body: any = null;
-      try {
-        body = await request.json();
-      } catch (err) {
-        return json(
-          { error: "INVALID_JSON", message: "Body invalide.", details: serializeError(err) },
-          400,
-          cors
-        );
-      }
-      const validation = validateStoreSettingsPayload(body);
-      if (!validation.ok) {
-        return json({ error: validation.error, message: validation.message }, 400, cors);
+        return json({ message: "Non autorisé" }, 401, cors);
       }
       try {
+        let body: any = null;
+        try {
+          body = await request.json();
+        } catch (err) {
+          return json(
+            { message: "Body invalide.", details: serializeError(err) },
+            400,
+            cors
+          );
+        }
+        const validation = validateStoreSettingsPayload(body);
+        if (!validation.ok) {
+          return json(
+            { message: validation.message, details: { error: validation.error } },
+            400,
+            cors
+          );
+        }
         const saved = await writeStoreSettings(env, validation.settings);
         if (!saved) {
-          return json({ error: "FIRESTORE_ERROR", message: "Impossible d'enregistrer." }, 500, cors);
+          return json({ message: "Erreur Firestore" }, 500, cors);
         }
         return json(saved, 200, cors);
       } catch (err) {
         return json(
           {
-            error: "STORE_SETTINGS_SAVE_FAILED",
-            message: "Impossible d'enregistrer.",
+            message: "Erreur Firestore",
             details: serializeError(err),
           },
           500,
