@@ -197,6 +197,54 @@ function getFirebaseAppId(env: Env) {
   return value && value.length > 0 ? value : null;
 }
 
+type FirestoreErrorPayload = {
+  error: "FIRESTORE_ERROR";
+  code?: string;
+  message: string;
+  hint?: string;
+  missing: {
+    projectId: boolean;
+    clientEmail: boolean;
+    privateKey: boolean;
+    serviceJson: boolean;
+  };
+};
+
+function getFirebaseMissingFlags(env: Env) {
+  const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON ?? env.FIREBASE_SERVICE_ACCOUNT;
+  const hasServiceJson =
+    typeof serviceJsonRaw === "string" ? serviceJsonRaw.trim().length > 0 : Boolean(serviceJsonRaw);
+  const serviceAccount = getServiceAccount(env);
+  const hasClientEmail = Boolean(env.FIREBASE_CLIENT_EMAIL?.trim()) || Boolean(serviceAccount?.client_email);
+  const hasPrivateKey = Boolean(env.FIREBASE_PRIVATE_KEY?.trim()) || Boolean(serviceAccount?.private_key);
+  const hasProjectId = Boolean(getFirebaseProjectId(env) || serviceAccount?.project_id);
+  return {
+    projectId: !hasProjectId,
+    clientEmail: !hasClientEmail,
+    privateKey: !hasPrivateKey,
+    serviceJson: !hasServiceJson,
+  };
+}
+
+function buildFirestoreError(
+  env: Env,
+  params: { code?: string; message: string; hint?: string }
+): FirestoreErrorPayload {
+  return {
+    error: "FIRESTORE_ERROR",
+    code: params.code,
+    message: params.message,
+    hint: params.hint,
+    missing: getFirebaseMissingFlags(env),
+  };
+}
+
+function maskProjectId(projectId: string | null) {
+  if (!projectId) return "";
+  const tail = projectId.slice(-4);
+  return `****${tail}`;
+}
+
 function extractBearerToken(request: Request) {
   const header = request.headers.get("Authorization") || "";
   const match = header.match(/^Bearer\s+(.+)$/i);
@@ -490,6 +538,99 @@ async function getGoogleAccessToken(env: Env, scope: string): Promise<string | n
   return token;
 }
 
+async function getGoogleAccessTokenDetailed(
+  env: Env,
+  scope: string
+): Promise<{ ok: true; token: string } | { ok: false; error: { code?: string; message: string; hint?: string } }> {
+  const serviceAccount = getServiceAccount(env);
+  if (!serviceAccount) {
+    return {
+      ok: false,
+      error: {
+        code: "MISSING_SERVICE_ACCOUNT",
+        message: "Service account Firebase manquant.",
+        hint: "Configurez FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
+      },
+    };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const cached = tokenCache.get(scope);
+  if (cached && cached.exp - 60 > now) {
+    return { ok: true, token: cached.token };
+  }
+
+  const header = { alg: "RS256", typ: "JWT" };
+  const payload = {
+    iss: serviceAccount.client_email,
+    sub: serviceAccount.client_email,
+    aud: "https://oauth2.googleapis.com/token",
+    scope,
+    iat: now,
+    exp: now + 3600,
+  };
+
+  const encodedHeader = base64UrlEncodeString(JSON.stringify(header));
+  const encodedPayload = base64UrlEncodeString(JSON.stringify(payload));
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const keyData = pemToArrayBuffer(normalizePrivateKey(serviceAccount.private_key));
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8",
+    keyData,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    cryptoKey,
+    new TextEncoder().encode(signingInput)
+  );
+  const jwt = `${signingInput}.${base64UrlEncodeBytes(new Uint8Array(signature))}`;
+
+  const form = new URLSearchParams();
+  form.set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer");
+  form.set("assertion", jwt);
+
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+
+  if (!response.ok) {
+    const payload: any = await response.json().catch(() => null);
+    const errorCode = payload?.error ? String(payload.error) : `HTTP_${response.status}`;
+    const errorMessage = payload?.error_description
+      ? String(payload.error_description)
+      : payload?.error
+      ? String(payload.error)
+      : `OAuth token request failed (${response.status}).`;
+    const hint =
+      errorCode === "invalid_grant"
+        ? "Clé privée invalide ou expirée."
+        : errorCode === "unauthorized_client"
+        ? "Compte de service non autorisé."
+        : undefined;
+    return { ok: false, error: { code: errorCode, message: errorMessage, hint } };
+  }
+
+  const data: any = await response.json().catch(() => null);
+  const token = data?.access_token;
+  const expiresIn = Number(data?.expires_in ?? 0);
+  if (!token || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+    return {
+      ok: false,
+      error: {
+        code: "TOKEN_INVALID",
+        message: "Réponse OAuth invalide.",
+      },
+    };
+  }
+  tokenCache.set(scope, { token, exp: now + expiresIn });
+  return { ok: true, token };
+}
+
 function statusNotificationCopy(status: OrderStatus) {
   switch (status) {
     case "RECEIVED":
@@ -565,6 +706,47 @@ async function firestoreRequest(env: Env, path: string, init?: RequestInit): Pro
       ...(init?.headers || {}),
     },
   });
+}
+
+async function firestoreRequestDetailed(
+  env: Env,
+  path: string,
+  init?: RequestInit
+): Promise<{ ok: true; response: Response } | { ok: false; error: FirestoreErrorPayload }> {
+  const projectId = getFirebaseProjectId(env) || getServiceAccount(env)?.project_id || null;
+  if (!projectId) {
+    return {
+      ok: false,
+      error: buildFirestoreError(env, {
+        code: "MISSING_PROJECT_ID",
+        message: "Firebase projectId manquant.",
+        hint: "Ajoutez FIREBASE_PROJECT_ID ou project_id dans le service account.",
+      }),
+    };
+  }
+  const accessTokenResult = await getGoogleAccessTokenDetailed(env, "https://www.googleapis.com/auth/datastore");
+  if (!accessTokenResult.ok) {
+    return {
+      ok: false,
+      error: buildFirestoreError(env, {
+        code: accessTokenResult.error.code,
+        message: accessTokenResult.error.message,
+        hint: accessTokenResult.error.hint,
+      }),
+    };
+  }
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${path}`;
+  return {
+    ok: true,
+    response: await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${accessTokenResult.token}`,
+        "Content-Type": "application/json",
+        ...(init?.headers || {}),
+      },
+    }),
+  };
 }
 
 function toFirestoreValue(value: any): any {
@@ -812,37 +994,45 @@ async function writeStoreSettings(env: Env, settings: StoreSettings) {
 async function writeStoreSettingsDetailed(
   env: Env,
   settings: StoreSettings
-): Promise<{ ok: true; settings: StoreSettings } | { ok: false; details: string; code?: string }> {
+): Promise<{ ok: true; settings: StoreSettings } | { ok: false; error: FirestoreErrorPayload }> {
   const updated = { ...settings, updatedAt: nowIso() };
   const encoded = toFirestoreValue(updated);
   const fields = encoded.mapValue?.fields ?? {};
-  const response = await firestoreRequest(env, STORE_SETTINGS_PATH, {
+  const result = await firestoreRequestDetailed(env, STORE_SETTINGS_PATH, {
     method: "PATCH",
     body: JSON.stringify({ fields }),
   });
-  if (!response) {
-    return {
-      ok: false,
-      details: "Requête Firestore impossible (projectId ou credentials manquants).",
-    };
+  if (!result.ok) {
+    return { ok: false, error: result.error };
   }
-  if (!response.ok) {
-    const cloned = response.clone();
-    let details = `Firestore ${response.status}`;
+  if (!result.response.ok) {
+    const cloned = result.response.clone();
+    let message = `Firestore ${result.response.status}`;
     let code: string | undefined;
     try {
       const payload: any = await cloned.json();
       if (payload?.error) {
-        code = payload.error.status ? String(payload.error.status) : payload.error.code ? String(payload.error.code) : undefined;
-        details = payload.error.message ? String(payload.error.message) : JSON.stringify(payload.error);
+        code = payload.error.status
+          ? String(payload.error.status)
+          : payload.error.code
+          ? String(payload.error.code)
+          : undefined;
+        message = payload.error.message ? String(payload.error.message) : JSON.stringify(payload.error);
       } else if (payload) {
-        details = JSON.stringify(payload);
+        message = JSON.stringify(payload);
       }
     } catch {
       const text = await cloned.text().catch(() => "");
-      if (text) details = text;
+      if (text) message = text;
     }
-    return { ok: false, details, code };
+    return {
+      ok: false,
+      error: buildFirestoreError(env, {
+        code,
+        message,
+        hint: "Vérifiez les permissions du compte de service Firestore.",
+      }),
+    };
   }
   return { ok: true, settings: updated };
 }
@@ -1775,6 +1965,33 @@ export default {
       return json(settings, 200, cors);
     }
 
+    if (request.method === "GET" && url.pathname === "/admin/debug/firebase-env") {
+      const auth = await verifyAdminRequest(request, env);
+      if (!auth.ok) {
+        return json({ error: auth.error, message: auth.message }, 401, cors);
+      }
+      const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON ?? env.FIREBASE_SERVICE_ACCOUNT;
+      const hasServiceJson =
+        typeof serviceJsonRaw === "string" ? serviceJsonRaw.trim().length > 0 : Boolean(serviceJsonRaw);
+      const serviceAccount = getServiceAccount(env);
+      const hasClientEmail = Boolean(env.FIREBASE_CLIENT_EMAIL?.trim()) || Boolean(serviceAccount?.client_email);
+      const hasPrivateKey = Boolean(env.FIREBASE_PRIVATE_KEY?.trim()) || Boolean(serviceAccount?.private_key);
+      const resolvedProjectId = getFirebaseProjectId(env) || serviceAccount?.project_id || null;
+      const hasProjectId = Boolean(resolvedProjectId);
+      return json(
+        {
+          ok: true,
+          hasProjectId,
+          hasClientEmail,
+          hasPrivateKey,
+          hasServiceJson,
+          resolvedProjectId: maskProjectId(resolvedProjectId),
+        },
+        200,
+        cors
+      );
+    }
+
     if (request.method === "POST" && url.pathname === "/admin/store-settings") {
       const auth = await verifyAdminRequest(request, env);
       if (!auth.ok) {
@@ -1803,11 +2020,7 @@ export default {
         if (!saved.ok) {
           console.error("Firestore store settings write failed", saved);
           return json(
-            {
-              message: "Erreur Firestore",
-              details: saved.details,
-              code: saved.code,
-            },
+            saved.error,
             500,
             cors
           );
@@ -1817,10 +2030,11 @@ export default {
         console.error("Firestore store settings error", err);
         const details = err instanceof Error ? `${err.message}${err.stack ? `\n${err.stack}` : ""}` : String(err);
         return json(
-          {
+          buildFirestoreError(env, {
+            code: "FIRESTORE_EXCEPTION",
             message: "Erreur Firestore",
-            details,
-          },
+            hint: details,
+          }),
           500,
           cors
         );
