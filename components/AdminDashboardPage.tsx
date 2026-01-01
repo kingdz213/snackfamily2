@@ -48,7 +48,42 @@ type AvailabilityResponse = {
   updatedAt?: string;
 };
 
+type StoreMode = 'AUTO' | 'OPEN' | 'CLOSED';
+
+type WeeklyHours = Record<number, { start: string; end: string } | null>;
+
+type StoreException = {
+  date: string;
+  closed: boolean;
+};
+
+type StoreSettings = {
+  mode: StoreMode;
+  weeklyHours: WeeklyHours;
+  autoHolidaysBE: boolean;
+  exceptions: StoreException[];
+  updatedAt?: string;
+};
+
 const TOKEN_STORAGE_KEY = 'sf2_admin_token';
+const DAY_LABELS = ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+
+const DEFAULT_WEEKLY_HOURS: WeeklyHours = {
+  0: { start: '16:30', end: '23:00' },
+  1: null,
+  2: { start: '11:30', end: '23:00' },
+  3: { start: '11:30', end: '23:00' },
+  4: { start: '11:30', end: '23:00' },
+  5: { start: '11:30', end: '23:00' },
+  6: { start: '11:30', end: '23:00' },
+};
+
+const DEFAULT_STORE_SETTINGS: StoreSettings = {
+  mode: 'AUTO',
+  weeklyHours: DEFAULT_WEEKLY_HOURS,
+  autoHolidaysBE: true,
+  exceptions: [],
+};
 
 const statusLabels: Record<OrderStatus, string> = {
   RECEIVED: 'Commande reçue',
@@ -93,6 +128,12 @@ export const AdminDashboardPage: React.FC = () => {
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [showUnavailableOnly, setShowUnavailableOnly] = useState(false);
   const [isResettingAvailability, setIsResettingAvailability] = useState(false);
+  const [storeSettings, setStoreSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS);
+  const [storeSettingsLoading, setStoreSettingsLoading] = useState(false);
+  const [storeSettingsSaving, setStoreSettingsSaving] = useState(false);
+  const [storeSettingsError, setStoreSettingsError] = useState<string | null>(null);
+  const [storeSettingsToast, setStoreSettingsToast] = useState<string | null>(null);
+  const [newExceptionDate, setNewExceptionDate] = useState('');
 
   const endpointBase = useMemo(() => resolveWorkerBaseUrl(), []);
 
@@ -111,6 +152,39 @@ export const AdminDashboardPage: React.FC = () => {
     setAvailabilityCategories(applyAvailabilityOverrides(MENU_CATEGORIES, map));
     setAvailabilityUpdatedAt(updatedAt ?? null);
   }, []);
+
+  const hydrateStoreSettings = useCallback((payload: Partial<StoreSettings> | null) => {
+    if (!payload) return;
+    setStoreSettings({
+      mode: payload.mode ?? DEFAULT_STORE_SETTINGS.mode,
+      weeklyHours: payload.weeklyHours ?? DEFAULT_STORE_SETTINGS.weeklyHours,
+      autoHolidaysBE: payload.autoHolidaysBE ?? DEFAULT_STORE_SETTINGS.autoHolidaysBE,
+      exceptions: Array.isArray(payload.exceptions) ? payload.exceptions : [],
+      updatedAt: payload.updatedAt,
+    });
+  }, []);
+
+  const fetchStoreSettings = useCallback(async () => {
+    if (!token) return;
+    setStoreSettingsError(null);
+    setStoreSettingsLoading(true);
+    try {
+      const response = await fetch(`${endpointBase}/admin/store-settings`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = payload?.message || 'Impossible de charger les horaires.';
+        throw new Error(message);
+      }
+      const payload = (await response.json()) as StoreSettings;
+      hydrateStoreSettings(payload);
+    } catch (err) {
+      setStoreSettingsError(err instanceof Error ? err.message : 'Impossible de charger les horaires.');
+    } finally {
+      setStoreSettingsLoading(false);
+    }
+  }, [endpointBase, hydrateStoreSettings, token]);
 
   const fetchAvailability = useCallback(async () => {
     if (!token) return;
@@ -176,6 +250,12 @@ export const AdminDashboardPage: React.FC = () => {
   }, [orders.length, token]);
 
   useEffect(() => {
+    if (token) {
+      void fetchStoreSettings();
+    }
+  }, [fetchStoreSettings, token]);
+
+  useEffect(() => {
     if (activeTab === 'availability' && token && !availabilityLoaded) {
       void fetchAvailability();
     }
@@ -189,6 +269,9 @@ export const AdminDashboardPage: React.FC = () => {
       setShowUnavailableOnly(false);
       setAvailabilityError(null);
       setAvailabilityToast(null);
+      setStoreSettings(DEFAULT_STORE_SETTINGS);
+      setStoreSettingsError(null);
+      setStoreSettingsToast(null);
     }
   }, [syncAvailability, token]);
 
@@ -316,6 +399,90 @@ export const AdminDashboardPage: React.FC = () => {
     }
   }, [endpointBase, syncAvailability, token]);
 
+  const updateWeeklyHours = (day: number, field: 'start' | 'end', value: string) => {
+    setStoreSettings((prev) => {
+      const current = prev.weeklyHours[day];
+      if (!current) return prev;
+      return {
+        ...prev,
+        weeklyHours: {
+          ...prev.weeklyHours,
+          [day]: {
+            ...current,
+            [field]: value,
+          },
+        },
+      };
+    });
+  };
+
+  const toggleDayClosed = (day: number, closed: boolean) => {
+    setStoreSettings((prev) => ({
+      ...prev,
+      weeklyHours: {
+        ...prev.weeklyHours,
+        [day]: closed ? null : prev.weeklyHours[day] ?? DEFAULT_WEEKLY_HOURS[day],
+      },
+    }));
+  };
+
+  const addClosedException = () => {
+    if (!newExceptionDate) return;
+    setStoreSettings((prev) => {
+      if (prev.exceptions.some((exception) => exception.date === newExceptionDate)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        exceptions: [...prev.exceptions, { date: newExceptionDate, closed: true }].sort((a, b) =>
+          a.date.localeCompare(b.date)
+        ),
+      };
+    });
+    setNewExceptionDate('');
+  };
+
+  const removeException = (date: string) => {
+    setStoreSettings((prev) => ({
+      ...prev,
+      exceptions: prev.exceptions.filter((exception) => exception.date !== date),
+    }));
+  };
+
+  const saveStoreSettings = async () => {
+    if (!token) return;
+    setStoreSettingsError(null);
+    setStoreSettingsSaving(true);
+    try {
+      const response = await fetch(`${endpointBase}/admin/store-settings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          mode: storeSettings.mode,
+          weeklyHours: storeSettings.weeklyHours,
+          autoHolidaysBE: storeSettings.autoHolidaysBE,
+          exceptions: storeSettings.exceptions,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const message = payload?.message || 'Impossible de sauvegarder.';
+        throw new Error(message);
+      }
+      const payload = (await response.json()) as StoreSettings;
+      hydrateStoreSettings(payload);
+      setStoreSettingsToast('Sauvegardé ✅');
+    } catch (err) {
+      setStoreSettingsError(err instanceof Error ? err.message : 'Impossible de sauvegarder.');
+    } finally {
+      setStoreSettingsSaving(false);
+      window.setTimeout(() => setStoreSettingsToast(null), 2000);
+    }
+  };
+
   const handleDelete = useCallback(async () => {
     if (!token || !orderToDelete) return;
     setError(null);
@@ -418,6 +585,168 @@ export const AdminDashboardPage: React.FC = () => {
             </button>
           </div>
         </div>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-snack-black">Horaires & Ouverture</h2>
+              <p className="text-sm text-gray-500">Mode automatique, override gérant et exceptions.</p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => fetchStoreSettings()}
+                disabled={storeSettingsLoading}
+                className="rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-gold transition-colors"
+              >
+                {storeSettingsLoading ? 'Actualisation...' : 'Actualiser horaires'}
+              </button>
+              <button
+                onClick={saveStoreSettings}
+                disabled={storeSettingsSaving}
+                className="rounded-lg border border-snack-gold bg-snack-gold px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-black hover:text-white transition-colors disabled:opacity-60"
+              >
+                {storeSettingsSaving ? 'Enregistrement...' : 'Enregistrer'}
+              </button>
+            </div>
+          </div>
+
+          {storeSettingsError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {storeSettingsError}
+            </div>
+          )}
+          {storeSettingsToast && (
+            <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+              {storeSettingsToast}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <div className="text-sm font-semibold text-gray-700">Mode d'ouverture</div>
+                <div className="flex flex-wrap gap-3">
+                  {(['AUTO', 'OPEN', 'CLOSED'] as StoreMode[]).map((mode) => (
+                    <label
+                      key={mode}
+                      className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide cursor-pointer transition-colors ${
+                        storeSettings.mode === mode
+                          ? 'border-snack-gold bg-snack-gold/10 text-snack-black'
+                          : 'border-gray-200 text-gray-500'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="store-mode"
+                        value={mode}
+                        checked={storeSettings.mode === mode}
+                        onChange={() => setStoreSettings((prev) => ({ ...prev, mode }))}
+                        className="accent-snack-gold"
+                      />
+                      {mode === 'AUTO' ? 'Auto' : mode === 'OPEN' ? 'Ouvert' : 'Fermé'}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={storeSettings.autoHolidaysBE}
+                  onChange={(event) =>
+                    setStoreSettings((prev) => ({ ...prev, autoHolidaysBE: event.target.checked }))
+                  }
+                  className="accent-snack-gold"
+                />
+                Fermé les jours fériés (Belgique)
+              </label>
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-sm font-semibold text-gray-700">Exceptions (jours fermés)</div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="date"
+                  value={newExceptionDate}
+                  onChange={(event) => setNewExceptionDate(event.target.value)}
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold"
+                />
+                <button
+                  type="button"
+                  onClick={addClosedException}
+                  className="rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-gold transition-colors"
+                >
+                  Ajouter jour fermé
+                </button>
+              </div>
+              {storeSettings.exceptions.length === 0 ? (
+                <div className="text-xs text-gray-400">Aucune exception enregistrée.</div>
+              ) : (
+                <ul className="space-y-2">
+                  {storeSettings.exceptions.map((exception) => (
+                    <li
+                      key={exception.date}
+                      className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600"
+                    >
+                      <span>{exception.date}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeException(exception.date)}
+                        className="text-xs font-semibold text-red-500 hover:text-red-600"
+                      >
+                        Supprimer
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="text-sm font-semibold text-gray-700">Horaires hebdomadaires</div>
+            <div className="space-y-2">
+              {DAY_LABELS.map((label, day) => {
+                const daySchedule = storeSettings.weeklyHours[day];
+                const isClosed = daySchedule === null;
+                return (
+                  <div
+                    key={label}
+                    className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-gray-200 px-3 py-2"
+                  >
+                    <div className="w-12 text-sm font-semibold text-gray-700">{label}</div>
+                    <label className="flex items-center gap-2 text-xs text-gray-600">
+                      <input
+                        type="checkbox"
+                        checked={isClosed}
+                        onChange={(event) => toggleDayClosed(day, event.target.checked)}
+                        className="accent-snack-gold"
+                      />
+                      Fermé
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={daySchedule?.start ?? ''}
+                        onChange={(event) => updateWeeklyHours(day, 'start', event.target.value)}
+                        disabled={isClosed}
+                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold disabled:bg-gray-100"
+                      />
+                      <span className="text-xs text-gray-500">→</span>
+                      <input
+                        type="time"
+                        value={daySchedule?.end ?? ''}
+                        onChange={(event) => updateWeeklyHours(day, 'end', event.target.value)}
+                        disabled={isClosed}
+                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold disabled:bg-gray-100"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
 
         <div className="flex flex-wrap gap-2 border-b border-gray-200">
           <button

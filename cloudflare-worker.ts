@@ -20,6 +20,8 @@ interface Env {
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
 const MENU_AVAILABILITY_KEY = "menu:availability:v1";
 const MENU_AVAILABILITY_UPDATED_KEY = "menu:availability:updatedAt";
+const STORE_SETTINGS_PATH = "settings/store";
+const BRUSSELS_TIME_ZONE = "Europe/Brussels";
 
 // Business rules
 const MIN_ORDER_CENTS = 2000; // 20.00€ hors livraison
@@ -516,6 +518,339 @@ function toFirestoreValue(value: any): any {
   return { stringValue: String(value) };
 }
 
+function fromFirestoreValue(value: any): any {
+  if (!value || typeof value !== "object") return null;
+  if ("stringValue" in value) return value.stringValue;
+  if ("booleanValue" in value) return value.booleanValue;
+  if ("integerValue" in value) return Number(value.integerValue);
+  if ("doubleValue" in value) return Number(value.doubleValue);
+  if ("nullValue" in value) return null;
+  if ("mapValue" in value) {
+    const fields = value.mapValue?.fields ?? {};
+    return Object.fromEntries(
+      Object.entries(fields).map(([key, child]) => [key, fromFirestoreValue(child)])
+    );
+  }
+  if ("arrayValue" in value) {
+    const values = value.arrayValue?.values ?? [];
+    return values.map((child: any) => fromFirestoreValue(child));
+  }
+  return null;
+}
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+function formatIsoDate(year: number, month: number, day: number) {
+  return `${year}-${pad2(month)}-${pad2(day)}`;
+}
+
+function getBrusselsParts(date: Date) {
+  const parts = brusselsFormatter.formatToParts(date);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const year = Number(lookup.year);
+  const month = Number(lookup.month);
+  const day = Number(lookup.day);
+  const hour = Number(lookup.hour);
+  const minute = Number(lookup.minute);
+  const isoDate = `${lookup.year}-${lookup.month}-${lookup.day}`;
+  const utcDate = new Date(Date.UTC(year, month - 1, day, 12, 0));
+  return {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    isoDate,
+    dayOfWeek: utcDate.getUTCDay(),
+  };
+}
+
+function getDayLabel(year: number, month: number, day: number) {
+  const date = new Date(Date.UTC(year, month - 1, day, 12, 0));
+  return brusselsWeekdayFormatter.format(date);
+}
+
+function minutesFromTime(time: string) {
+  const [hour, minute] = time.split(":").map((part) => Number(part));
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
+}
+
+function computeEasterSunday(year: number) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return { month, day };
+}
+
+function addDays(year: number, month: number, day: number, offset: number) {
+  const date = new Date(Date.UTC(year, month - 1, day, 12, 0));
+  date.setUTCDate(date.getUTCDate() + offset);
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
+}
+
+function getBelgianHolidays(year: number) {
+  const easter = computeEasterSunday(year);
+  const easterMonday = addDays(year, easter.month, easter.day, 1);
+  const ascension = addDays(year, easter.month, easter.day, 39);
+  const pentecostMonday = addDays(year, easter.month, easter.day, 50);
+
+  return new Set([
+    formatIsoDate(year, 1, 1),
+    formatIsoDate(year, 5, 1),
+    formatIsoDate(year, 7, 21),
+    formatIsoDate(year, 8, 15),
+    formatIsoDate(year, 11, 1),
+    formatIsoDate(year, 11, 11),
+    formatIsoDate(year, 12, 25),
+    formatIsoDate(easterMonday.year, easterMonday.month, easterMonday.day),
+    formatIsoDate(ascension.year, ascension.month, ascension.day),
+    formatIsoDate(pentecostMonday.year, pentecostMonday.month, pentecostMonday.day),
+  ]);
+}
+
+function normalizeWeeklyHours(input: any): WeeklyHours {
+  const result: WeeklyHours = { ...DEFAULT_WEEKLY_HOURS };
+  for (let day = 0; day <= 6; day += 1) {
+    const raw = input?.[day] ?? input?.[String(day)];
+    if (raw === null) {
+      result[day] = null;
+      continue;
+    }
+    if (raw && typeof raw === "object") {
+      const start = typeof raw.start === "string" ? raw.start : "";
+      const end = typeof raw.end === "string" ? raw.end : "";
+      if (TIME_RE.test(start) && TIME_RE.test(end)) {
+        result[day] = { start, end };
+      }
+    }
+  }
+  return result;
+}
+
+function normalizeStoreSettings(input: Partial<StoreSettings> | null): StoreSettings {
+  if (!input) {
+    return { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() };
+  }
+  const mode = input.mode === "OPEN" || input.mode === "CLOSED" ? input.mode : "AUTO";
+  const weeklyHours = normalizeWeeklyHours(input.weeklyHours ?? DEFAULT_WEEKLY_HOURS);
+  const autoHolidaysBE = typeof input.autoHolidaysBE === "boolean" ? input.autoHolidaysBE : true;
+  const exceptions = Array.isArray(input.exceptions)
+    ? input.exceptions
+        .map((exception) => ({
+          date: String((exception as StoreException).date ?? "").trim(),
+          closed: Boolean((exception as StoreException).closed),
+        }))
+        .filter((exception) => DATE_RE.test(exception.date))
+    : [];
+  const updatedAt = typeof input.updatedAt === "string" && input.updatedAt ? input.updatedAt : nowIso();
+  return {
+    mode,
+    weeklyHours,
+    autoHolidaysBE,
+    exceptions,
+    updatedAt,
+  };
+}
+
+async function writeStoreSettings(env: Env, settings: StoreSettings) {
+  const updated = { ...settings, updatedAt: nowIso() };
+  const encoded = toFirestoreValue(updated);
+  const fields = encoded.mapValue?.fields ?? {};
+  const response = await firestoreRequest(env, STORE_SETTINGS_PATH, {
+    method: "PATCH",
+    body: JSON.stringify({ fields }),
+  });
+  if (!response || !response.ok) return null;
+  return updated;
+}
+
+async function getOrInitStoreSettings(env: Env): Promise<StoreSettings> {
+  const response = await firestoreRequest(env, STORE_SETTINGS_PATH, { method: "GET" });
+  if (!response) {
+    return { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() };
+  }
+  if (response.status === 404) {
+    const created = await writeStoreSettings(env, { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() });
+    return created ?? { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() };
+  }
+  if (!response.ok) {
+    return { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() };
+  }
+  const doc: any = await response.json().catch(() => null);
+  const parsed = fromFirestoreValue({ mapValue: { fields: doc?.fields ?? {} } });
+  return normalizeStoreSettings(parsed ?? null);
+}
+
+function isDateClosed(settings: StoreSettings, isoDate: string, holidaySet: Set<string>) {
+  if (settings.exceptions.some((exception) => exception.closed && exception.date === isoDate)) {
+    return true;
+  }
+  if (settings.autoHolidaysBE && holidaySet.has(isoDate)) {
+    return true;
+  }
+  return false;
+}
+
+function getNextOpenSlot(
+  settings: StoreSettings,
+  nowParts: ReturnType<typeof getBrusselsParts>,
+  nowMinutes: number,
+  holidaySet: Set<string>
+) {
+  const todaySchedule = settings.weeklyHours[nowParts.dayOfWeek];
+  if (todaySchedule && !isDateClosed(settings, nowParts.isoDate, holidaySet)) {
+    const startMinutes = minutesFromTime(todaySchedule.start);
+    if (startMinutes != null && nowMinutes < startMinutes) {
+      return { dayOffset: 0, schedule: todaySchedule, parts: nowParts };
+    }
+  }
+
+  const baseDate = new Date(Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day, 12, 0));
+  for (let offset = 1; offset <= 7; offset += 1) {
+    const nextDate = new Date(baseDate);
+    nextDate.setUTCDate(baseDate.getUTCDate() + offset);
+    const nextParts = getBrusselsParts(nextDate);
+    if (isDateClosed(settings, nextParts.isoDate, holidaySet)) continue;
+    const schedule = settings.weeklyHours[nextParts.dayOfWeek];
+    if (!schedule) continue;
+    return { dayOffset: offset, schedule, parts: nextParts };
+  }
+
+  return null;
+}
+
+function buildNextOpenLabel(nextOpen: ReturnType<typeof getNextOpenSlot>) {
+  if (!nextOpen) return "Ouvre prochainement";
+  const { dayOffset, schedule, parts } = nextOpen;
+  if (dayOffset === 0) {
+    return `Ouvre aujourd'hui à ${schedule.start}`;
+  }
+  if (dayOffset === 1) {
+    return `Ouvre demain à ${schedule.start}`;
+  }
+  return `Ouvre ${getDayLabel(parts.year, parts.month, parts.day)} à ${schedule.start}`;
+}
+
+function resolveStoreStatus(settings: StoreSettings, now: Date = new Date()): StoreStatusResponse {
+  const parts = getBrusselsParts(now);
+  const holidaySet = settings.autoHolidaysBE ? getBelgianHolidays(parts.year) : new Set<string>();
+  const schedule = settings.weeklyHours[parts.dayOfWeek];
+  const nowMinutes = parts.hour * 60 + parts.minute;
+
+  if (settings.mode === "OPEN") {
+    const detail = schedule ? `Ferme à ${schedule.end}` : "Ouvert (mode gérant)";
+    return { isOpen: true, statusLabel: "Ouvert", detail, mode: settings.mode };
+  }
+
+  if (settings.mode === "CLOSED") {
+    const nextOpen = getNextOpenSlot(settings, parts, nowMinutes, holidaySet);
+    const detail = nextOpen ? buildNextOpenLabel(nextOpen) : "Fermé actuellement";
+    return { isOpen: false, statusLabel: "Fermé", detail, mode: settings.mode };
+  }
+
+  const isClosedToday = schedule ? isDateClosed(settings, parts.isoDate, holidaySet) : true;
+  const startMinutes = schedule ? minutesFromTime(schedule.start) : null;
+  const endMinutes = schedule ? minutesFromTime(schedule.end) : null;
+  const isOpen =
+    Boolean(schedule) &&
+    !isClosedToday &&
+    startMinutes != null &&
+    endMinutes != null &&
+    nowMinutes >= startMinutes &&
+    nowMinutes < endMinutes;
+
+  if (isOpen && schedule) {
+    return {
+      isOpen: true,
+      statusLabel: "Ouvert",
+      detail: `Ferme à ${schedule.end}`,
+      mode: settings.mode,
+    };
+  }
+
+  const nextOpen = getNextOpenSlot(settings, parts, nowMinutes, holidaySet);
+  return {
+    isOpen: false,
+    statusLabel: "Fermé",
+    detail: nextOpen ? buildNextOpenLabel(nextOpen) : "Fermé actuellement",
+    mode: settings.mode,
+  };
+}
+
+function validateStoreSettingsPayload(body: any):
+  | { ok: true; settings: StoreSettings }
+  | { ok: false; error: string; message: string } {
+  if (!body || typeof body !== "object") {
+    return { ok: false, error: "INVALID_JSON", message: "Body invalide." };
+  }
+  const mode = body.mode === "OPEN" || body.mode === "CLOSED" ? body.mode : body.mode === "AUTO" ? "AUTO" : null;
+  if (!mode) {
+    return { ok: false, error: "MODE_INVALID", message: "Mode invalide." };
+  }
+  if (typeof body.autoHolidaysBE !== "boolean") {
+    return { ok: false, error: "HOLIDAYS_INVALID", message: "Champ autoHolidaysBE invalide." };
+  }
+  if (!body.weeklyHours || typeof body.weeklyHours !== "object") {
+    return { ok: false, error: "WEEKLY_HOURS_INVALID", message: "Horaires hebdomadaires invalides." };
+  }
+  const weeklyHours: WeeklyHours = { ...DEFAULT_WEEKLY_HOURS };
+  for (let day = 0; day <= 6; day += 1) {
+    const raw = body.weeklyHours?.[day] ?? body.weeklyHours?.[String(day)];
+    if (raw === null) {
+      weeklyHours[day] = null;
+      continue;
+    }
+    if (!raw || typeof raw !== "object") {
+      return { ok: false, error: "WEEKLY_HOURS_INVALID", message: "Horaires hebdomadaires invalides." };
+    }
+    const start = typeof raw.start === "string" ? raw.start.trim() : "";
+    const end = typeof raw.end === "string" ? raw.end.trim() : "";
+    if (!TIME_RE.test(start) || !TIME_RE.test(end)) {
+      return { ok: false, error: "WEEKLY_HOURS_INVALID", message: "Format horaire invalide." };
+    }
+    weeklyHours[day] = { start, end };
+  }
+  const exceptionsInput = Array.isArray(body.exceptions) ? body.exceptions : [];
+  const exceptions: StoreException[] = [];
+  for (const entry of exceptionsInput) {
+    const date = typeof entry?.date === "string" ? entry.date.trim() : "";
+    const closed = typeof entry?.closed === "boolean" ? entry.closed : false;
+    if (!DATE_RE.test(date)) {
+      return { ok: false, error: "EXCEPTION_DATE_INVALID", message: "Date d'exception invalide." };
+    }
+    exceptions.push({ date, closed });
+  }
+  return {
+    ok: true,
+    settings: {
+      mode,
+      weeklyHours,
+      autoHolidaysBE: body.autoHolidaysBE,
+      exceptions,
+      updatedAt: nowIso(),
+    },
+  };
+}
+
 async function upsertOrderInFirestore(env: Env, order: OrderRecord) {
   if (!order.userUid) return;
   const response = await firestoreRequest(env, `orders/${order.id}`, {
@@ -682,6 +1017,64 @@ type OrderRecord = {
   desiredDeliverySlotLabel?: string;
   userUid?: string;
 };
+
+type StoreMode = "AUTO" | "OPEN" | "CLOSED";
+
+type WeeklyHours = Record<number, { start: string; end: string } | null>;
+
+type StoreException = {
+  date: string;
+  closed: boolean;
+};
+
+type StoreSettings = {
+  mode: StoreMode;
+  weeklyHours: WeeklyHours;
+  autoHolidaysBE: boolean;
+  exceptions: StoreException[];
+  updatedAt: string;
+};
+
+type StoreStatusResponse = {
+  isOpen: boolean;
+  statusLabel: "Ouvert" | "Fermé";
+  detail: string;
+  nextChangeAt?: string;
+  mode: StoreMode;
+};
+
+const DEFAULT_WEEKLY_HOURS: WeeklyHours = {
+  0: { start: "16:30", end: "23:00" },
+  1: null,
+  2: { start: "11:30", end: "23:00" },
+  3: { start: "11:30", end: "23:00" },
+  4: { start: "11:30", end: "23:00" },
+  5: { start: "11:30", end: "23:00" },
+  6: { start: "11:30", end: "23:00" },
+};
+
+const DEFAULT_STORE_SETTINGS: StoreSettings = {
+  mode: "AUTO",
+  weeklyHours: DEFAULT_WEEKLY_HOURS,
+  autoHolidaysBE: true,
+  exceptions: [],
+  updatedAt: "",
+};
+
+const brusselsFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: BRUSSELS_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+const brusselsWeekdayFormatter = new Intl.DateTimeFormat("fr-BE", {
+  timeZone: BRUSSELS_TIME_ZONE,
+  weekday: "short",
+});
 
 function nowIso() {
   return new Date().toISOString();
@@ -1150,15 +1543,15 @@ export default {
       );
     }
 
-      if (request.method === "GET" && url.pathname === "/firebase-config") {
-        const apiKey = getFirebaseApiKey(env);
-        const authDomain = getFirebaseAuthDomain(env);
-        const projectId = getFirebaseProjectId(env) || getServiceAccount(env)?.project_id || null;
-        const messagingSenderId = getFirebaseMessagingSenderId(env);
-        const appId = getFirebaseAppId(env);
-        if (!apiKey || !authDomain || !projectId || !messagingSenderId || !appId) {
-          return json({ error: "FIREBASE_CONFIG_MISSING" }, 500, cors);
-        }
+    if (request.method === "GET" && url.pathname === "/firebase-config") {
+      const apiKey = getFirebaseApiKey(env);
+      const authDomain = getFirebaseAuthDomain(env);
+      const projectId = getFirebaseProjectId(env) || getServiceAccount(env)?.project_id || null;
+      const messagingSenderId = getFirebaseMessagingSenderId(env);
+      const appId = getFirebaseAppId(env);
+      if (!apiKey || !authDomain || !projectId || !messagingSenderId || !appId) {
+        return json({ error: "FIREBASE_CONFIG_MISSING" }, 500, cors);
+      }
       return json(
         {
           apiKey,
@@ -1172,6 +1565,38 @@ export default {
       );
     }
 
+    if (request.method === "GET" && url.pathname === "/public/store-status") {
+      const settings = await getOrInitStoreSettings(env);
+      const status = resolveStoreStatus(settings);
+      return json(status, 200, cors);
+    }
+
+    if (request.method === "GET" && url.pathname === "/admin/store-settings") {
+      const auth = await verifyAdminRequest(request, env);
+      if (!auth.ok) {
+        return json({ error: auth.error, message: auth.message }, 401, cors);
+      }
+      const settings = await getOrInitStoreSettings(env);
+      return json(settings, 200, cors);
+    }
+
+    if (request.method === "POST" && url.pathname === "/admin/store-settings") {
+      const auth = await verifyAdminRequest(request, env);
+      if (!auth.ok) {
+        return json({ error: auth.error, message: auth.message }, 401, cors);
+      }
+      const body: any = await request.json().catch(() => null);
+      const validation = validateStoreSettingsPayload(body);
+      if (!validation.ok) {
+        return json({ error: validation.error, message: validation.message }, 400, cors);
+      }
+      const saved = await writeStoreSettings(env, validation.settings);
+      if (!saved) {
+        return json({ error: "FIRESTORE_ERROR", message: "Impossible d'enregistrer." }, 500, cors);
+      }
+      return json(saved, 200, cors);
+    }
+
     try {
       if (!hasOrdersKv(env)) {
         return json({ error: "SERVER_MISCONFIGURED", details: "ORDERS_KV not bound" }, 500, cors);
@@ -1180,6 +1605,15 @@ export default {
       if (request.method === "POST" && url.pathname === "/create-cash-order") {
         const body: any = await request.json().catch(() => null);
         if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+
+        const storeStatus = resolveStoreStatus(await getOrInitStoreSettings(env));
+        if (!storeStatus.isOpen) {
+          return json(
+            { error: "STORE_CLOSED", message: `Snack fermé actuellement. ${storeStatus.detail}` },
+            403,
+            cors
+          );
+        }
 
         const validation = validateItems(body.items);
         if ("error" in validation) return json(validation, 400, cors);
@@ -1299,6 +1733,15 @@ export default {
 
         const body: any = await request.json().catch(() => null);
         if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+
+        const storeStatus = resolveStoreStatus(await getOrInitStoreSettings(env));
+        if (!storeStatus.isOpen) {
+          return json(
+            { error: "STORE_CLOSED", message: `Snack fermé actuellement. ${storeStatus.detail}` },
+            403,
+            cors
+          );
+        }
 
         const validation = validateItems(body.items);
         if ("error" in validation) return json(validation, 400, cors);
