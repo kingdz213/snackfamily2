@@ -476,6 +476,12 @@ export const AdminDashboardPage: React.FC = () => {
     if (!token) return;
     setStoreSettingsError(null);
     setStoreSettingsSaving(true);
+    const requestBody = {
+      mode: storeSettings.mode,
+      weeklyHours: storeSettings.weeklyHours,
+      autoHolidaysBE: storeSettings.autoHolidaysBE,
+      exceptions: storeSettings.exceptions,
+    };
     try {
       const response = await fetch(`${endpointBase}/admin/store-settings`, {
         method: 'POST',
@@ -483,23 +489,28 @@ export const AdminDashboardPage: React.FC = () => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          mode: storeSettings.mode,
-          weeklyHours: storeSettings.weeklyHours,
-          autoHolidaysBE: storeSettings.autoHolidaysBE,
-          exceptions: storeSettings.exceptions,
-        }),
+        body: JSON.stringify(requestBody),
       });
+      const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        const message = payload?.message || 'Impossible de sauvegarder.';
+        const message = `Erreur ${response.status}: ${
+          payload?.message || payload?.error || 'Impossible de sauvegarder.'
+        }`;
+        console.warn('Store settings save failed', {
+          status: response.status,
+          payload,
+          requestBody,
+        });
         throw new Error(message);
       }
-      const payload = (await response.json()) as StoreSettings;
+      if (!payload) {
+        throw new Error('Réponse invalide du serveur.');
+      }
       hydrateStoreSettings(payload);
       setStoreSettingsToast('Sauvegardé ✅');
     } catch (err) {
-      setStoreSettingsError(err instanceof Error ? err.message : 'Impossible de sauvegarder.');
+      const message = err instanceof Error ? err.message : 'Impossible de sauvegarder.';
+      setStoreSettingsError(message);
     } finally {
       setStoreSettingsSaving(false);
       window.setTimeout(() => setStoreSettingsToast(null), 2000);
