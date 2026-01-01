@@ -586,168 +586,6 @@ export const AdminDashboardPage: React.FC = () => {
           </div>
         </div>
 
-        <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <h2 className="text-xl font-semibold text-snack-black">Horaires & Ouverture</h2>
-              <p className="text-sm text-gray-500">Mode automatique, override gérant et exceptions.</p>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <button
-                onClick={() => fetchStoreSettings()}
-                disabled={storeSettingsLoading}
-                className="rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-gold transition-colors"
-              >
-                {storeSettingsLoading ? 'Actualisation...' : 'Actualiser horaires'}
-              </button>
-              <button
-                onClick={saveStoreSettings}
-                disabled={storeSettingsSaving}
-                className="rounded-lg border border-snack-gold bg-snack-gold px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-black hover:text-white transition-colors disabled:opacity-60"
-              >
-                {storeSettingsSaving ? 'Enregistrement...' : 'Enregistrer'}
-              </button>
-            </div>
-          </div>
-
-          {storeSettingsError && (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {storeSettingsError}
-            </div>
-          )}
-          {storeSettingsToast && (
-            <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-              {storeSettingsToast}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="text-sm font-semibold text-gray-700">Mode d'ouverture</div>
-                <div className="flex flex-wrap gap-3">
-                  {(['AUTO', 'OPEN', 'CLOSED'] as StoreMode[]).map((mode) => (
-                    <label
-                      key={mode}
-                      className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide cursor-pointer transition-colors ${
-                        storeSettings.mode === mode
-                          ? 'border-snack-gold bg-snack-gold/10 text-snack-black'
-                          : 'border-gray-200 text-gray-500'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="store-mode"
-                        value={mode}
-                        checked={storeSettings.mode === mode}
-                        onChange={() => setStoreSettings((prev) => ({ ...prev, mode }))}
-                        className="accent-snack-gold"
-                      />
-                      {mode === 'AUTO' ? 'Auto' : mode === 'OPEN' ? 'Ouvert' : 'Fermé'}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2 text-sm text-gray-600">
-                <input
-                  type="checkbox"
-                  checked={storeSettings.autoHolidaysBE}
-                  onChange={(event) =>
-                    setStoreSettings((prev) => ({ ...prev, autoHolidaysBE: event.target.checked }))
-                  }
-                  className="accent-snack-gold"
-                />
-                Fermé les jours fériés (Belgique)
-              </label>
-            </div>
-
-            <div className="space-y-3">
-              <div className="text-sm font-semibold text-gray-700">Exceptions (jours fermés)</div>
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="date"
-                  value={newExceptionDate}
-                  onChange={(event) => setNewExceptionDate(event.target.value)}
-                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold"
-                />
-                <button
-                  type="button"
-                  onClick={addClosedException}
-                  className="rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-gold transition-colors"
-                >
-                  Ajouter jour fermé
-                </button>
-              </div>
-              {storeSettings.exceptions.length === 0 ? (
-                <div className="text-xs text-gray-400">Aucune exception enregistrée.</div>
-              ) : (
-                <ul className="space-y-2">
-                  {storeSettings.exceptions.map((exception) => (
-                    <li
-                      key={exception.date}
-                      className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600"
-                    >
-                      <span>{exception.date}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeException(exception.date)}
-                        className="text-xs font-semibold text-red-500 hover:text-red-600"
-                      >
-                        Supprimer
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="text-sm font-semibold text-gray-700">Horaires hebdomadaires</div>
-            <div className="space-y-2">
-              {DAY_LABELS.map((label, day) => {
-                const daySchedule = storeSettings.weeklyHours[day];
-                const isClosed = daySchedule === null;
-                return (
-                  <div
-                    key={label}
-                    className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-gray-200 px-3 py-2"
-                  >
-                    <div className="w-12 text-sm font-semibold text-gray-700">{label}</div>
-                    <label className="flex items-center gap-2 text-xs text-gray-600">
-                      <input
-                        type="checkbox"
-                        checked={isClosed}
-                        onChange={(event) => toggleDayClosed(day, event.target.checked)}
-                        className="accent-snack-gold"
-                      />
-                      Fermé
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="time"
-                        value={daySchedule?.start ?? ''}
-                        onChange={(event) => updateWeeklyHours(day, 'start', event.target.value)}
-                        disabled={isClosed}
-                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold disabled:bg-gray-100"
-                      />
-                      <span className="text-xs text-gray-500">→</span>
-                      <input
-                        type="time"
-                        value={daySchedule?.end ?? ''}
-                        onChange={(event) => updateWeeklyHours(day, 'end', event.target.value)}
-                        disabled={isClosed}
-                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold disabled:bg-gray-100"
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
         <div className="flex flex-wrap gap-2 border-b border-gray-200">
           <button
             onClick={() => setActiveTab('orders')}
@@ -1042,6 +880,168 @@ export const AdminDashboardPage: React.FC = () => {
             )}
           </section>
         )}
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold text-snack-black">Horaires & Ouverture</h2>
+              <p className="text-sm text-gray-500">Mode automatique, override gérant et exceptions.</p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <button
+                onClick={() => fetchStoreSettings()}
+                disabled={storeSettingsLoading}
+                className="rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-gold transition-colors"
+              >
+                {storeSettingsLoading ? 'Actualisation...' : 'Actualiser horaires'}
+              </button>
+              <button
+                onClick={saveStoreSettings}
+                disabled={storeSettingsSaving}
+                className="rounded-lg border border-snack-gold bg-snack-gold px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-black hover:text-white transition-colors disabled:opacity-60"
+              >
+                {storeSettingsSaving ? 'Enregistrement...' : 'Enregistrer'}
+              </button>
+            </div>
+          </div>
+
+          {storeSettingsError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {storeSettingsError}
+            </div>
+          )}
+          {storeSettingsToast && (
+            <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+              {storeSettingsToast}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <div className="text-sm font-semibold text-gray-700">Mode d'ouverture</div>
+                <div className="flex flex-wrap gap-3">
+                  {(['AUTO', 'OPEN', 'CLOSED'] as StoreMode[]).map((mode) => (
+                    <label
+                      key={mode}
+                      className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide cursor-pointer transition-colors ${
+                        storeSettings.mode === mode
+                          ? 'border-snack-gold bg-snack-gold/10 text-snack-black'
+                          : 'border-gray-200 text-gray-500'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="store-mode"
+                        value={mode}
+                        checked={storeSettings.mode === mode}
+                        onChange={() => setStoreSettings((prev) => ({ ...prev, mode }))}
+                        className="accent-snack-gold"
+                      />
+                      {mode === 'AUTO' ? 'Auto' : mode === 'OPEN' ? 'Ouvert' : 'Fermé'}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={storeSettings.autoHolidaysBE}
+                  onChange={(event) =>
+                    setStoreSettings((prev) => ({ ...prev, autoHolidaysBE: event.target.checked }))
+                  }
+                  className="accent-snack-gold"
+                />
+                Fermé les jours fériés (Belgique)
+              </label>
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-sm font-semibold text-gray-700">Exceptions (jours fermés)</div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="date"
+                  value={newExceptionDate}
+                  onChange={(event) => setNewExceptionDate(event.target.value)}
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold"
+                />
+                <button
+                  type="button"
+                  onClick={addClosedException}
+                  className="rounded-lg border border-snack-gold bg-snack-gold/10 px-4 py-2 text-sm font-semibold text-snack-black hover:bg-snack-gold transition-colors"
+                >
+                  Ajouter jour fermé
+                </button>
+              </div>
+              {storeSettings.exceptions.length === 0 ? (
+                <div className="text-xs text-gray-400">Aucune exception enregistrée.</div>
+              ) : (
+                <ul className="space-y-2">
+                  {storeSettings.exceptions.map((exception) => (
+                    <li
+                      key={exception.date}
+                      className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600"
+                    >
+                      <span>{exception.date}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeException(exception.date)}
+                        className="text-xs font-semibold text-red-500 hover:text-red-600"
+                      >
+                        Supprimer
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="text-sm font-semibold text-gray-700">Horaires hebdomadaires</div>
+            <div className="space-y-2">
+              {DAY_LABELS.map((label, day) => {
+                const daySchedule = storeSettings.weeklyHours[day];
+                const isClosed = daySchedule === null;
+                return (
+                  <div
+                    key={label}
+                    className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-gray-200 px-3 py-2"
+                  >
+                    <div className="w-12 text-sm font-semibold text-gray-700">{label}</div>
+                    <label className="flex items-center gap-2 text-xs text-gray-600">
+                      <input
+                        type="checkbox"
+                        checked={isClosed}
+                        onChange={(event) => toggleDayClosed(day, event.target.checked)}
+                        className="accent-snack-gold"
+                      />
+                      Fermé
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={daySchedule?.start ?? ''}
+                        onChange={(event) => updateWeeklyHours(day, 'start', event.target.value)}
+                        disabled={isClosed}
+                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold disabled:bg-gray-100"
+                      />
+                      <span className="text-xs text-gray-500">→</span>
+                      <input
+                        type="time"
+                        value={daySchedule?.end ?? ''}
+                        onChange={(event) => updateWeeklyHours(day, 'end', event.target.value)}
+                        disabled={isClosed}
+                        className="rounded-lg border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-snack-gold disabled:bg-gray-100"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
       </div>
 
       {orderToDelete && (
