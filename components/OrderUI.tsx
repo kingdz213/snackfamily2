@@ -12,7 +12,7 @@ import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { prefersReducedMotion, motionSafeHover, motionSafeTap, motionSafeTransition } from '@/src/lib/motion';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { clearCustomerProfile, loadCustomerProfile, saveCustomerProfile } from '@/src/lib/customerProfile';
-import { getOpenStatus } from '@/src/lib/openingHours';
+import { useStoreStatus } from '@/src/lib/storeStatus';
 import { DELIVERY_STEP_MINUTES, DELIVERY_WINDOWS } from '@/src/config/delivery';
 import { isValidPhoneBasic, normalizePhoneDigits } from '@/src/lib/phone';
 
@@ -118,10 +118,9 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   const [deliveryFormError, setDeliveryFormError] = useState<string | null>(null);
   const [showDistanceBanner, setShowDistanceBanner] = useState(false);
   const [lastCashWhatsAppUrl, setLastCashWhatsAppUrl] = useState<string | null>(null);
-  const [openingInfo, setOpeningInfo] = useState<{ isOpen: boolean; nextLabel: string | null }>({
-    isOpen: true,
-    nextLabel: null,
-  });
+  const { status: storeStatus } = useStoreStatus();
+  const isStoreClosed = storeStatus?.isOpen === false;
+  const storeDetail = storeStatus?.detail ?? null;
   const [deliveryScheduleMode, setDeliveryScheduleMode] = useState<'ASAP' | 'SCHEDULED'>('ASAP');
   const [desiredDeliveryInputValue, setDesiredDeliveryInputValue] = useState('');
   const [desiredDeliveryAt, setDesiredDeliveryAt] = useState<string | null>(null);
@@ -266,22 +265,6 @@ export const OrderUI: React.FC<OrderUIProps> = ({
       city: prev.city || profile.city || '',
     }));
   }, [profile]);
-
-  useEffect(() => {
-    const refreshOpeningInfo = () => {
-      const status = getOpenStatus();
-      setOpeningInfo({ isOpen: status.isOpen, nextLabel: status.nextChangeLabel ?? null });
-
-      if (!status.isOpen && deliveryScheduleMode === 'ASAP') {
-        setDeliveryScheduleMode('SCHEDULED');
-        setCheckoutInfo('Snack fermé — sélectionnez un créneau pour programmer.');
-      }
-    };
-
-    refreshOpeningInfo();
-    const interval = window.setInterval(refreshOpeningInfo, 60 * 1000);
-    return () => window.clearInterval(interval);
-  }, [deliveryScheduleMode]);
 
   useEffect(() => {
     try {
@@ -735,12 +718,11 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   };
 
   const validateBeforeCheckout = (): boolean => {
-    if (!validateDeliveryForm()) {
+    if (isStoreClosed) {
+      setCheckoutError(`Snack fermé actuellement. ${storeDetail ?? ''}`.trim());
       return false;
     }
-    if (!openingInfo.isOpen && deliveryScheduleMode === 'ASAP') {
-      setCheckoutError('Snack fermé — choisissez un créneau pour programmer.');
-      setDeliveryScheduleMode('SCHEDULED');
+    if (!validateDeliveryForm()) {
       return false;
     }
     if (!validateScheduledDelivery()) {
@@ -1402,21 +1384,21 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                             <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">
                               Quand souhaitez-vous être livré ?
                             </div>
-                            {!openingInfo.isOpen && (
+                            {isStoreClosed && (
                               <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
-                                Fermé actuellement. {openingInfo.nextLabel ? `${openingInfo.nextLabel}.` : 'Prochaine ouverture à venir.'}
+                                Snack fermé actuellement. {storeDetail ? `${storeDetail}.` : 'Prochaine ouverture à venir.'}
                               </div>
                             )}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleScheduleModeChange('ASAP')}
-                                disabled={!openingInfo.isOpen}
+                                disabled={isStoreClosed}
                                 className={`rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
                                   deliveryScheduleMode === 'ASAP'
                                     ? 'border-snack-gold bg-snack-gold/10 text-snack-black'
                                     : 'border-gray-200 text-gray-600 hover:border-gray-300'
-                                } ${!openingInfo.isOpen ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                } ${isStoreClosed ? 'opacity-60 cursor-not-allowed' : ''}`}
                               >
                                 Dès que possible
                               </button>
@@ -1605,14 +1587,16 @@ export const OrderUI: React.FC<OrderUIProps> = ({
                       <button
                         id="checkout-btn"
                         onClick={paymentMethod === 'stripe' ? handleStripeCheckout : handleCashCheckout}
-                        disabled={isCheckingOut || disableStripeCheckout}
+                        disabled={isCheckingOut || disableStripeCheckout || isStoreClosed}
                         className={`cta-premium w-full bg-snack-gold text-snack-black py-4 rounded font-display font-bold text-xl uppercase tracking-wide border border-transparent transition-all shadow-lg flex items-center justify-center gap-2 group glow-soft shine-sweep ${
-                          isCheckingOut || disableStripeCheckout
+                          isCheckingOut || disableStripeCheckout || isStoreClosed
                             ? 'opacity-60 cursor-not-allowed'
                             : 'hover:bg-white hover:border-snack-black hover:border-gray-200'
                         }`}
                       >
-                        {isCheckingOut ? (
+                        {isStoreClosed ? (
+                          <span>Snack fermé actuellement</span>
+                        ) : isCheckingOut ? (
                           <LoadingSpinner
                             label="Chargement..."
                             size={22}

@@ -3,7 +3,7 @@ import { Menu, X, ShoppingBag } from 'lucide-react';
 import { Page } from '../types';
 import { motion } from 'framer-motion';
 import { prefersReducedMotion, motionSafeTransition } from '@/src/lib/motion';
-import { OpenStatusInline } from './OpenStatusInline';
+import { StoreStatusBadge } from './StoreStatusBadge';
 
 interface HeaderProps {
   currentPage: Page;
@@ -45,14 +45,17 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
       <div className="container mx-auto px-4 py-4 h-full flex items-center justify-between gap-4 sm:gap-6">
         
         {/* LOGO */}
-        <button onClick={() => handleNav('home')} className="flex flex-col group text-left shrink-0">
-            <h1 className="font-display font-bold text-white text-4xl tracking-tighter uppercase group-hover:text-snack-gold transition-colors leading-none">
-                Snack Family <span className="text-snack-gold">2</span>
-            </h1>
-            <span className="text-gray-400 text-[11px] font-bold tracking-[0.4em] uppercase mt-1 group-hover:text-white transition-colors">
-                Colfontaine
-            </span>
-        </button>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
+          <button onClick={() => handleNav('home')} className="flex flex-col group text-left shrink-0">
+              <h1 className="font-display font-bold text-white text-4xl tracking-tighter uppercase group-hover:text-snack-gold transition-colors leading-none">
+                  Snack Family <span className="text-snack-gold">2</span>
+              </h1>
+              <span className="text-gray-400 text-[11px] font-bold tracking-[0.4em] uppercase mt-1 group-hover:text-white transition-colors">
+                  Colfontaine
+              </span>
+          </button>
+          <StoreStatusBadge size="sm" className="hidden sm:flex" />
+        </div>
 
         {/* Desktop Navigation */}
         <nav className="hidden lg:flex items-center space-x-10">
@@ -117,7 +120,8 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
         </nav>
 
         {/* Mobile Menu Controls */}
-        <div className="flex lg:hidden items-center gap-6 shrink-0">
+        <div className="flex lg:hidden items-center gap-4 shrink-0">
+            <StoreStatusBadge size="sm" className="flex" />
             <button
               onClick={toggleCart}
               className="relative text-snack-gold p-2 hover:text-white transition-colors"
@@ -163,7 +167,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
             <span className="font-display font-bold text-white text-3xl uppercase tracking-tight">
               Snack Family <span className="text-snack-gold">2</span>
             </span>
-            <OpenStatusInline />
+            <StoreStatusBadge />
           </div>
           {navLinks.map((link, index) => {
             const isActive =

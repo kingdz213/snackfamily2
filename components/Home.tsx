@@ -3,12 +3,16 @@ import { motion } from 'framer-motion';
 import { ArrowRight, Star, Utensils } from 'lucide-react';
 import { Page } from '../types';
 import { Embers } from '@/src/components/Embers';
+import { useStoreStatus } from '@/src/lib/storeStatus';
 
 interface HomeProps {
   navigateTo: (page: Page) => void;
 }
 
 export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
+  const { status: storeStatus } = useStoreStatus();
+  const isClosed = storeStatus?.isOpen === false;
+  const closedLabel = storeStatus?.detail ? `Fermé — ${storeStatus.detail}` : 'Fermé — ouverture prochaine';
   const containerVariants = {
     hidden: { opacity: 0 },
     visible: {
@@ -83,10 +87,15 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
             <div className="flex flex-col sm:flex-row gap-5 w-full justify-center items-center">
               <button 
                 onClick={() => navigateTo('commander')}
-                className="cta-premium bg-snack-gold hover:bg-white text-snack-black min-w-[200px] px-8 py-4 rounded font-display font-bold text-lg uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-3 shadow-xl hover:shadow-2xl glow-soft shine-sweep"
+                disabled={isClosed}
+                className={`cta-premium min-w-[200px] px-8 py-4 rounded font-display font-bold text-lg uppercase tracking-wider transition-all duration-200 flex items-center justify-center gap-3 shadow-xl glow-soft shine-sweep ${
+                  isClosed
+                    ? 'bg-gray-400 text-gray-700 cursor-not-allowed opacity-70'
+                    : 'bg-snack-gold hover:bg-white text-snack-black hover:shadow-2xl'
+                }`}
               >
-                <span>Commander</span>
-                <ArrowRight size={20} />
+                <span>{isClosed ? closedLabel : 'Commander'}</span>
+                {!isClosed && <ArrowRight size={20} />}
               </button>
               
               <button 
