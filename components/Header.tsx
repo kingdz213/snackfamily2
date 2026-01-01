@@ -42,23 +42,64 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
 
   return (
     <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg min-h-[96px] sm:min-h-[104px]">
-      <div className="container mx-auto px-4 py-4 h-full flex items-center justify-between gap-4 sm:gap-6">
-        
-        {/* LOGO */}
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
-          <button onClick={() => handleNav('home')} className="flex flex-col group text-left shrink-0">
-              <h1 className="font-display font-bold text-white text-4xl tracking-tighter uppercase group-hover:text-snack-gold transition-colors leading-none">
-                  Snack Family <span className="text-snack-gold">2</span>
-              </h1>
-              <span className="text-gray-400 text-[11px] font-bold tracking-[0.4em] uppercase mt-1 group-hover:text-white transition-colors">
-                  Colfontaine
-              </span>
-          </button>
-          <StoreStatusBadge size="sm" className="hidden sm:flex" />
-        </div>
+      <div className="container mx-auto px-4 py-4 h-full">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center justify-between gap-4 sm:gap-6 w-full sm:w-auto">
+            {/* LOGO */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
+              <button onClick={() => handleNav('home')} className="flex flex-col group text-left shrink-0">
+                  <h1 className="font-display font-bold text-white text-4xl tracking-tighter uppercase group-hover:text-snack-gold transition-colors leading-none">
+                      Snack Family <span className="text-snack-gold">2</span>
+                  </h1>
+                  <span className="text-gray-400 text-[11px] font-bold tracking-[0.4em] uppercase mt-1 group-hover:text-white transition-colors">
+                      Colfontaine
+                  </span>
+              </button>
+              <StoreStatusBadge size="sm" variant="header" className="hidden sm:flex" />
+            </div>
 
-        {/* Desktop Navigation */}
-        <nav className="hidden lg:flex items-center space-x-10">
+            {/* Mobile Menu Controls */}
+            <div className="flex lg:hidden items-center gap-2 flex-none">
+              <button
+                onClick={toggleCart}
+                className="relative text-snack-gold p-2 hover:text-white transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label="Voir le panier"
+              >
+                 <ShoppingBag size={30} />
+                 {cartCount > 0 && (
+                     <motion.span
+                       className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center border border-snack-black"
+                       animate={
+                         reduceMotion
+                           ? { scale: 1 }
+                           : isBadgePopping
+                           ? { scale: [1, 1.2, 1] }
+                           : { scale: 1 }
+                       }
+                       transition={reduceMotion ? { duration: 0 } : { ...motionSafeTransition, duration: 0.2 }}
+                     >
+                       {cartCount}
+                     </motion.span>
+                 )}
+              </button>
+              <button
+                className="text-white p-2 focus:outline-none hover:text-snack-gold transition-colors z-50 relative min-h-[44px] min-w-[44px] flex items-center justify-center"
+                onClick={() => setIsMenuOpen(!isMenuOpen)}
+                aria-label={isMenuOpen ? "Fermer le menu" : "Ouvrir le menu"}
+              >
+                <div className={`transition-transform duration-300 ease-in-out ${isMenuOpen ? 'rotate-90' : 'rotate-0'}`}>
+                  {isMenuOpen ? <X size={32} /> : <Menu size={32} />}
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex justify-center sm:hidden">
+            <StoreStatusBadge size="sm" variant="header" className="text-center max-w-full" />
+          </div>
+
+          {/* Desktop Navigation */}
+          <nav className="hidden lg:flex items-center space-x-10">
           {navLinks.map((link) => {
             const isActive =
               currentPage === link.page ||
@@ -117,42 +158,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
                 Commander
               </button>
           </div>
-        </nav>
-
-        {/* Mobile Menu Controls */}
-        <div className="flex lg:hidden items-center gap-4 shrink-0">
-            <StoreStatusBadge size="sm" className="flex" />
-            <button
-              onClick={toggleCart}
-              className="relative text-snack-gold p-2 hover:text-white transition-colors"
-              aria-label="Voir le panier"
-            >
-               <ShoppingBag size={30} />
-               {cartCount > 0 && (
-                   <motion.span
-                     className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center border border-snack-black"
-                     animate={
-                       reduceMotion
-                         ? { scale: 1 }
-                         : isBadgePopping
-                         ? { scale: [1, 1.2, 1] }
-                         : { scale: 1 }
-                     }
-                     transition={reduceMotion ? { duration: 0 } : { ...motionSafeTransition, duration: 0.2 }}
-                   >
-                     {cartCount}
-                   </motion.span>
-               )}
-            </button>
-            <button 
-              className="text-white p-2 focus:outline-none hover:text-snack-gold transition-colors z-50 relative"
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              aria-label={isMenuOpen ? "Fermer le menu" : "Ouvrir le menu"}
-            >
-              <div className={`transition-transform duration-300 ease-in-out ${isMenuOpen ? 'rotate-90' : 'rotate-0'}`}>
-                {isMenuOpen ? <X size={32} /> : <Menu size={32} />}
-              </div>
-            </button>
+          </nav>
         </div>
       </div>
 
