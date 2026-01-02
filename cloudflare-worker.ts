@@ -12,6 +12,8 @@ interface Env {
   FIREBASE_API_KEY?: string;
   FIREBASE_PROJECT_ID?: string;
   FIREBASE_SERVICE_ACCOUNT_JSON?: string;
+  FIREBASE_SERVICE_ACCOUNT_JSON_BASE64?: string;
+  FIREBASE_SERVICE_ACCOUNT_BASE64?: string;
   FIREBASE_SERVICE_ACCOUNT?: string | Record<string, unknown>;
   FIREBASE_PRIVATE_KEY?: string;
   FIREBASE_CLIENT_EMAIL?: string;
@@ -151,7 +153,11 @@ type ResolvedFirebaseCreds = {
   projectId?: string;
   clientEmail?: string;
   privateKey?: string;
-  source: "service_json" | "env_split" | "none";
+  source: {
+    usedServiceJson: boolean;
+    usedBase64: boolean;
+    usedEnvProjectId: boolean;
+  };
   missing: {
     projectId: boolean;
     clientEmail: boolean;
@@ -170,66 +176,85 @@ function normalizeFirebasePrivateKey(raw: string) {
   if (!hasEnd) {
     normalized = `${normalized}\n-----END PRIVATE KEY-----`;
   }
-  return normalized;
+  if (!normalized.includes("\n")) {
+    normalized = normalized.replace("-----BEGIN PRIVATE KEY-----", "-----BEGIN PRIVATE KEY-----\n");
+    normalized = normalized.replace("-----END PRIVATE KEY-----", "\n-----END PRIVATE KEY-----");
+  }
+  return normalized.trim();
+}
+
+function parseServiceAccountJson(raw: string, base64: boolean) {
+  try {
+    const payload = base64 ? atob(raw) : raw;
+    return JSON.parse(payload) as ServiceAccountJson;
+  } catch {
+    return null;
+  }
 }
 
 function resolveFirebaseCredentials(env: Env): ResolvedFirebaseCreds {
-  const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+  const envProjectId = env.FIREBASE_PROJECT_ID?.trim() || undefined;
+  const envClientEmail = env.FIREBASE_CLIENT_EMAIL?.trim() || undefined;
+  const envPrivateKey = env.FIREBASE_PRIVATE_KEY?.trim() || undefined;
+
+  const rawServiceJson = env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
+  const rawServiceJsonBase64 =
+    env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64?.trim() || env.FIREBASE_SERVICE_ACCOUNT_BASE64?.trim();
+  const rawServiceAccount =
+    typeof env.FIREBASE_SERVICE_ACCOUNT === "string" ? env.FIREBASE_SERVICE_ACCOUNT.trim() : null;
+
+  const serviceJsonPresent = Boolean(
+    rawServiceJson ||
+      rawServiceJsonBase64 ||
+      rawServiceAccount ||
+      (env.FIREBASE_SERVICE_ACCOUNT && typeof env.FIREBASE_SERVICE_ACCOUNT === "object")
+  );
+
   let serviceJson: ServiceAccountJson | null = null;
-  let serviceJsonProvided = false;
-  if (serviceJsonRaw) {
-    serviceJsonProvided = true;
-    if (serviceJsonRaw.startsWith("{")) {
-      try {
-        serviceJson = JSON.parse(serviceJsonRaw) as ServiceAccountJson;
-      } catch {
-        serviceJson = null;
-      }
+  let usedBase64 = false;
+
+  if (env.FIREBASE_SERVICE_ACCOUNT && typeof env.FIREBASE_SERVICE_ACCOUNT === "object") {
+    serviceJson = env.FIREBASE_SERVICE_ACCOUNT as ServiceAccountJson;
+  } else if (rawServiceJson) {
+    if (rawServiceJson.startsWith("{")) {
+      serviceJson = parseServiceAccountJson(rawServiceJson, false);
     } else {
-      try {
-        const decoded = atob(serviceJsonRaw);
-        serviceJson = JSON.parse(decoded) as ServiceAccountJson;
-      } catch {
-        serviceJson = null;
-      }
+      serviceJson = parseServiceAccountJson(rawServiceJson, true);
+      usedBase64 = Boolean(serviceJson);
     }
   }
 
-  let projectId = serviceJson?.project_id ?? serviceJson?.projectId ?? undefined;
-  let clientEmail = serviceJson?.client_email ?? serviceJson?.clientEmail ?? undefined;
-  let privateKey = serviceJson?.private_key ?? serviceJson?.privateKey ?? undefined;
-  let source: ResolvedFirebaseCreds["source"] = "none";
-  const serviceJsonHasAny = Boolean(projectId || clientEmail || privateKey);
+  if (!serviceJson && rawServiceJsonBase64) {
+    serviceJson = parseServiceAccountJson(rawServiceJsonBase64, true);
+    usedBase64 = usedBase64 || Boolean(serviceJson);
+  }
 
-  const missingServiceFields = !projectId || !clientEmail || !privateKey;
-  let usedSplit = false;
-  if (missingServiceFields) {
-    const splitProjectId = env.FIREBASE_PROJECT_ID?.trim() || undefined;
-    const splitClientEmail = env.FIREBASE_CLIENT_EMAIL?.trim() || undefined;
-    const splitPrivateKey = env.FIREBASE_PRIVATE_KEY?.trim() || undefined;
-    if (!projectId && splitProjectId) {
-      projectId = splitProjectId;
-      usedSplit = true;
-    }
-    if (!clientEmail && splitClientEmail) {
-      clientEmail = splitClientEmail;
-      usedSplit = true;
-    }
-    if (!privateKey && splitPrivateKey) {
-      privateKey = splitPrivateKey;
-      usedSplit = true;
+  if (!serviceJson && rawServiceAccount) {
+    if (rawServiceAccount.startsWith("{")) {
+      serviceJson = parseServiceAccountJson(rawServiceAccount, false);
+    } else {
+      serviceJson = parseServiceAccountJson(rawServiceAccount, true);
+      usedBase64 = usedBase64 || Boolean(serviceJson);
     }
   }
+
+  const jsonProjectId = serviceJson?.project_id ?? serviceJson?.projectId ?? undefined;
+  const jsonClientEmail = serviceJson?.client_email ?? serviceJson?.clientEmail ?? undefined;
+  const jsonPrivateKey = serviceJson?.private_key ?? serviceJson?.privateKey ?? undefined;
+
+  let projectId = envProjectId || jsonProjectId;
+  let clientEmail = envClientEmail || jsonClientEmail;
+  let privateKey = envPrivateKey || jsonPrivateKey;
 
   if (privateKey) {
     privateKey = normalizeFirebasePrivateKey(privateKey);
   }
 
-  if (usedSplit) {
-    source = "env_split";
-  } else if (serviceJsonProvided || serviceJsonHasAny) {
-    source = "service_json";
-  }
+  const usedServiceJson = Boolean(
+    (!envProjectId && jsonProjectId) ||
+      (!envClientEmail && jsonClientEmail) ||
+      (!envPrivateKey && jsonPrivateKey)
+  );
 
   const hasProjectId = Boolean(projectId);
   const hasClientEmail = Boolean(clientEmail);
@@ -239,12 +264,16 @@ function resolveFirebaseCredentials(env: Env): ResolvedFirebaseCreds {
     projectId,
     clientEmail,
     privateKey,
-    source,
+    source: {
+      usedServiceJson,
+      usedBase64,
+      usedEnvProjectId: Boolean(envProjectId),
+    },
     missing: {
       projectId: !hasProjectId,
       clientEmail: !hasClientEmail,
       privateKey: !hasPrivateKey,
-      serviceJson: !serviceJsonProvided,
+      serviceJson: !serviceJsonPresent,
     },
   };
 }
@@ -333,9 +362,9 @@ function getAdminApp(
     return {
       ok: false,
       error: buildFirestoreError(env, {
-        code: "MISSING_SERVICE_ACCOUNT",
-        message: "Service account Firebase manquant.",
-        hint: "Configurez FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
+        code: "MISSING_CREDENTIALS",
+        message: "Identifiants Firebase manquants.",
+        hint: "Configurez FIREBASE_SERVICE_ACCOUNT_JSON(_BASE64) ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
       }),
     };
   }
@@ -2081,19 +2110,20 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
 
     if (request.method === "GET" && url.pathname === "/__/debug/firebase") {
       const credentials = resolveFirebaseCredentials(env);
-      const hasServiceJson = !credentials.missing.serviceJson;
-      const hasProjectId = Boolean(credentials.projectId);
-      const hasClientEmail = Boolean(credentials.clientEmail);
-      const hasPrivateKey = Boolean(credentials.privateKey);
-      const ok = hasProjectId && hasClientEmail && hasPrivateKey;
+      const ok =
+        !credentials.missing.projectId && !credentials.missing.clientEmail && !credentials.missing.privateKey;
       return json(
         {
           ok,
+          missing: credentials.missing,
           source: credentials.source,
-          hasProjectId,
-          hasClientEmail,
-          hasPrivateKey,
-          hasServiceJson,
+          envKeysPresent: {
+            FIREBASE_PROJECT_ID: Boolean(env.FIREBASE_PROJECT_ID),
+            FIREBASE_SERVICE_ACCOUNT_JSON: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON),
+            FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64),
+            FIREBASE_PRIVATE_KEY: Boolean(env.FIREBASE_PRIVATE_KEY),
+            FIREBASE_CLIENT_EMAIL: Boolean(env.FIREBASE_CLIENT_EMAIL),
+          },
         },
         200,
         cors
