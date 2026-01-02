@@ -28,6 +28,7 @@ const FALLBACK_ORIGIN = "https://snackfamily2.eu";
 const STORE_SETTINGS_PATH = "settings/store";
 const MENU_AVAILABILITY_PATH = "settings/menuAvailability";
 const BRUSSELS_TIME_ZONE = "Europe/Brussels";
+const WORKER_BUILD_ID = "build-2026-01-02-21-00";
 
 // Business rules
 const MIN_ORDER_CENTS = 2000; // 20.00€ hors livraison
@@ -78,12 +79,31 @@ function corsHeadersFor(origin: string) {
   } as Record<string, string>;
 }
 
-function json(data: any, status = 200, headers: Record<string, string> = {}) {
+type RequestInfo = {
+  host: string;
+  url: string;
+};
+
+function getRequestInfo(request: Request): RequestInfo {
+  const url = new URL(request.url);
+  return {
+    host: request.headers.get("Host") || url.host,
+    url: `${url.origin}${url.pathname}`,
+  };
+}
+
+function json(data: any, status = 200, headers: Record<string, string> = {}, requestInfo?: RequestInfo) {
+  const workerHeaders = {
+    "X-Worker-Build": WORKER_BUILD_ID,
+    "X-Worker-Host": requestInfo?.host ?? "",
+    "X-Worker-Url": requestInfo?.url ?? "",
+  };
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       ...headers,
+      ...workerHeaders,
     },
   });
 }
@@ -110,12 +130,13 @@ function isEnvAvailable(env: Env | undefined | null): env is Env {
   return Boolean(env);
 }
 
-function requireOrdersKv(env: Env, cors?: Record<string, string>) {
+function requireOrdersKv(env: Env, cors?: Record<string, string>, requestInfo?: RequestInfo) {
   if (!env.ORDERS_KV) {
     return json(
       { ok: false, error: "KV_NOT_CONFIGURED", message: "ORDERS_KV non configuré." },
       500,
-      cors ?? {}
+      cors ?? {},
+      requestInfo
     );
   }
   return null;
@@ -332,6 +353,8 @@ type FirestoreErrorPayload = {
   code?: string;
   message: string;
   hint?: string;
+  workerBuild: string;
+  requestHost?: string | null;
   missing: {
     projectId: boolean;
     clientEmail: boolean;
@@ -353,19 +376,22 @@ function getFirebaseMissingFlags(env: Env) {
 
 function buildFirestoreError(
   env: Env,
-  params: { code?: string; message: string; hint?: string }
+  params: { code?: string; message: string; hint?: string; requestHost?: string }
 ): FirestoreErrorPayload {
   return {
     error: "FIRESTORE_ERROR",
     code: params.code,
     message: params.message,
     hint: params.hint,
+    workerBuild: WORKER_BUILD_ID,
+    requestHost: params.requestHost ?? null,
     missing: getFirebaseMissingFlags(env),
   };
 }
 
 function getAdminApp(
-  env: Env
+  env: Env,
+  requestHost?: string
 ): { ok: true; app: { creds: ResolvedFirebaseCreds } } | { ok: false; error: FirestoreErrorPayload } {
   const credentials = resolveFirebaseCredentials(env);
   if (credentials.missing.projectId) {
@@ -375,6 +401,7 @@ function getAdminApp(
         code: "MISSING_PROJECT_ID",
         message: "Firebase projectId manquant.",
         hint: "Ajoutez FIREBASE_PROJECT_ID ou project_id dans le service account.",
+        requestHost,
       }),
     };
   }
@@ -385,16 +412,17 @@ function getAdminApp(
         code: "MISSING_CREDENTIALS",
         message: "Identifiants Firebase manquants.",
         hint: "Configurez FIREBASE_SERVICE_ACCOUNT_JSON(_BASE64) ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
+        requestHost,
       }),
     };
   }
   return { ok: true, app: { creds: credentials } };
 }
 
-function requireFirestoreCredentials(env: Env, cors: Record<string, string>) {
-  const adminApp = getAdminApp(env);
+function requireFirestoreCredentials(env: Env, cors: Record<string, string>, requestInfo?: RequestInfo) {
+  const adminApp = getAdminApp(env, requestInfo?.host);
   if (!adminApp.ok) {
-    return json(adminApp.error, 500, cors);
+    return json(adminApp.error, 500, cors, requestInfo);
   }
   return null;
 }
@@ -699,9 +727,10 @@ async function getGoogleAccessToken(env: Env, scope: string): Promise<string | n
 
 async function getGoogleAccessTokenDetailed(
   env: Env,
-  scope: string
+  scope: string,
+  requestHost?: string
 ): Promise<{ ok: true; token: string } | { ok: false; error: { code?: string; message: string; hint?: string } }> {
-  const adminApp = getAdminApp(env);
+  const adminApp = getAdminApp(env, requestHost);
   if (!adminApp.ok) {
     return {
       ok: false,
@@ -875,14 +904,19 @@ async function firestoreRequest(env: Env, path: string, init?: RequestInit): Pro
 async function firestoreRequestDetailed(
   env: Env,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  requestHost?: string
 ): Promise<{ ok: true; response: Response } | { ok: false; error: FirestoreErrorPayload }> {
-  const adminApp = getAdminApp(env);
+  const adminApp = getAdminApp(env, requestHost);
   if (!adminApp.ok) {
     return { ok: false, error: adminApp.error };
   }
   const projectId = adminApp.app.creds.projectId || null;
-  const accessTokenResult = await getGoogleAccessTokenDetailed(env, "https://www.googleapis.com/auth/datastore");
+  const accessTokenResult = await getGoogleAccessTokenDetailed(
+    env,
+    "https://www.googleapis.com/auth/datastore",
+    requestHost
+  );
   if (!accessTokenResult.ok) {
     return {
       ok: false,
@@ -890,6 +924,7 @@ async function firestoreRequestDetailed(
         code: accessTokenResult.error.code,
         message: accessTokenResult.error.message,
         hint: accessTokenResult.error.hint,
+        requestHost,
       }),
     };
   }
@@ -1151,7 +1186,8 @@ async function writeStoreSettings(env: Env, settings: StoreSettings) {
 
 async function writeStoreSettingsDetailed(
   env: Env,
-  settings: StoreSettings
+  settings: StoreSettings,
+  requestHost?: string
 ): Promise<{ ok: true; settings: StoreSettings } | { ok: false; error: FirestoreErrorPayload }> {
   const updated = { ...settings, updatedAt: nowIso() };
   const encoded = toFirestoreValue(updated);
@@ -1159,7 +1195,7 @@ async function writeStoreSettingsDetailed(
   const result = await firestoreRequestDetailed(env, STORE_SETTINGS_PATH, {
     method: "PATCH",
     body: JSON.stringify({ fields }),
-  });
+  }, requestHost);
   if (!result.ok) {
     return { ok: false, error: result.error };
   }
@@ -1189,6 +1225,7 @@ async function writeStoreSettingsDetailed(
         code,
         message,
         hint: "Vérifiez les permissions du compte de service Firestore.",
+        requestHost,
       }),
     };
   }
@@ -2059,10 +2096,14 @@ async function createCheckoutSession(params: {
 }
 
 async function handleRequest(request: Request, env: Env | undefined, ctx: ExecutionContext | undefined) {
-  const requestOrigin = normalizeOrigin(request.headers.get("Origin"));
+  const requestInfo = getRequestInfo(request);
+  const jsonResponse = (data: any, status = 200, headers: Record<string, string> = {}) =>
+    json(data, status, headers, requestInfo);
+  const requestOriginHeader = request.headers.get("Origin");
+  const requestOrigin = normalizeOrigin(requestOriginHeader);
   const cors = corsHeadersFor(requestOrigin);
   if (!isEnvAvailable(env)) {
-    return json(
+    return jsonResponse(
       {
         error: "ENV_NOT_PASSED_TO_WORKER",
         message: "Env non transmis au Worker.",
@@ -2093,7 +2134,20 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       const credentials = resolveFirebaseCredentials(env);
       const hasProjectId = Boolean(credentials?.projectId);
       const hasServiceAccount = Boolean(credentials?.clientEmail && credentials?.privateKey);
-      return json(
+      const firebaseEnvPresence = {
+        hasProjectId: Boolean(env.FIREBASE_PROJECT_ID && String(env.FIREBASE_PROJECT_ID).trim()),
+        hasClientEmail: Boolean(env.FIREBASE_CLIENT_EMAIL && String(env.FIREBASE_CLIENT_EMAIL).trim()),
+        hasPrivateKey: Boolean(env.FIREBASE_PRIVATE_KEY && String(env.FIREBASE_PRIVATE_KEY).trim()),
+        hasServiceJson: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON && String(env.FIREBASE_SERVICE_ACCOUNT_JSON).trim()),
+        hasServiceJsonB64: Boolean(
+          (env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 && String(env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64).trim()) ||
+            (env.FIREBASE_SERVICE_ACCOUNT_BASE64 && String(env.FIREBASE_SERVICE_ACCOUNT_BASE64).trim())
+        ),
+        resolvedProjectId: credentials?.projectId ?? null,
+        source: credentials.source,
+        missing: credentials.missing,
+      };
+      return jsonResponse(
         {
           ok: true,
           hasOrdersKV: hasOrdersKv(env),
@@ -2102,6 +2156,11 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           hasFirebaseProjectId: hasProjectId,
           hasFirebaseServiceAccount: hasServiceAccount,
           origin,
+          workerBuild: WORKER_BUILD_ID,
+          requestHost: requestInfo.host,
+          requestOriginHeader,
+          normalizedOrigin: requestOrigin,
+          firebaseEnvPresence,
         },
         200,
         cors
@@ -2115,9 +2174,9 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       const messagingSenderId = getFirebaseMessagingSenderId(env);
       const appId = getFirebaseAppId(env);
       if (!apiKey || !authDomain || !projectId || !messagingSenderId || !appId) {
-        return json({ error: "FIREBASE_CONFIG_MISSING" }, 500, cors);
+        return jsonResponse({ error: "FIREBASE_CONFIG_MISSING" }, 500, cors);
       }
-      return json(
+      return jsonResponse(
         {
           apiKey,
           authDomain,
@@ -2131,18 +2190,18 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     }
 
     if (request.method === "GET" && url.pathname === "/public/store-status") {
-      const firestoreGuard = requireFirestoreCredentials(env, cors);
+      const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
       if (firestoreGuard) return firestoreGuard;
       const settings = await getOrInitStoreSettings(env);
       const status = resolveStoreStatus(settings);
-      return json(status, 200, cors);
+      return jsonResponse(status, 200, cors);
     }
 
     if (request.method === "GET" && url.pathname === "/__/debug/firebase") {
       const credentials = resolveFirebaseCredentials(env);
       const ok =
         !credentials.missing.projectId && !credentials.missing.clientEmail && !credentials.missing.privateKey;
-      return json(
+      return jsonResponse(
         {
           ok,
           missing: credentials.missing,
@@ -2154,6 +2213,14 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
             FIREBASE_PRIVATE_KEY: Boolean(env.FIREBASE_PRIVATE_KEY),
             FIREBASE_CLIENT_EMAIL: Boolean(env.FIREBASE_CLIENT_EMAIL),
           },
+          workerBuild: WORKER_BUILD_ID,
+          requestHost: requestInfo.host,
+          firebaseCredentialsResolved: {
+            projectId: credentials.projectId ?? null,
+            clientEmail: credentials.clientEmail ?? null,
+            missing: credentials.missing,
+            source: credentials.source,
+          },
         },
         200,
         cors
@@ -2163,25 +2230,25 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     if (request.method === "GET" && url.pathname === "/admin/store-settings") {
       const auth = await verifyAdminRequest(request, env);
       if (!auth.ok) {
-        return json({ error: auth.error, message: auth.message }, 401, cors);
+        return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
       }
-      const firestoreGuard = requireFirestoreCredentials(env, cors);
+      const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
       if (firestoreGuard) return firestoreGuard;
       const settings = await getOrInitStoreSettings(env);
-      return json(settings, 200, cors);
+      return jsonResponse(settings, 200, cors);
     }
 
     if (request.method === "GET" && url.pathname === "/admin/debug/firebase-env") {
       const auth = await verifyAdminRequest(request, env);
       if (!auth.ok) {
-        return json({ error: auth.error, message: auth.message }, 401, cors);
+        return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
       }
       const credentials = resolveFirebaseCredentials(env);
       const hasServiceJson = !credentials.missing.serviceJson;
       const hasClientEmail = Boolean(credentials?.clientEmail);
       const hasPrivateKey = Boolean(credentials?.privateKey);
       const hasProjectId = Boolean(credentials?.projectId);
-      return json(
+      return jsonResponse(
         {
           ok: true,
           receivedEnv: true,
@@ -2198,16 +2265,16 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     if (request.method === "POST" && url.pathname === "/admin/store-settings") {
       const auth = await verifyAdminRequest(request, env);
       if (!auth.ok) {
-        return json({ error: auth.error, message: auth.message }, 401, cors);
+        return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
       }
-      const firestoreGuard = requireFirestoreCredentials(env, cors);
+      const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
       if (firestoreGuard) return firestoreGuard;
       try {
         let body: any = null;
         try {
           body = await request.json();
         } catch (err) {
-          return json(
+          return jsonResponse(
             { message: "Body invalide.", details: serializeError(err) },
             400,
             cors
@@ -2215,30 +2282,31 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         }
         const validation = validateStoreSettingsPayload(body);
         if (!validation.ok) {
-          return json(
+          return jsonResponse(
             { message: validation.message, details: { error: validation.error } },
             400,
             cors
           );
         }
-        const saved = await writeStoreSettingsDetailed(env, validation.settings);
+        const saved = await writeStoreSettingsDetailed(env, validation.settings, requestInfo.host);
         if (!saved.ok) {
           console.error("Firestore store settings write failed", saved);
-          return json(
+          return jsonResponse(
             saved.error,
             500,
             cors
           );
         }
-        return json(saved.settings, 200, cors);
+        return jsonResponse(saved.settings, 200, cors);
       } catch (err) {
         console.error("Firestore store settings error", err);
         const details = err instanceof Error ? `${err.message}${err.stack ? `\n${err.stack}` : ""}` : String(err);
-        return json(
+        return jsonResponse(
           buildFirestoreError(env, {
             code: "FIRESTORE_EXCEPTION",
             message: "Erreur Firestore",
             hint: details,
+            requestHost: requestInfo.host,
           }),
           500,
           cors
@@ -2248,18 +2316,18 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
 
     try {
       if (!hasOrdersKv(env)) {
-        return json({ error: "SERVER_MISCONFIGURED", details: "ORDERS_KV not bound" }, 500, cors);
+        return jsonResponse({ error: "SERVER_MISCONFIGURED", details: "ORDERS_KV not bound" }, 500, cors);
       }
 
       if (request.method === "POST" && url.pathname === "/create-cash-order") {
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const body: any = await request.json().catch(() => null);
-        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+        if (!body) return jsonResponse({ error: "INVALID_JSON" }, 400, cors);
 
         const storeStatus = resolveStoreStatus(await getOrInitStoreSettings(env));
         if (!storeStatus.isOpen) {
-          return json(
+          return jsonResponse(
             { error: "STORE_CLOSED", message: `Snack fermé actuellement. ${storeStatus.detail}` },
             403,
             cors
@@ -2267,13 +2335,13 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         }
 
         const validation = validateItems(body.items);
-        if ("error" in validation) return json(validation, 400, cors);
+        if ("error" in validation) return jsonResponse(validation, 400, cors);
 
         const desiredDeliveryAtRaw = typeof body.desiredDeliveryAt === "string" ? body.desiredDeliveryAt : null;
         const desiredDeliverySlotLabelRaw =
           typeof body.desiredDeliverySlotLabel === "string" ? body.desiredDeliverySlotLabel.trim() : null;
         if (desiredDeliveryAtRaw && Number.isNaN(Date.parse(desiredDeliveryAtRaw))) {
-          return json({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
+          return jsonResponse({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
         }
         const notes = sanitizeNotes(body.notes);
 
@@ -2283,11 +2351,11 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (firebaseIdToken) {
           const apiKey = getFirebaseApiKey(env);
           if (!apiKey) {
-            return json({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
+            return jsonResponse({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
           }
           const uid = await lookupFirebaseUid(firebaseIdToken, apiKey);
           if (!uid) {
-            return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+            return jsonResponse({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
           }
           userUid = uid;
         }
@@ -2295,7 +2363,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         // Minimum 20€ hors livraison
         const sub = subtotalCents(validation.items);
         if (sub < MIN_ORDER_CENTS) {
-          return json(
+          return jsonResponse(
             { error: "MIN_ORDER_NOT_MET", message: "Il faut commander un minimum de 20€ (hors livraison)." },
             400,
             cors
@@ -2308,10 +2376,10 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         const deliveryLng = Number(body.deliveryLng);
 
         if (!deliveryAddress) {
-          return json({ error: "DELIVERY_ADDRESS_REQUIRED", message: "Adresse de livraison obligatoire." }, 400, cors);
+          return jsonResponse({ error: "DELIVERY_ADDRESS_REQUIRED", message: "Adresse de livraison obligatoire." }, 400, cors);
         }
         if (!Number.isFinite(deliveryLat) || !Number.isFinite(deliveryLng)) {
-          return json(
+          return jsonResponse(
             { error: "DELIVERY_POSITION_REQUIRED", message: "Position obligatoire (géolocalisation)." },
             400,
             cors
@@ -2321,7 +2389,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         // Zone 10km
         const km = distanceKm(SHOP_LAT, SHOP_LNG, deliveryLat, deliveryLng);
         if (km > MAX_DELIVERY_KM) {
-          return json(
+          return jsonResponse(
             { error: "DELIVERY_OUT_OF_RANGE", message: `Livraison uniquement dans un rayon de ${MAX_DELIVERY_KM} km.` },
             400,
             cors
@@ -2374,22 +2442,22 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
             // ignore firestore failure
           }
         }
-        return json({ orderId, publicOrderUrl, adminHubUrl }, 200, cors);
+        return jsonResponse({ orderId, publicOrderUrl, adminHubUrl }, 200, cors);
       }
 
       if (request.method === "POST" && url.pathname === "/create-checkout-session") {
         if (!hasStripeSecret(env)) {
-          return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_SECRET_KEY" }, 500, cors);
+          return jsonResponse({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_SECRET_KEY" }, 500, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
 
         const body: any = await request.json().catch(() => null);
-        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+        if (!body) return jsonResponse({ error: "INVALID_JSON" }, 400, cors);
 
         const storeStatus = resolveStoreStatus(await getOrInitStoreSettings(env));
         if (!storeStatus.isOpen) {
-          return json(
+          return jsonResponse(
             { error: "STORE_CLOSED", message: `Snack fermé actuellement. ${storeStatus.detail}` },
             403,
             cors
@@ -2397,13 +2465,13 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         }
 
         const validation = validateItems(body.items);
-        if ("error" in validation) return json(validation, 400, cors);
+        if ("error" in validation) return jsonResponse(validation, 400, cors);
 
         const desiredDeliveryAtRaw = typeof body.desiredDeliveryAt === "string" ? body.desiredDeliveryAt : null;
         const desiredDeliverySlotLabelRaw =
           typeof body.desiredDeliverySlotLabel === "string" ? body.desiredDeliverySlotLabel.trim() : null;
         if (desiredDeliveryAtRaw && Number.isNaN(Date.parse(desiredDeliveryAtRaw))) {
-          return json({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
+          return jsonResponse({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
         }
 
         const firebaseIdToken =
@@ -2412,11 +2480,11 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (firebaseIdToken) {
           const apiKey = getFirebaseApiKey(env);
           if (!apiKey) {
-            return json({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
+            return jsonResponse({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
           }
           const uid = await lookupFirebaseUid(firebaseIdToken, apiKey);
           if (!uid) {
-            return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+            return jsonResponse({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
           }
           userUid = uid;
         }
@@ -2424,7 +2492,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         // Minimum 20€ hors livraison
         const sub = subtotalCents(validation.items);
         if (sub < MIN_ORDER_CENTS) {
-          return json(
+          return jsonResponse(
             { error: "MIN_ORDER_NOT_MET", message: "Il faut commander un minimum de 20€ (hors livraison)." },
             400,
             cors
@@ -2437,10 +2505,10 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         const deliveryLng = Number(body.deliveryLng);
 
         if (!deliveryAddress) {
-          return json({ error: "DELIVERY_ADDRESS_REQUIRED", message: "Adresse de livraison obligatoire." }, 400, cors);
+          return jsonResponse({ error: "DELIVERY_ADDRESS_REQUIRED", message: "Adresse de livraison obligatoire." }, 400, cors);
         }
         if (!Number.isFinite(deliveryLat) || !Number.isFinite(deliveryLng)) {
-          return json(
+          return jsonResponse(
             { error: "DELIVERY_POSITION_REQUIRED", message: "Position obligatoire (géolocalisation)." },
             400,
             cors
@@ -2450,7 +2518,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         // Zone 10km
         const km = distanceKm(SHOP_LAT, SHOP_LNG, deliveryLat, deliveryLng);
         if (km > MAX_DELIVERY_KM) {
-          return json(
+          return jsonResponse(
             { error: "DELIVERY_OUT_OF_RANGE", message: `Livraison uniquement dans un rayon de ${MAX_DELIVERY_KM} km.` },
             400,
             cors
@@ -2515,18 +2583,18 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         });
 
         if (!result.ok) {
-          return json({ error: "STRIPE_API_ERROR", status: result.status, details: result.stripe }, 502, cors);
+          return jsonResponse({ error: "STRIPE_API_ERROR", status: result.status, details: result.stripe }, 502, cors);
         }
 
         if (!result.session?.url) {
-          return json({ error: "STRIPE_NO_URL", details: result.session }, 502, cors);
+          return jsonResponse({ error: "STRIPE_NO_URL", details: result.session }, 502, cors);
         }
 
         order.stripeCheckoutSessionId = result.session.id;
         await saveOrder(env, order);
         await env.ORDERS_KV!.put(`order:session:${result.session.id}`, orderId);
 
-        return json(
+        return jsonResponse(
           { url: result.session.url, sessionId: result.session.id, orderId, publicOrderUrl, adminHubUrl },
           200,
           cors
@@ -2535,23 +2603,23 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
 
       if (request.method === "POST" && url.pathname === "/stripe-webhook") {
         if (!hasWebhookSecret(env)) {
-          return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_WEBHOOK_SECRET" }, 500, cors);
+          return jsonResponse({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_WEBHOOK_SECRET" }, 500, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
 
         const signature = request.headers.get("Stripe-Signature") || "";
         const rawBody = await request.text();
         const isValid = await verifyStripeSignature(rawBody, signature, String(env.STRIPE_WEBHOOK_SECRET));
         if (!isValid) {
-          return json({ error: "INVALID_SIGNATURE" }, 400, cors);
+          return jsonResponse({ error: "INVALID_SIGNATURE" }, 400, cors);
         }
 
         let event: any = null;
         try {
           event = JSON.parse(rawBody);
         } catch {
-          return json({ error: "INVALID_PAYLOAD" }, 400, cors);
+          return jsonResponse({ error: "INVALID_PAYLOAD" }, 400, cors);
         }
 
         if (event?.type === "checkout.session.completed") {
@@ -2573,14 +2641,14 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           }
         }
 
-        return json({ ok: true }, 200, cors);
+        return jsonResponse({ ok: true }, 200, cors);
       }
 
       if (request.method === "GET" && (url.pathname === "/menu/availability" || url.pathname === "/store/menu-availability")) {
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const state = await readMenuAvailability(env);
-        return json(
+        return jsonResponse(
           {
             ok: true,
             availability: state.overrides,
@@ -2595,12 +2663,12 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         const adminPin = getAdminPin(env);
         const secret = getAdminSigningSecret(env);
         if (!adminPin || !secret) {
-          return json({ error: "ADMIN_DISABLED", message: "Admin PIN or signing secret not configured." }, 403, cors);
+          return jsonResponse({ error: "ADMIN_DISABLED", message: "Admin PIN or signing secret not configured." }, 403, cors);
         }
 
         const rate = await registerLoginAttempt(env, getClientIp(request));
         if (!rate.allowed) {
-          return json(
+          return jsonResponse(
             { error: "RATE_LIMITED", message: "Trop de tentatives. Réessayez plus tard." },
             429,
             { ...cors, "Retry-After": String(rate.retryAfter ?? 30) }
@@ -2608,25 +2676,25 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         }
 
         const body: any = await request.json().catch(() => null);
-        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+        if (!body) return jsonResponse({ error: "INVALID_JSON" }, 400, cors);
         const pin = String(body.pin ?? "").trim();
         if (!pin || !isAdminPinValid(env, pin)) {
-          return json({ error: "UNAUTHORIZED", message: "Code gérant invalide." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Code gérant invalide." }, 401, cors);
         }
 
         const token = await createAdminToken(secret);
-        return json({ token, expiresIn: ADMIN_TOKEN_TTL_MS }, 200, cors);
+        return jsonResponse({ token, expiresIn: ADMIN_TOKEN_TTL_MS }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/admin/menu/availability") {
         const auth = await verifyAdminRequest(request, env);
         if (!auth.ok) {
-          return json({ error: auth.error, message: auth.message }, 401, cors);
+          return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const state = await readMenuAvailability(env);
-        return json(
+        return jsonResponse(
           {
             ok: true,
             availability: state.overrides,
@@ -2640,18 +2708,18 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (request.method === "POST" && url.pathname === "/admin/menu-availability") {
         const auth = await verifyAdminRequest(request, env);
         if (!auth.ok) {
-          return json({ error: auth.error, message: auth.message }, 401, cors);
+          return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const body: any = await request.json().catch(() => null);
         const itemKey = typeof body?.itemKey === "string" ? body.itemKey.trim() : "";
         const mode = typeof body?.mode === "string" ? body.mode.trim().toUpperCase() : "";
         if (!itemKey) {
-          return json({ error: "ITEM_KEY_REQUIRED", message: "Item key requis." }, 400, cors);
+          return jsonResponse({ error: "ITEM_KEY_REQUIRED", message: "Item key requis." }, 400, cors);
         }
         if (mode !== "AVAILABLE" && mode !== "TODAY" && mode !== "MANUAL") {
-          return json({ error: "INVALID_MODE", message: "Mode invalide." }, 400, cors);
+          return jsonResponse({ error: "INVALID_MODE", message: "Mode invalide." }, 400, cors);
         }
         const state = await readMenuAvailability(env);
         const nextMap = { ...state.overrides };
@@ -2663,7 +2731,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           nextMap[itemKey] = { unavailable: true, until: null };
         }
         const updatedAt = await writeMenuAvailability(env, nextMap);
-        return json(
+        return jsonResponse(
           {
             ok: true,
             itemKey,
@@ -2678,17 +2746,17 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (request.method === "POST" && url.pathname.startsWith("/admin/menu/items/")) {
         const auth = await verifyAdminRequest(request, env);
         if (!auth.ok) {
-          return json({ error: auth.error, message: auth.message }, 401, cors);
+          return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/admin\/menu\/items\/(.+)$/);
         const itemId = match?.[1] ? decodeURIComponent(match[1]) : "";
-        if (!itemId) return json({ error: "ITEM_ID_REQUIRED", message: "Item id requis." }, 400, cors);
+        if (!itemId) return jsonResponse({ error: "ITEM_ID_REQUIRED", message: "Item id requis." }, 400, cors);
 
         const body: any = await request.json().catch(() => null);
         if (!body || typeof body.unavailable !== "boolean") {
-          return json({ error: "INVALID_JSON", message: "Champ unavailable requis." }, 400, cors);
+          return jsonResponse({ error: "INVALID_JSON", message: "Champ unavailable requis." }, 400, cors);
         }
 
         const state = await readMenuAvailability(env);
@@ -2699,24 +2767,24 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           delete nextMap[itemId];
         }
         const updatedAt = await writeMenuAvailability(env, nextMap);
-        return json({ ok: true, itemId, unavailable: body.unavailable, updatedAt: updatedAt ?? undefined }, 200, cors);
+        return jsonResponse({ ok: true, itemId, unavailable: body.unavailable, updatedAt: updatedAt ?? undefined }, 200, cors);
       }
 
       if (request.method === "POST" && url.pathname === "/admin/menu/reset") {
         const auth = await verifyAdminRequest(request, env);
         if (!auth.ok) {
-          return json({ error: auth.error, message: auth.message }, 401, cors);
+          return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const updatedAt = await writeMenuAvailability(env, {});
-        return json({ ok: true, availability: {}, updatedAt: updatedAt ?? undefined }, 200, cors);
+        return jsonResponse({ ok: true, availability: {}, updatedAt: updatedAt ?? undefined }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/admin/orders") {
         const auth = await verifyAdminRequest(request, env);
         if (!auth.ok) {
-          return json({ error: auth.error, message: auth.message }, 401, cors);
+          return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
         }
 
         const rawLimit = Number(url.searchParams.get("limit") ?? "50");
@@ -2739,23 +2807,23 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
           .slice(0, limit);
 
-        return json({ orders: summaries, cursor: listing.cursor }, 200, cors);
+        return jsonResponse({ orders: summaries, cursor: listing.cursor }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/admin/orders/")) {
         const auth = await verifyAdminRequest(request, env);
         if (!auth.ok) {
-          return json({ error: auth.error, message: auth.message }, 401, cors);
+          return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
         }
         const match = url.pathname.match(/^\/admin\/orders\/([^/]+)$/);
         const orderId = match?.[1];
-        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!orderId) return jsonResponse({ error: "ORDER_ID_REQUIRED" }, 400, cors);
 
         const order = await readOrder(env, orderId);
-        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!order) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
         normalizeOrderStatus(order);
 
-        return json(
+        return jsonResponse(
           {
             order: {
               id: order.id,
@@ -2786,25 +2854,25 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (request.method === "POST" && url.pathname.startsWith("/admin/orders/") && url.pathname.endsWith("/status")) {
         const auth = await verifyAdminRequest(request, env);
         if (!auth.ok) {
-          return json({ error: auth.error, message: auth.message }, 401, cors);
+          return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/admin\/orders\/([^/]+)\/status$/);
         const orderId = match?.[1];
-        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!orderId) return jsonResponse({ error: "ORDER_ID_REQUIRED" }, 400, cors);
 
         const body: any = await request.json().catch(() => null);
-        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+        if (!body) return jsonResponse({ error: "INVALID_JSON" }, 400, cors);
 
         const status = String(body.status ?? "").trim() as OrderStatus;
         const allowed: OrderStatus[] = ["IN_PREPARATION", "OUT_FOR_DELIVERY", "DELIVERED"];
         if (!allowed.includes(status)) {
-          return json({ error: "INVALID_STATUS" }, 400, cors);
+          return jsonResponse({ error: "INVALID_STATUS" }, 400, cors);
         }
 
         const order = await readOrder(env, orderId);
-        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!order) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
 
         normalizeOrderStatus(order);
         order.status = status;
@@ -2822,22 +2890,22 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           // ignore push failures
         }
 
-        return json({ ok: true, summary: buildOrderSummary(order) }, 200, cors);
+        return jsonResponse({ ok: true, summary: buildOrderSummary(order) }, 200, cors);
       }
 
       if (request.method === "DELETE" && url.pathname.startsWith("/admin/orders/")) {
         const auth = await verifyAdminRequest(request, env);
         if (!auth.ok) {
-          return json({ error: auth.error, message: auth.message }, 401, cors);
+          return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/admin\/orders\/([^/]+)$/);
         const orderId = match?.[1];
-        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!orderId) return jsonResponse({ error: "ORDER_ID_REQUIRED" }, 400, cors);
 
         const order = await readOrder(env, orderId);
-        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!order) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
 
         if (order.userUid) {
           await removeUserOrder(env, order.userUid, orderId);
@@ -2852,20 +2920,20 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         }
         await env.ORDERS_KV!.delete(`order:${orderId}`);
 
-        return json({ ok: true }, 200, cors);
+        return jsonResponse({ ok: true }, 200, cors);
       }
 
       if (request.method === "POST" && url.pathname === "/admin/order-action") {
         const secret = getAdminSigningSecret(env);
         const pinSecret = getAdminPin(env);
         if (!pinSecret || !secret) {
-          return json({ error: "ADMIN_DISABLED", message: "Admin PIN or signing secret not configured." }, 403, cors);
+          return jsonResponse({ error: "ADMIN_DISABLED", message: "Admin PIN or signing secret not configured." }, 403, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
 
         const body: any = await request.json().catch(() => null);
-        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+        if (!body) return jsonResponse({ error: "INVALID_JSON" }, 400, cors);
 
         const orderId = String(body.orderId ?? "").trim();
         const action = String(body.action ?? "").trim() as "OPEN" | "DELIVERED";
@@ -2873,26 +2941,26 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         const sig = String(body.sig ?? "").trim();
         const pin = String(body.pin ?? "").trim();
 
-        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
-        if (!Number.isFinite(exp)) return json({ error: "EXP_INVALID" }, 400, cors);
-        if (!sig) return json({ error: "SIG_REQUIRED" }, 400, cors);
-        if (Date.now() > exp) return json({ error: "LINK_EXPIRED" }, 400, cors);
-        if (!pin || pin !== pinSecret) return json({ error: "PIN_INVALID" }, 403, cors);
-        if (action !== "OPEN" && action !== "DELIVERED") return json({ error: "INVALID_ACTION" }, 400, cors);
+        if (!orderId) return jsonResponse({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!Number.isFinite(exp)) return jsonResponse({ error: "EXP_INVALID" }, 400, cors);
+        if (!sig) return jsonResponse({ error: "SIG_REQUIRED" }, 400, cors);
+        if (Date.now() > exp) return jsonResponse({ error: "LINK_EXPIRED" }, 400, cors);
+        if (!pin || pin !== pinSecret) return jsonResponse({ error: "PIN_INVALID" }, 403, cors);
+        if (action !== "OPEN" && action !== "DELIVERED") return jsonResponse({ error: "INVALID_ACTION" }, 400, cors);
 
         const purpose = action === "OPEN" ? "ADMIN_HUB" : "ADMIN_DELIVER";
         const isValidSig = await verifyAdmin(secret, orderId, exp, sig, purpose);
-        if (!isValidSig) return json({ error: "INVALID_SIGNATURE" }, 401, cors);
+        if (!isValidSig) return jsonResponse({ error: "INVALID_SIGNATURE" }, 401, cors);
 
         const order = await readOrder(env, orderId);
-        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!order) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
 
         normalizeOrderStatus(order);
         const rank = statusRank(order.status);
 
         if (action === "OPEN") {
           if (rank > 1) {
-            return json({ error: "STATUS_LOCKED", message: "Commande déjà en cours de livraison ou livrée." }, 409, cors);
+            return jsonResponse({ error: "STATUS_LOCKED", message: "Commande déjà en cours de livraison ou livrée." }, 409, cors);
           }
           if (rank < 1) {
             order.status = "IN_PREPARATION";
@@ -2914,7 +2982,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           const deliveredSig = await signAdmin(secret, orderId, deliveredExp, "ADMIN_DELIVER");
           const publicOrderUrl = buildPublicOrderUrl(order.origin, orderId);
 
-          return json(
+          return jsonResponse(
             {
               ok: true,
               order,
@@ -2927,7 +2995,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         }
 
         if (rank < 1) {
-          return json({ error: "STATUS_NOT_READY", message: "Commande pas encore en préparation." }, 409, cors);
+          return jsonResponse({ error: "STATUS_NOT_READY", message: "Commande pas encore en préparation." }, 409, cors);
         }
 
         if (order.status !== "DELIVERED") {
@@ -2946,7 +3014,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           }
         }
 
-        return json(
+        return jsonResponse(
           {
             ok: true,
             order,
@@ -2959,15 +3027,15 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
 
       if (request.method === "GET" && url.pathname === "/api/admin/orders") {
         if (!getAdminPin(env)) {
-          return json({ error: "ADMIN_PIN_MISSING", message: "ADMIN_PIN not configured." }, 500, cors);
+          return jsonResponse({ error: "ADMIN_PIN_MISSING", message: "ADMIN_PIN not configured." }, 500, cors);
         }
         const pin = extractAdminPin(request, url);
         if (!isAdminPinValid(env, pin)) {
-          return json({ error: "UNAUTHORIZED", message: "Admin PIN required." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Admin PIN required." }, 401, cors);
         }
         const limit = Number(url.searchParams.get("limit") ?? "30");
         const orders = await listOrders(env, Number.isFinite(limit) ? Math.max(1, Math.min(limit, 50)) : 30);
-        return json(
+        return jsonResponse(
           {
             orders: orders.map((order) => ({
               orderId: order.id,
@@ -2984,29 +3052,29 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
 
       if (request.method === "POST" && url.pathname.startsWith("/api/admin/orders/") && url.pathname.endsWith("/status")) {
         if (!getAdminPin(env)) {
-          return json({ error: "ADMIN_PIN_MISSING", message: "ADMIN_PIN not configured." }, 500, cors);
+          return jsonResponse({ error: "ADMIN_PIN_MISSING", message: "ADMIN_PIN not configured." }, 500, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/api\/admin\/orders\/([^/]+)\/status$/);
         const orderId = match?.[1];
-        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!orderId) return jsonResponse({ error: "ORDER_ID_REQUIRED" }, 400, cors);
 
         const body: any = await request.json().catch(() => null);
-        if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
+        if (!body) return jsonResponse({ error: "INVALID_JSON" }, 400, cors);
         const pin = extractAdminPin(request, url) || body.pin;
         if (!isAdminPinValid(env, pin)) {
-          return json({ error: "UNAUTHORIZED", message: "Admin PIN required." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Admin PIN required." }, 401, cors);
         }
 
         const status = String(body.status ?? "").trim() as OrderStatus;
         const allowed: OrderStatus[] = ["IN_PREPARATION", "OUT_FOR_DELIVERY", "DELIVERED"];
         if (!allowed.includes(status)) {
-          return json({ error: "INVALID_STATUS" }, 400, cors);
+          return jsonResponse({ error: "INVALID_STATUS" }, 400, cors);
         }
 
         const order = await readOrder(env, orderId);
-        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!order) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
 
         normalizeOrderStatus(order);
         order.status = status;
@@ -3024,7 +3092,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           // ignore push failures
         }
 
-        return json(
+        return jsonResponse(
           { ok: true, status: order.status },
           200,
           cors
@@ -3033,20 +3101,20 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
 
       if (request.method === "DELETE" && url.pathname.startsWith("/api/admin/orders/")) {
         if (!getAdminPin(env)) {
-          return json({ error: "ADMIN_PIN_MISSING", message: "ADMIN_PIN not configured." }, 500, cors);
+          return jsonResponse({ error: "ADMIN_PIN_MISSING", message: "ADMIN_PIN not configured." }, 500, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/api\/admin\/orders\/([^/]+)$/);
         const orderId = match?.[1];
-        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!orderId) return jsonResponse({ error: "ORDER_ID_REQUIRED" }, 400, cors);
         const pin = extractAdminPin(request, url);
         if (!isAdminPinValid(env, pin)) {
-          return json({ error: "UNAUTHORIZED", message: "Admin PIN required." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Admin PIN required." }, 401, cors);
         }
 
         const order = await readOrder(env, orderId);
-        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!order) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
 
         if (order.userUid) {
           await removeUserOrder(env, order.userUid, orderId);
@@ -3061,26 +3129,26 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         }
         await env.ORDERS_KV!.delete(`order:${orderId}`);
 
-        return json({ ok: true }, 200, cors);
+        return jsonResponse({ ok: true }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/api/my-orders") {
         const token = extractBearerToken(request);
         if (!token) {
-          return json({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
         }
         const apiKey = getFirebaseApiKey(env);
         if (!apiKey) {
-          return json({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
+          return jsonResponse({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
         }
         const uid = await lookupFirebaseUid(token, apiKey);
         if (!uid) {
-          return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
         }
 
         const orderIds = await readUserOrders(env, uid);
         if (orderIds.length === 0) {
-          return json({ orders: [] }, 200, cors);
+          return jsonResponse({ orders: [] }, 200, cors);
         }
 
         const records = await Promise.all(orderIds.map((id) => readOrder(env, id)));
@@ -3101,24 +3169,24 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           })
           .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
-        return json({ orders }, 200, cors);
+        return jsonResponse({ orders }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname === "/me/orders") {
         const token = extractBearerToken(request);
         if (!token) {
-          return json({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
         }
         const uid = await verifyFirebaseIdToken(env, token);
         if (!uid) {
-          return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
         }
 
         const rawLimit = Number(url.searchParams.get("limit") ?? "30");
         const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(rawLimit, 30)) : 30;
         const orderIds = await readUserOrders(env, uid);
         if (orderIds.length === 0) {
-          return json({ orders: [] }, 200, cors);
+          return jsonResponse({ orders: [] }, 200, cors);
         }
 
         const records = await Promise.all(orderIds.map((id) => readOrder(env, id)));
@@ -3140,38 +3208,38 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
           .slice(0, limit);
 
-        return json({ orders }, 200, cors);
+        return jsonResponse({ orders }, 200, cors);
       }
 
       if (request.method === "POST" && url.pathname === "/me/push/subscribe") {
         const token = extractBearerToken(request);
         if (!token) {
-          return json({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
         }
-        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
         if (firestoreGuard) return firestoreGuard;
         const uid = await verifyFirebaseIdToken(env, token);
         if (!uid) {
-          return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+          return jsonResponse({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
         }
         const body: any = await request.json().catch(() => null);
         const fcmToken = typeof body?.token === "string" ? body.token.trim() : "";
         if (!fcmToken) {
-          return json({ error: "TOKEN_REQUIRED", message: "Token requis." }, 400, cors);
+          return jsonResponse({ error: "TOKEN_REQUIRED", message: "Token requis." }, 400, cors);
         }
 
         await upsertUserFcmToken(env, uid, fcmToken, request.headers.get("User-Agent"));
-        return json({ ok: true }, 200, cors);
+        return jsonResponse({ ok: true }, 200, cors);
       }
 
       if (request.method === "GET" && url.pathname.startsWith("/api/orders/")) {
         const orderId = url.pathname.replace("/api/orders/", "").trim();
-        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!orderId) return jsonResponse({ error: "ORDER_ID_REQUIRED" }, 400, cors);
         const order = await readOrder(env, orderId);
-        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!order) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
         normalizeOrderStatus(order);
 
-        return json(
+        return jsonResponse(
           {
             id: order.id,
             createdAt: order.createdAt,
@@ -3197,12 +3265,12 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         const orderId = url.pathname.startsWith("/orders/")
           ? url.pathname.replace("/orders/", "").trim()
           : url.pathname.replace("/order/", "").trim();
-        if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
+        if (!orderId) return jsonResponse({ error: "ORDER_ID_REQUIRED" }, 400, cors);
         const order = await readOrder(env, orderId);
-        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!order) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
         normalizeOrderStatus(order);
 
-        return json(
+        return jsonResponse(
           {
             id: order.id,
             createdAt: order.createdAt,
@@ -3226,18 +3294,18 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
 
       if (request.method === "GET" && url.pathname === "/order-by-session") {
         const sessionId = url.searchParams.get("session_id");
-        if (!sessionId) return json({ error: "SESSION_ID_REQUIRED" }, 400, cors);
+        if (!sessionId) return jsonResponse({ error: "SESSION_ID_REQUIRED" }, 400, cors);
         const orderId = await env.ORDERS_KV!.get(`order:session:${sessionId}`);
-        if (!orderId) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!orderId) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
         const order = await readOrder(env, orderId);
-        if (!order) return json({ error: "ORDER_NOT_FOUND" }, 404, cors);
+        if (!order) return jsonResponse({ error: "ORDER_NOT_FOUND" }, 404, cors);
         normalizeOrderStatus(order);
-        return json({ orderId, status: order.status }, 200, cors);
+        return jsonResponse({ orderId, status: order.status }, 200, cors);
       }
 
-      return json({ error: "NOT_FOUND" }, 404, cors);
+      return jsonResponse({ error: "NOT_FOUND" }, 404, cors);
     } catch (e: any) {
-      return json({ error: "WORKER_ERROR", details: e?.message ?? String(e) }, 500, cors);
+      return jsonResponse({ error: "WORKER_ERROR", details: e?.message ?? String(e) }, 500, cors);
     }
 }
 
