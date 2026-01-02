@@ -1,21 +1,18 @@
 // src/firebase.ts
-import { initializeApp, type FirebaseApp } from "firebase/app";
+import { initializeApp, getApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAnalytics, isSupported as isAnalyticsSupported, type Analytics } from "firebase/analytics";
 import { getAuth, type Auth } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
-import {
-  getMessaging,
-  isSupported as isMessagingSupported,
-  type Messaging,
-} from "firebase/messaging";
+import { getMessaging, isSupported as isMessagingSupported, type Messaging } from "firebase/messaging";
 
 /**
- * Vite n’expose au navigateur QUE les variables préfixées par VITE_.
- * Donc en production, FIREBASE_API_KEY (sans VITE_) sera toujours undefined.
+ * IMPORTANT:
+ * - En front (Vite), SEULES les variables import.meta.env.VITE_* existent.
+ * - On ne doit JAMAIS dépendre de FIREBASE_* côté navigateur.
  */
 type ViteEnv = Record<string, string | boolean | undefined>;
 
-const readViteEnv = (key: string): string | undefined => {
+const read = (key: string): string | undefined => {
   const env = import.meta.env as ViteEnv;
   const raw = env[key];
   if (typeof raw !== "string") return undefined;
@@ -23,7 +20,7 @@ const readViteEnv = (key: string): string | undefined => {
   return v.length ? v : undefined;
 };
 
-const FIREBASE_ENV_KEYS = {
+const KEYS = {
   apiKey: "VITE_FIREBASE_API_KEY",
   authDomain: "VITE_FIREBASE_AUTH_DOMAIN",
   projectId: "VITE_FIREBASE_PROJECT_ID",
@@ -34,54 +31,72 @@ const FIREBASE_ENV_KEYS = {
 } as const;
 
 const firebaseConfig = {
-  apiKey: readViteEnv(FIREBASE_ENV_KEYS.apiKey),
-  authDomain: readViteEnv(FIREBASE_ENV_KEYS.authDomain),
-  projectId: readViteEnv(FIREBASE_ENV_KEYS.projectId),
-  storageBucket: readViteEnv(FIREBASE_ENV_KEYS.storageBucket),
-  messagingSenderId: readViteEnv(FIREBASE_ENV_KEYS.messagingSenderId),
-  appId: readViteEnv(FIREBASE_ENV_KEYS.appId),
-  measurementId: readViteEnv(FIREBASE_ENV_KEYS.measurementId),
+  apiKey: read(KEYS.apiKey),
+  authDomain: read(KEYS.authDomain),
+  projectId: read(KEYS.projectId),
+  storageBucket: read(KEYS.storageBucket),
+  messagingSenderId: read(KEYS.messagingSenderId),
+  appId: read(KEYS.appId),
+  measurementId: read(KEYS.measurementId),
 };
 
-const REQUIRED_CONFIG: Array<{ key: keyof typeof firebaseConfig; envKey: string }> = [
-  { key: "apiKey", envKey: FIREBASE_ENV_KEYS.apiKey },
-  { key: "authDomain", envKey: FIREBASE_ENV_KEYS.authDomain },
-  { key: "projectId", envKey: FIREBASE_ENV_KEYS.projectId },
-  { key: "storageBucket", envKey: FIREBASE_ENV_KEYS.storageBucket },
-  { key: "messagingSenderId", envKey: FIREBASE_ENV_KEYS.messagingSenderId },
-  { key: "appId", envKey: FIREBASE_ENV_KEYS.appId },
+const REQUIRED: Array<keyof typeof firebaseConfig> = [
+  "apiKey",
+  "authDomain",
+  "projectId",
+  "storageBucket",
+  "messagingSenderId",
+  "appId",
 ];
 
-export const missingFirebaseEnvKeys: string[] = REQUIRED_CONFIG
-  .filter(({ key }) => {
-    const v = firebaseConfig[key];
+export const missingFirebaseEnvKeys: string[] = REQUIRED
+  .filter((k) => {
+    const v = firebaseConfig[k];
     return typeof v !== "string" || v.trim().length === 0;
   })
-  .map(({ envKey }) => envKey);
+  .map((k) => {
+    // map le champ -> la variable VITE correspondante
+    switch (k) {
+      case "apiKey":
+        return KEYS.apiKey;
+      case "authDomain":
+        return KEYS.authDomain;
+      case "projectId":
+        return KEYS.projectId;
+      case "storageBucket":
+        return KEYS.storageBucket;
+      case "messagingSenderId":
+        return KEYS.messagingSenderId;
+      case "appId":
+        return KEYS.appId;
+      default:
+        return "VITE_FIREBASE_*";
+    }
+  });
 
 export const firebaseInitError: string | null =
-  missingFirebaseEnvKeys.length > 0
-    ? `${missingFirebaseEnvKeys.join(", ")} manquant.`
-    : null;
+  missingFirebaseEnvKeys.length === 0
+    ? null
+    : missingFirebaseEnvKeys.length === 1
+      ? `${missingFirebaseEnvKeys[0]} manquant.`
+      : `Variables Firebase manquantes: ${missingFirebaseEnvKeys.join(", ")}.`;
 
 let appInstance: FirebaseApp | null = null;
 
 if (!firebaseInitError) {
   try {
-    appInstance = initializeApp(firebaseConfig);
+    // évite "Firebase App named '[DEFAULT]' already exists" en HMR / multi-init
+    appInstance = getApps().length ? getApp() : initializeApp(firebaseConfig);
   } catch (e) {
-    // Si init échoue (config invalide / double init / etc.)
     appInstance = null;
   }
 }
 
 export const app = appInstance;
 
-// Services (null si Firebase non initialisé)
 export const auth: Auth | null = app ? getAuth(app) : null;
 export const db: Firestore | null = app ? getFirestore(app) : null;
 
-// Analytics (optionnel, support variable selon environnement)
 export const initAnalytics = async (): Promise<Analytics | null> => {
   if (!app) return null;
   if (typeof window === "undefined") return null;
@@ -96,7 +111,6 @@ export const initAnalytics = async (): Promise<Analytics | null> => {
 
 export const analyticsPromise = initAnalytics();
 
-// Messaging (optionnel, support variable selon navigateur)
 let messagingPromise: Promise<Messaging | null> | null = null;
 
 export const getFirebaseMessaging = async (): Promise<Messaging | null> => {
@@ -109,4 +123,22 @@ export const getFirebaseMessaging = async (): Promise<Messaging | null> => {
       .catch(() => null);
   }
   return messagingPromise;
+};
+
+/**
+ * Debug safe: ne leak pas les valeurs, seulement "présent / absent".
+ * Utile pour vérifier si le build a bien reçu les env vars.
+ */
+export const getFirebaseEnvPresence = () => {
+  const env = import.meta.env as ViteEnv;
+  const has = (k: string) => typeof env[k] === "string" && String(env[k]).trim().length > 0;
+  return {
+    [KEYS.apiKey]: has(KEYS.apiKey),
+    [KEYS.authDomain]: has(KEYS.authDomain),
+    [KEYS.projectId]: has(KEYS.projectId),
+    [KEYS.storageBucket]: has(KEYS.storageBucket),
+    [KEYS.messagingSenderId]: has(KEYS.messagingSenderId),
+    [KEYS.appId]: has(KEYS.appId),
+    [KEYS.measurementId]: has(KEYS.measurementId),
+  };
 };

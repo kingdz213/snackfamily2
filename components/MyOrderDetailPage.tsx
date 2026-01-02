@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '@/src/firebase';
+import { db, firebaseInitError } from '@/src/firebase';
 import { Page } from '../types';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { OrderTimeline } from './OrderTimeline';
@@ -61,7 +61,7 @@ export const MyOrderDetailPage: React.FC<MyOrderDetailPageProps> = ({ navigateTo
     }
     if (!db) {
       setOrder(null);
-      setError('Configuration Firebase incomplète.');
+      setError(firebaseInitError ?? 'Vérifiez vos variables VITE_FIREBASE_*.');
       setIsLoading(false);
       return;
     }

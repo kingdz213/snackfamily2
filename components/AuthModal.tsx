@@ -5,7 +5,7 @@ import { Portal } from './Portal';
 import { X } from 'lucide-react';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
-import { auth } from '@/src/firebase';
+import { auth, firebaseInitError } from '@/src/firebase';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -68,7 +68,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
     setIsSubmitting('login');
     try {
       if (!auth) {
-        setError('Configuration Firebase incomplète.');
+        setError(firebaseInitError ?? 'Vérifiez vos variables VITE_FIREBASE_*.');
         return;
       }
       logAuthAttempt('login');
@@ -95,7 +95,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, message, onClose }
     setIsSubmitting('register');
     try {
       if (!auth) {
-        setError('Configuration Firebase incomplète.');
+        setError(firebaseInitError ?? 'Vérifiez vos variables VITE_FIREBASE_*.');
         return;
       }
       logAuthAttempt('register');
