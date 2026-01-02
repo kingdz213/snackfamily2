@@ -167,19 +167,8 @@ function isDevEnv(env: Env | undefined) {
   return value === "development" || value === "dev";
 }
 
-function stripEnclosingQuotes(input: string) {
-  if (input.length < 2) return input;
-  const first = input[0];
-  const last = input[input.length - 1];
-  if ((first === `"` && last === `"`) || (first === `'` && last === `'`)) {
-    return input.slice(1, -1);
-  }
-  return input;
-}
-
 function normalizeFirebasePrivateKey(raw: string) {
-  const withoutQuotes = stripEnclosingQuotes(raw.trim());
-  return withoutQuotes.replace(/\\n/g, "\n").trim();
+  return raw.replace(/\\n/g, "\n").trim();
 }
 
 function resolveFirebaseCredentials(env: Env | undefined): FirebaseCredentials | null {
@@ -340,7 +329,7 @@ function requireFirestoreCredentials(env: Env, cors: Record<string, string>) {
       cors
     );
   }
-  if (missing.clientEmail || missing.privateKey) {
+  if (missing.clientEmail || missing.privateKey || missing.serviceJson) {
     return json(
       buildFirestoreError(env, {
         code: "MISSING_SERVICE_ACCOUNT",
@@ -840,7 +829,7 @@ async function firestoreRequestDetailed(
       }),
     };
   }
-  if (missingFlags.clientEmail || missingFlags.privateKey) {
+  if (missingFlags.clientEmail || missingFlags.privateKey || missingFlags.serviceJson) {
     return {
       ok: false,
       error: buildFirestoreError(env, {
@@ -2112,11 +2101,18 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         privateKey: Boolean(credentials?.privateKey),
         serviceJson: Boolean(credentials?.serviceJsonProvided),
       };
+      const envKeysPresent = {
+        FIREBASE_SERVICE_ACCOUNT_JSON: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim()),
+        FIREBASE_PROJECT_ID: Boolean(env.FIREBASE_PROJECT_ID?.trim()),
+        FIREBASE_CLIENT_EMAIL: Boolean(env.FIREBASE_CLIENT_EMAIL?.trim()),
+        FIREBASE_PRIVATE_KEY: Boolean(env.FIREBASE_PRIVATE_KEY?.trim()),
+      };
       return json(
         {
           ok: true,
           missing: missingFlags,
           has,
+          envKeysPresent,
         },
         200,
         cors
