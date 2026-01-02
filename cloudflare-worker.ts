@@ -102,6 +102,10 @@ function hasOrdersKv(env: Env) {
   return Boolean(env.ORDERS_KV);
 }
 
+function isEnvAvailable(env: Env | undefined | null): env is Env {
+  return Boolean(env);
+}
+
 function requireOrdersKv(env: Env, cors?: Record<string, string>) {
   if (!env.ORDERS_KV) {
     return json(
@@ -157,7 +161,8 @@ function parseServiceAccount(raw: unknown): ServiceAccount | null {
   return candidate;
 }
 
-function getServiceAccount(env: Env): ServiceAccount | null {
+function getServiceAccount(env: Env | undefined): ServiceAccount | null {
+  if (!env) return null;
   if (cachedServiceAccount) return cachedServiceAccount;
   const clientEmail = env.FIREBASE_CLIENT_EMAIL?.trim();
   const privateKey = env.FIREBASE_PRIVATE_KEY?.trim();
@@ -237,12 +242,6 @@ function buildFirestoreError(
     hint: params.hint,
     missing: getFirebaseMissingFlags(env),
   };
-}
-
-function maskProjectId(projectId: string | null) {
-  if (!projectId) return "";
-  const tail = projectId.slice(-4);
-  return `****${tail}`;
 }
 
 function extractBearerToken(request: Request) {
@@ -1900,11 +1899,20 @@ async function createCheckoutSession(params: {
   return { ok: true, session: bodyJson };
 }
 
-export default {
-  async fetch(request: Request, env: Env) {
-    const requestOrigin = normalizeOrigin(request.headers.get("Origin"));
-    const cors = corsHeadersFor(requestOrigin);
-    const origin = env.DEFAULT_ORIGIN ?? FALLBACK_ORIGIN;
+async function handleRequest(request: Request, env: Env | undefined, ctx: ExecutionContext | undefined) {
+  const requestOrigin = normalizeOrigin(request.headers.get("Origin"));
+  const cors = corsHeadersFor(requestOrigin);
+  if (!isEnvAvailable(env)) {
+    return json(
+      {
+        error: "ENV_NOT_PASSED_TO_WORKER",
+        message: "Env non transmis au Worker.",
+      },
+      500,
+      cors
+    );
+  }
+  const origin = env.DEFAULT_ORIGIN ?? FALLBACK_ORIGIN;
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
@@ -1981,11 +1989,11 @@ export default {
       return json(
         {
           ok: true,
+          receivedEnv: true,
           hasProjectId,
           hasClientEmail,
           hasPrivateKey,
           hasServiceJson,
-          resolvedProjectId: maskProjectId(resolvedProjectId),
         },
         200,
         cors
@@ -3006,5 +3014,10 @@ export default {
     } catch (e: any) {
       return json({ error: "WORKER_ERROR", details: e?.message ?? String(e) }, 500, cors);
     }
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return handleRequest(request, env, ctx);
   },
 };
