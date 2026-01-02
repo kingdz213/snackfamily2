@@ -151,60 +151,50 @@ type FirebaseCredentials = {
   projectId: string | null;
   clientEmail: string | null;
   privateKey: string | null;
-  serviceJson: ServiceAccountJson | null;
+  serviceJsonProvided: boolean;
   missing: {
     projectId: boolean;
     clientEmail: boolean;
     privateKey: boolean;
     serviceJson: boolean;
   };
-  debug: {
-    hasServiceJson: boolean;
-    hasProjectId: boolean;
-    hasClientEmail: boolean;
-    hasPrivateKey: boolean;
-  };
 };
 
 let cachedFirebaseCredentials: FirebaseCredentials | null = null;
-let didLogFirebaseDebug = false;
 
 function isDevEnv(env: Env | undefined) {
   const value = (env?.NODE_ENV ?? env?.ENVIRONMENT ?? "").toLowerCase();
   return value === "development" || value === "dev";
 }
 
-function parseServiceAccountJson(raw: string): ServiceAccountJson | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("{")) {
-    try {
-      return JSON.parse(trimmed) as ServiceAccountJson;
-    } catch {
-      return null;
-    }
-  }
-  try {
-    const decoded = atob(trimmed);
-    return JSON.parse(decoded) as ServiceAccountJson;
-  } catch {
-    return null;
-  }
+function normalizeFirebasePrivateKey(raw: string) {
+  return raw.replace(/\\n/g, "\n").trim();
 }
 
 function resolveFirebaseCredentials(env: Env | undefined): FirebaseCredentials | null {
   if (!env) return null;
   if (cachedFirebaseCredentials) return cachedFirebaseCredentials;
 
-  const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON ?? env.FIREBASE_SERVICE_ACCOUNT;
+  const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON;
   let serviceJson: ServiceAccountJson | null = null;
-  let hasServiceJson = false;
+  let serviceJsonProvided = false;
   if (typeof serviceJsonRaw === "string") {
-    hasServiceJson = serviceJsonRaw.trim().length > 0;
-    serviceJson = hasServiceJson ? parseServiceAccountJson(serviceJsonRaw) : null;
-  } else if (serviceJsonRaw && typeof serviceJsonRaw === "object") {
-    hasServiceJson = true;
-    serviceJson = serviceJsonRaw as ServiceAccountJson;
+    const trimmed = serviceJsonRaw.trim();
+    if (trimmed) {
+      try {
+        serviceJson = JSON.parse(trimmed) as ServiceAccountJson;
+        serviceJsonProvided = true;
+      } catch {
+        try {
+          const decoded = atob(trimmed);
+          serviceJson = JSON.parse(decoded) as ServiceAccountJson;
+          serviceJsonProvided = true;
+        } catch {
+          serviceJson = null;
+          serviceJsonProvided = false;
+        }
+      }
+    }
   }
 
   const projectId =
@@ -222,7 +212,7 @@ function resolveFirebaseCredentials(env: Env | undefined): FirebaseCredentials |
     serviceJson?.private_key ||
     serviceJson?.privateKey ||
     null;
-  const privateKey = rawPrivateKey ? rawPrivateKey.replace(/\\n/g, "\n") : null;
+  const privateKey = rawPrivateKey ? normalizeFirebasePrivateKey(rawPrivateKey) : null;
 
   const hasProjectId = Boolean(projectId);
   const hasClientEmail = Boolean(clientEmail);
@@ -232,24 +222,22 @@ function resolveFirebaseCredentials(env: Env | undefined): FirebaseCredentials |
     projectId,
     clientEmail,
     privateKey,
-    serviceJson,
+    serviceJsonProvided,
     missing: {
       projectId: !hasProjectId,
       clientEmail: !hasClientEmail,
       privateKey: !hasPrivateKey,
-      serviceJson: !hasServiceJson,
-    },
-    debug: {
-      hasServiceJson,
-      hasProjectId,
-      hasClientEmail,
-      hasPrivateKey,
+      serviceJson: !serviceJsonProvided,
     },
   };
 
-  if (isDevEnv(env) && !didLogFirebaseDebug) {
-    didLogFirebaseDebug = true;
-    console.log("firebase-credentials-debug", cachedFirebaseCredentials.debug);
+  if (isDevEnv(env)) {
+    console.log("firebase-credentials-debug", {
+      hasServiceJson: serviceJsonProvided,
+      hasProjectId,
+      hasClientEmail,
+      hasPrivateKey,
+    });
   }
 
   return cachedFirebaseCredentials;
@@ -319,6 +307,40 @@ function buildFirestoreError(
     hint: params.hint,
     missing: getFirebaseMissingFlags(env),
   };
+}
+
+function requireFirestoreCredentials(env: Env, cors: Record<string, string>) {
+  const credentials = resolveFirebaseCredentials(env);
+  const missing =
+    credentials?.missing ?? {
+      projectId: true,
+      clientEmail: true,
+      privateKey: true,
+      serviceJson: true,
+    };
+  if (missing.projectId) {
+    return json(
+      buildFirestoreError(env, {
+        code: "MISSING_PROJECT_ID",
+        message: "Firebase projectId manquant.",
+        hint: "Ajoutez FIREBASE_PROJECT_ID ou project_id dans le service account.",
+      }),
+      500,
+      cors
+    );
+  }
+  if (missing.clientEmail || missing.privateKey || missing.serviceJson) {
+    return json(
+      buildFirestoreError(env, {
+        code: "MISSING_SERVICE_ACCOUNT",
+        message: "Service account Firebase manquant.",
+        hint: "Configurez FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
+      }),
+      500,
+      cors
+    );
+  }
+  return null;
 }
 
 function extractBearerToken(request: Request) {
@@ -542,7 +564,7 @@ async function writeMenuAvailability(env: Env, map: Record<string, MenuAvailabil
 }
 
 function normalizePrivateKey(key: string) {
-  return key.replace(/\\n/g, "\n");
+  return normalizeFirebasePrivateKey(key);
 }
 
 function pemToArrayBuffer(pem: string) {
@@ -789,8 +811,15 @@ async function firestoreRequestDetailed(
   path: string,
   init?: RequestInit
 ): Promise<{ ok: true; response: Response } | { ok: false; error: FirestoreErrorPayload }> {
-  const projectId = getFirebaseProjectId(env) || getServiceAccount(env)?.project_id || null;
-  if (!projectId) {
+  const credentials = resolveFirebaseCredentials(env);
+  const missingFlags =
+    credentials?.missing ?? {
+      projectId: true,
+      clientEmail: true,
+      privateKey: true,
+      serviceJson: true,
+    };
+  if (missingFlags.projectId) {
     return {
       ok: false,
       error: buildFirestoreError(env, {
@@ -800,6 +829,17 @@ async function firestoreRequestDetailed(
       }),
     };
   }
+  if (missingFlags.clientEmail || missingFlags.privateKey || missingFlags.serviceJson) {
+    return {
+      ok: false,
+      error: buildFirestoreError(env, {
+        code: "MISSING_SERVICE_ACCOUNT",
+        message: "Service account Firebase manquant.",
+        hint: "Configurez FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
+      }),
+    };
+  }
+  const projectId = credentials?.projectId || null;
   const accessTokenResult = await getGoogleAccessTokenDetailed(env, "https://www.googleapis.com/auth/datastore");
   if (!accessTokenResult.ok) {
     return {
@@ -1998,14 +2038,17 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
+      const credentials = resolveFirebaseCredentials(env);
+      const hasProjectId = Boolean(credentials?.projectId);
+      const hasServiceAccount = Boolean(credentials?.clientEmail && credentials?.privateKey);
       return json(
         {
           ok: true,
           hasOrdersKV: hasOrdersKv(env),
           hasStripeSecret: hasStripeSecret(env),
           hasWebhookSecret: hasWebhookSecret(env),
-          hasFirebaseProjectId: Boolean(getFirebaseProjectId(env)),
-          hasFirebaseServiceAccount: Boolean(getServiceAccount(env)),
+          hasFirebaseProjectId: hasProjectId,
+          hasFirebaseServiceAccount: hasServiceAccount,
           origin,
         },
         200,
@@ -2036,9 +2079,44 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     }
 
     if (request.method === "GET" && url.pathname === "/public/store-status") {
+      const firestoreGuard = requireFirestoreCredentials(env, cors);
+      if (firestoreGuard) return firestoreGuard;
       const settings = await getOrInitStoreSettings(env);
       const status = resolveStoreStatus(settings);
       return json(status, 200, cors);
+    }
+
+    if (request.method === "GET" && url.pathname === "/__/debug/firebase") {
+      const credentials = resolveFirebaseCredentials(env);
+      const missingFlags =
+        credentials?.missing ?? {
+          projectId: true,
+          clientEmail: true,
+          privateKey: true,
+          serviceJson: true,
+        };
+      const has = {
+        projectId: Boolean(credentials?.projectId),
+        clientEmail: Boolean(credentials?.clientEmail),
+        privateKey: Boolean(credentials?.privateKey),
+        serviceJson: Boolean(credentials?.serviceJsonProvided),
+      };
+      const envKeysPresent = {
+        FIREBASE_SERVICE_ACCOUNT_JSON: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim()),
+        FIREBASE_PROJECT_ID: Boolean(env.FIREBASE_PROJECT_ID?.trim()),
+        FIREBASE_CLIENT_EMAIL: Boolean(env.FIREBASE_CLIENT_EMAIL?.trim()),
+        FIREBASE_PRIVATE_KEY: Boolean(env.FIREBASE_PRIVATE_KEY?.trim()),
+      };
+      return json(
+        {
+          ok: true,
+          missing: missingFlags,
+          has,
+          envKeysPresent,
+        },
+        200,
+        cors
+      );
     }
 
     if (request.method === "GET" && url.pathname === "/admin/store-settings") {
@@ -2046,6 +2124,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (!auth.ok) {
         return json({ error: auth.error, message: auth.message }, 401, cors);
       }
+      const firestoreGuard = requireFirestoreCredentials(env, cors);
+      if (firestoreGuard) return firestoreGuard;
       const settings = await getOrInitStoreSettings(env);
       return json(settings, 200, cors);
     }
@@ -2055,14 +2135,11 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (!auth.ok) {
         return json({ error: auth.error, message: auth.message }, 401, cors);
       }
-      const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON ?? env.FIREBASE_SERVICE_ACCOUNT;
-      const hasServiceJson =
-        typeof serviceJsonRaw === "string" ? serviceJsonRaw.trim().length > 0 : Boolean(serviceJsonRaw);
-      const serviceAccount = getServiceAccount(env);
-      const hasClientEmail = Boolean(env.FIREBASE_CLIENT_EMAIL?.trim()) || Boolean(serviceAccount?.client_email);
-      const hasPrivateKey = Boolean(env.FIREBASE_PRIVATE_KEY?.trim()) || Boolean(serviceAccount?.private_key);
-      const resolvedProjectId = getFirebaseProjectId(env) || serviceAccount?.project_id || null;
-      const hasProjectId = Boolean(resolvedProjectId);
+      const credentials = resolveFirebaseCredentials(env);
+      const hasServiceJson = Boolean(credentials?.serviceJsonProvided);
+      const hasClientEmail = Boolean(credentials?.clientEmail);
+      const hasPrivateKey = Boolean(credentials?.privateKey);
+      const hasProjectId = Boolean(credentials?.projectId);
       return json(
         {
           ok: true,
@@ -2082,6 +2159,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (!auth.ok) {
         return json({ error: auth.error, message: auth.message }, 401, cors);
       }
+      const firestoreGuard = requireFirestoreCredentials(env, cors);
+      if (firestoreGuard) return firestoreGuard;
       try {
         let body: any = null;
         try {
@@ -2132,6 +2211,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       }
 
       if (request.method === "POST" && url.pathname === "/create-cash-order") {
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const body: any = await request.json().catch(() => null);
         if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
 
@@ -2259,6 +2340,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!hasStripeSecret(env)) {
           return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_SECRET_KEY" }, 500, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
 
         const body: any = await request.json().catch(() => null);
         if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
@@ -2413,6 +2496,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!hasWebhookSecret(env)) {
           return json({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_WEBHOOK_SECRET" }, 500, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
 
         const signature = request.headers.get("Stripe-Signature") || "";
         const rawBody = await request.text();
@@ -2451,6 +2536,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       }
 
       if (request.method === "GET" && (url.pathname === "/menu/availability" || url.pathname === "/store/menu-availability")) {
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const state = await readMenuAvailability(env);
         return json(
           {
@@ -2495,6 +2582,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!auth.ok) {
           return json({ error: auth.error, message: auth.message }, 401, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const state = await readMenuAvailability(env);
         return json(
           {
@@ -2512,6 +2601,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!auth.ok) {
           return json({ error: auth.error, message: auth.message }, 401, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const body: any = await request.json().catch(() => null);
         const itemKey = typeof body?.itemKey === "string" ? body.itemKey.trim() : "";
         const mode = typeof body?.mode === "string" ? body.mode.trim().toUpperCase() : "";
@@ -2548,6 +2639,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!auth.ok) {
           return json({ error: auth.error, message: auth.message }, 401, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/admin\/menu\/items\/(.+)$/);
         const itemId = match?.[1] ? decodeURIComponent(match[1]) : "";
         if (!itemId) return json({ error: "ITEM_ID_REQUIRED", message: "Item id requis." }, 400, cors);
@@ -2573,6 +2666,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!auth.ok) {
           return json({ error: auth.error, message: auth.message }, 401, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const updatedAt = await writeMenuAvailability(env, {});
         return json({ ok: true, availability: {}, updatedAt: updatedAt ?? undefined }, 200, cors);
       }
@@ -2652,6 +2747,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!auth.ok) {
           return json({ error: auth.error, message: auth.message }, 401, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/admin\/orders\/([^/]+)\/status$/);
         const orderId = match?.[1];
         if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
@@ -2692,6 +2789,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!auth.ok) {
           return json({ error: auth.error, message: auth.message }, 401, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/admin\/orders\/([^/]+)$/);
         const orderId = match?.[1];
         if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
@@ -2721,6 +2820,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!pinSecret || !secret) {
           return json({ error: "ADMIN_DISABLED", message: "Admin PIN or signing secret not configured." }, 403, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
 
         const body: any = await request.json().catch(() => null);
         if (!body) return json({ error: "INVALID_JSON" }, 400, cors);
@@ -2844,6 +2945,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!getAdminPin(env)) {
           return json({ error: "ADMIN_PIN_MISSING", message: "ADMIN_PIN not configured." }, 500, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/api\/admin\/orders\/([^/]+)\/status$/);
         const orderId = match?.[1];
         if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
@@ -2891,6 +2994,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!getAdminPin(env)) {
           return json({ error: "ADMIN_PIN_MISSING", message: "ADMIN_PIN not configured." }, 500, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const match = url.pathname.match(/^\/api\/admin\/orders\/([^/]+)$/);
         const orderId = match?.[1];
         if (!orderId) return json({ error: "ORDER_ID_REQUIRED" }, 400, cors);
@@ -3002,6 +3107,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
         if (!token) {
           return json({ error: "UNAUTHORIZED", message: "Authorization Bearer requis." }, 401, cors);
         }
+        const firestoreGuard = requireFirestoreCredentials(env, cors);
+        if (firestoreGuard) return firestoreGuard;
         const uid = await verifyFirebaseIdToken(env, token);
         if (!uid) {
           return json({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
