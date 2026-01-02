@@ -147,11 +147,11 @@ type ServiceAccount = {
   project_id?: string;
 };
 
-type FirebaseCredentials = {
-  projectId: string | null;
-  clientEmail: string | null;
-  privateKey: string | null;
-  serviceJsonProvided: boolean;
+type ResolvedFirebaseCreds = {
+  projectId?: string;
+  clientEmail?: string;
+  privateKey?: string;
+  source: "service_json" | "env_split" | "none";
   missing: {
     projectId: boolean;
     clientEmail: boolean;
@@ -160,7 +160,8 @@ type FirebaseCredentials = {
   };
 };
 
-let cachedFirebaseCredentials: FirebaseCredentials | null = null;
+let cachedFirebaseCredentials: ResolvedFirebaseCreds | null = null;
+let cachedAdminApp: { creds: ResolvedFirebaseCreds } | null = null;
 
 function isDevEnv(env: Env | undefined) {
   const value = (env?.NODE_ENV ?? env?.ENVIRONMENT ?? "").toLowerCase();
@@ -168,51 +169,76 @@ function isDevEnv(env: Env | undefined) {
 }
 
 function normalizeFirebasePrivateKey(raw: string) {
-  return raw.replace(/\\n/g, "\n").trim();
+  let normalized = raw.replace(/\\n/g, "\n").trim();
+  if (!normalized.includes("BEGIN PRIVATE KEY")) {
+    normalized = `-----BEGIN PRIVATE KEY-----\n${normalized}`;
+  }
+  if (!normalized.includes("END PRIVATE KEY")) {
+    normalized = `${normalized}\n-----END PRIVATE KEY-----`;
+  }
+  return normalized;
 }
 
-function resolveFirebaseCredentials(env: Env | undefined): FirebaseCredentials | null {
-  if (!env) return null;
+function resolveFirebaseCreds(env: Env): ResolvedFirebaseCreds {
   if (cachedFirebaseCredentials) return cachedFirebaseCredentials;
 
-  const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
   let serviceJson: ServiceAccountJson | null = null;
   let serviceJsonProvided = false;
-  if (typeof serviceJsonRaw === "string") {
-    const trimmed = serviceJsonRaw.trim();
-    if (trimmed) {
+  if (serviceJsonRaw) {
+    if (serviceJsonRaw.startsWith("{")) {
       try {
-        serviceJson = JSON.parse(trimmed) as ServiceAccountJson;
+        serviceJson = JSON.parse(serviceJsonRaw) as ServiceAccountJson;
         serviceJsonProvided = true;
       } catch {
-        try {
-          const decoded = atob(trimmed);
-          serviceJson = JSON.parse(decoded) as ServiceAccountJson;
-          serviceJsonProvided = true;
-        } catch {
-          serviceJson = null;
-          serviceJsonProvided = false;
-        }
+        serviceJson = null;
+      }
+    } else {
+      try {
+        const decoded = atob(serviceJsonRaw);
+        serviceJson = JSON.parse(decoded) as ServiceAccountJson;
+        serviceJsonProvided = true;
+      } catch {
+        serviceJson = null;
       }
     }
   }
 
-  const projectId =
-    env.FIREBASE_PROJECT_ID?.trim() ||
-    serviceJson?.project_id ||
-    serviceJson?.projectId ||
-    null;
-  const clientEmail =
-    env.FIREBASE_CLIENT_EMAIL?.trim() ||
-    serviceJson?.client_email ||
-    serviceJson?.clientEmail ||
-    null;
-  const rawPrivateKey =
-    env.FIREBASE_PRIVATE_KEY?.trim() ||
-    serviceJson?.private_key ||
-    serviceJson?.privateKey ||
-    null;
-  const privateKey = rawPrivateKey ? normalizeFirebasePrivateKey(rawPrivateKey) : null;
+  let projectId = serviceJson?.project_id ?? serviceJson?.projectId ?? undefined;
+  let clientEmail = serviceJson?.client_email ?? serviceJson?.clientEmail ?? undefined;
+  let privateKey = serviceJson?.private_key ?? serviceJson?.privateKey ?? undefined;
+  let source: ResolvedFirebaseCreds["source"] = "none";
+  const serviceJsonHasAny = Boolean(projectId || clientEmail || privateKey);
+
+  const missingServiceFields = !projectId || !clientEmail || !privateKey;
+  let usedSplit = false;
+  if (missingServiceFields) {
+    const splitProjectId = env.FIREBASE_PROJECT_ID?.trim() || undefined;
+    const splitClientEmail = env.FIREBASE_CLIENT_EMAIL?.trim() || undefined;
+    const splitPrivateKey = env.FIREBASE_PRIVATE_KEY?.trim() || undefined;
+    if (!projectId && splitProjectId) {
+      projectId = splitProjectId;
+      usedSplit = true;
+    }
+    if (!clientEmail && splitClientEmail) {
+      clientEmail = splitClientEmail;
+      usedSplit = true;
+    }
+    if (!privateKey && splitPrivateKey) {
+      privateKey = splitPrivateKey;
+      usedSplit = true;
+    }
+  }
+
+  if (privateKey) {
+    privateKey = normalizeFirebasePrivateKey(privateKey);
+  }
+
+  if (usedSplit) {
+    source = "env_split";
+  } else if (serviceJsonHasAny) {
+    source = "service_json";
+  }
 
   const hasProjectId = Boolean(projectId);
   const hasClientEmail = Boolean(clientEmail);
@@ -222,7 +248,7 @@ function resolveFirebaseCredentials(env: Env | undefined): FirebaseCredentials |
     projectId,
     clientEmail,
     privateKey,
-    serviceJsonProvided,
+    source,
     missing: {
       projectId: !hasProjectId,
       clientEmail: !hasClientEmail,
@@ -233,6 +259,7 @@ function resolveFirebaseCredentials(env: Env | undefined): FirebaseCredentials |
 
   if (isDevEnv(env)) {
     console.log("firebase-credentials-debug", {
+      source,
       hasServiceJson: serviceJsonProvided,
       hasProjectId,
       hasClientEmail,
@@ -244,11 +271,11 @@ function resolveFirebaseCredentials(env: Env | undefined): FirebaseCredentials |
 }
 
 function getFirebaseProjectId(env: Env) {
-  return resolveFirebaseCredentials(env)?.projectId ?? null;
+  return resolveFirebaseCreds(env)?.projectId ?? null;
 }
 
-function getServiceAccount(env: Env | undefined): ServiceAccount | null {
-  const credentials = resolveFirebaseCredentials(env);
+function getServiceAccount(env: Env): ServiceAccount | null {
+  const credentials = resolveFirebaseCreds(env);
   if (!credentials?.clientEmail || !credentials.privateKey) return null;
   return {
     client_email: credentials.clientEmail,
@@ -287,7 +314,7 @@ type FirestoreErrorPayload = {
 
 function getFirebaseMissingFlags(env: Env) {
   return (
-    resolveFirebaseCredentials(env)?.missing ?? {
+    resolveFirebaseCreds(env)?.missing ?? {
       projectId: true,
       clientEmail: true,
       privateKey: true,
@@ -309,36 +336,41 @@ function buildFirestoreError(
   };
 }
 
-function requireFirestoreCredentials(env: Env, cors: Record<string, string>) {
-  const credentials = resolveFirebaseCredentials(env);
-  const missing =
-    credentials?.missing ?? {
-      projectId: true,
-      clientEmail: true,
-      privateKey: true,
-      serviceJson: true,
-    };
-  if (missing.projectId) {
-    return json(
-      buildFirestoreError(env, {
+function getAdminApp(
+  env: Env
+): { ok: true; app: { creds: ResolvedFirebaseCreds } } | { ok: false; error: FirestoreErrorPayload } {
+  const credentials = resolveFirebaseCreds(env);
+  if (cachedAdminApp) {
+    return { ok: true, app: cachedAdminApp };
+  }
+  if (credentials.missing.projectId) {
+    return {
+      ok: false,
+      error: buildFirestoreError(env, {
         code: "MISSING_PROJECT_ID",
         message: "Firebase projectId manquant.",
         hint: "Ajoutez FIREBASE_PROJECT_ID ou project_id dans le service account.",
       }),
-      500,
-      cors
-    );
+    };
   }
-  if (missing.clientEmail || missing.privateKey || missing.serviceJson) {
-    return json(
-      buildFirestoreError(env, {
+  if (credentials.missing.clientEmail || credentials.missing.privateKey) {
+    return {
+      ok: false,
+      error: buildFirestoreError(env, {
         code: "MISSING_SERVICE_ACCOUNT",
         message: "Service account Firebase manquant.",
         hint: "Configurez FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
       }),
-      500,
-      cors
-    );
+    };
+  }
+  cachedAdminApp = { creds: credentials };
+  return { ok: true, app: cachedAdminApp };
+}
+
+function requireFirestoreCredentials(env: Env, cors: Record<string, string>) {
+  const adminApp = getAdminApp(env);
+  if (!adminApp.ok) {
+    return json(adminApp.error, 500, cors);
   }
   return null;
 }
@@ -580,8 +612,13 @@ function pemToArrayBuffer(pem: string) {
 const tokenCache = new Map<string, { token: string; exp: number }>();
 
 async function getGoogleAccessToken(env: Env, scope: string): Promise<string | null> {
-  const serviceAccount = getServiceAccount(env);
-  if (!serviceAccount) return null;
+  const adminApp = getAdminApp(env);
+  if (!adminApp.ok) return null;
+  const serviceAccount: ServiceAccount = {
+    client_email: adminApp.app.creds.clientEmail!,
+    private_key: adminApp.app.creds.privateKey!,
+    project_id: adminApp.app.creds.projectId || undefined,
+  };
 
   const now = Math.floor(Date.now() / 1000);
   const cached = tokenCache.get(scope);
@@ -640,17 +677,22 @@ async function getGoogleAccessTokenDetailed(
   env: Env,
   scope: string
 ): Promise<{ ok: true; token: string } | { ok: false; error: { code?: string; message: string; hint?: string } }> {
-  const serviceAccount = getServiceAccount(env);
-  if (!serviceAccount) {
+  const adminApp = getAdminApp(env);
+  if (!adminApp.ok) {
     return {
       ok: false,
       error: {
-        code: "MISSING_SERVICE_ACCOUNT",
-        message: "Service account Firebase manquant.",
-        hint: "Configurez FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
+        code: adminApp.error.code,
+        message: adminApp.error.message,
+        hint: adminApp.error.hint,
       },
     };
   }
+  const serviceAccount: ServiceAccount = {
+    client_email: adminApp.app.creds.clientEmail!,
+    private_key: adminApp.app.creds.privateKey!,
+    project_id: adminApp.app.creds.projectId || undefined,
+  };
 
   const now = Math.floor(Date.now() / 1000);
   const cached = tokenCache.get(scope);
@@ -811,35 +853,11 @@ async function firestoreRequestDetailed(
   path: string,
   init?: RequestInit
 ): Promise<{ ok: true; response: Response } | { ok: false; error: FirestoreErrorPayload }> {
-  const credentials = resolveFirebaseCredentials(env);
-  const missingFlags =
-    credentials?.missing ?? {
-      projectId: true,
-      clientEmail: true,
-      privateKey: true,
-      serviceJson: true,
-    };
-  if (missingFlags.projectId) {
-    return {
-      ok: false,
-      error: buildFirestoreError(env, {
-        code: "MISSING_PROJECT_ID",
-        message: "Firebase projectId manquant.",
-        hint: "Ajoutez FIREBASE_PROJECT_ID ou project_id dans le service account.",
-      }),
-    };
+  const adminApp = getAdminApp(env);
+  if (!adminApp.ok) {
+    return { ok: false, error: adminApp.error };
   }
-  if (missingFlags.clientEmail || missingFlags.privateKey || missingFlags.serviceJson) {
-    return {
-      ok: false,
-      error: buildFirestoreError(env, {
-        code: "MISSING_SERVICE_ACCOUNT",
-        message: "Service account Firebase manquant.",
-        hint: "Configurez FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
-      }),
-    };
-  }
-  const projectId = credentials?.projectId || null;
+  const projectId = adminApp.app.creds.projectId || null;
   const accessTokenResult = await getGoogleAccessTokenDetailed(env, "https://www.googleapis.com/auth/datastore");
   if (!accessTokenResult.ok) {
     return {
@@ -2038,7 +2056,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      const credentials = resolveFirebaseCredentials(env);
+      const credentials = resolveFirebaseCreds(env);
       const hasProjectId = Boolean(credentials?.projectId);
       const hasServiceAccount = Boolean(credentials?.clientEmail && credentials?.privateKey);
       return json(
@@ -2087,32 +2105,15 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     }
 
     if (request.method === "GET" && url.pathname === "/__/debug/firebase") {
-      const credentials = resolveFirebaseCredentials(env);
-      const missingFlags =
-        credentials?.missing ?? {
-          projectId: true,
-          clientEmail: true,
-          privateKey: true,
-          serviceJson: true,
-        };
-      const has = {
-        projectId: Boolean(credentials?.projectId),
-        clientEmail: Boolean(credentials?.clientEmail),
-        privateKey: Boolean(credentials?.privateKey),
-        serviceJson: Boolean(credentials?.serviceJsonProvided),
-      };
-      const envKeysPresent = {
-        FIREBASE_SERVICE_ACCOUNT_JSON: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim()),
-        FIREBASE_PROJECT_ID: Boolean(env.FIREBASE_PROJECT_ID?.trim()),
-        FIREBASE_CLIENT_EMAIL: Boolean(env.FIREBASE_CLIENT_EMAIL?.trim()),
-        FIREBASE_PRIVATE_KEY: Boolean(env.FIREBASE_PRIVATE_KEY?.trim()),
-      };
+      const credentials = resolveFirebaseCreds(env);
+      const missingFlags = credentials.missing;
+      const ok =
+        !missingFlags.projectId && !missingFlags.clientEmail && !missingFlags.privateKey;
       return json(
         {
-          ok: true,
+          ok,
+          source: credentials.source,
           missing: missingFlags,
-          has,
-          envKeysPresent,
         },
         200,
         cors
@@ -2135,8 +2136,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (!auth.ok) {
         return json({ error: auth.error, message: auth.message }, 401, cors);
       }
-      const credentials = resolveFirebaseCredentials(env);
-      const hasServiceJson = Boolean(credentials?.serviceJsonProvided);
+      const credentials = resolveFirebaseCreds(env);
+      const hasServiceJson = !credentials.missing.serviceJson;
       const hasClientEmail = Boolean(credentials?.clientEmail);
       const hasPrivateKey = Boolean(credentials?.privateKey);
       const hasProjectId = Boolean(credentials?.projectId);
