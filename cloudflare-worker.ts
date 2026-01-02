@@ -216,10 +216,30 @@ function resolveFirebaseCredentials(env: Env): ResolvedFirebaseCreds {
   if (env.FIREBASE_SERVICE_ACCOUNT && typeof env.FIREBASE_SERVICE_ACCOUNT === "object") {
     serviceJson = env.FIREBASE_SERVICE_ACCOUNT as ServiceAccountJson;
   } else if (rawServiceJson) {
-    if (rawServiceJson.startsWith("{")) {
-      serviceJson = parseServiceAccountJson(rawServiceJson, false);
-    } else {
-      serviceJson = parseServiceAccountJson(rawServiceJson, true);
+    const cleaned = rawServiceJson.replace(/^\uFEFF/, "").trim(); // enlève BOM + trim
+
+    // 1) JSON direct
+    if (cleaned.startsWith("{")) {
+      serviceJson = parseServiceAccountJson(cleaned, false);
+    }
+
+    // 2) JSON entouré de guillemets (string JSON dans un JSON)
+    if (!serviceJson && cleaned.startsWith('"') && cleaned.endsWith('"')) {
+      try {
+        const inner = JSON.parse(cleaned);
+        if (typeof inner === "string") {
+          const innerClean = inner.replace(/^\uFEFF/, "").trim();
+          serviceJson = innerClean.startsWith("{")
+            ? parseServiceAccountJson(innerClean, false)
+            : parseServiceAccountJson(innerClean, true);
+          usedBase64 = !innerClean.startsWith("{") && Boolean(serviceJson);
+        }
+      } catch {}
+    }
+
+    // 3) Sinon: base64
+    if (!serviceJson) {
+      serviceJson = parseServiceAccountJson(cleaned, true);
       usedBase64 = Boolean(serviceJson);
     }
   }
@@ -2052,6 +2072,16 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     );
   }
   const origin = env.DEFAULT_ORIGIN ?? FALLBACK_ORIGIN;
+  console.log("RUNTIME_ENV_CHECK", {
+    hasProjectId: Boolean(env.FIREBASE_PROJECT_ID && String(env.FIREBASE_PROJECT_ID).trim()),
+    hasClientEmail: Boolean(env.FIREBASE_CLIENT_EMAIL && String(env.FIREBASE_CLIENT_EMAIL).trim()),
+    hasPrivateKey: Boolean(env.FIREBASE_PRIVATE_KEY && String(env.FIREBASE_PRIVATE_KEY).trim()),
+    hasServiceJson: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON && String(env.FIREBASE_SERVICE_ACCOUNT_JSON).trim()),
+    hasServiceJsonB64: Boolean(
+      (env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 && String(env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64).trim()) ||
+      (env.FIREBASE_SERVICE_ACCOUNT_BASE64 && String(env.FIREBASE_SERVICE_ACCOUNT_BASE64).trim())
+    ),
+  });
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: cors });
