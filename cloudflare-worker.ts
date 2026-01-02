@@ -18,6 +18,8 @@ interface Env {
   FIREBASE_AUTH_DOMAIN?: string;
   FIREBASE_MESSAGING_SENDER_ID?: string;
   FIREBASE_APP_ID?: string;
+  NODE_ENV?: string;
+  ENVIRONMENT?: string;
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
@@ -130,10 +132,14 @@ function getFirebaseApiKey(env: Env) {
   return key && key.length > 0 ? key : null;
 }
 
-function getFirebaseProjectId(env: Env) {
-  const value = env.FIREBASE_PROJECT_ID?.trim();
-  return value && value.length > 0 ? value : null;
-}
+type ServiceAccountJson = {
+  client_email?: string;
+  clientEmail?: string;
+  private_key?: string;
+  privateKey?: string;
+  project_id?: string;
+  projectId?: string;
+};
 
 type ServiceAccount = {
   client_email: string;
@@ -141,50 +147,126 @@ type ServiceAccount = {
   project_id?: string;
 };
 
-let cachedServiceAccount: ServiceAccount | null = null;
+type FirebaseCredentials = {
+  projectId: string | null;
+  clientEmail: string | null;
+  privateKey: string | null;
+  serviceJson: ServiceAccountJson | null;
+  missing: {
+    projectId: boolean;
+    clientEmail: boolean;
+    privateKey: boolean;
+    serviceJson: boolean;
+  };
+  debug: {
+    hasServiceJson: boolean;
+    hasProjectId: boolean;
+    hasClientEmail: boolean;
+    hasPrivateKey: boolean;
+  };
+};
 
-function parseServiceAccount(raw: unknown): ServiceAccount | null {
-  if (!raw) return null;
-  const parsed =
-    typeof raw === "string"
-      ? (() => {
-          try {
-            return JSON.parse(raw) as ServiceAccount;
-          } catch {
-            return null;
-          }
-        })()
-      : raw;
-  if (!parsed || typeof parsed !== "object") return null;
-  const candidate = parsed as ServiceAccount;
-  if (!candidate.client_email || !candidate.private_key) return null;
-  return candidate;
+let cachedFirebaseCredentials: FirebaseCredentials | null = null;
+let didLogFirebaseDebug = false;
+
+function isDevEnv(env: Env | undefined) {
+  const value = (env?.NODE_ENV ?? env?.ENVIRONMENT ?? "").toLowerCase();
+  return value === "development" || value === "dev";
+}
+
+function parseServiceAccountJson(raw: string): ServiceAccountJson | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("{")) {
+    try {
+      return JSON.parse(trimmed) as ServiceAccountJson;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const decoded = atob(trimmed);
+    return JSON.parse(decoded) as ServiceAccountJson;
+  } catch {
+    return null;
+  }
+}
+
+function resolveFirebaseCredentials(env: Env | undefined): FirebaseCredentials | null {
+  if (!env) return null;
+  if (cachedFirebaseCredentials) return cachedFirebaseCredentials;
+
+  const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON ?? env.FIREBASE_SERVICE_ACCOUNT;
+  let serviceJson: ServiceAccountJson | null = null;
+  let hasServiceJson = false;
+  if (typeof serviceJsonRaw === "string") {
+    hasServiceJson = serviceJsonRaw.trim().length > 0;
+    serviceJson = hasServiceJson ? parseServiceAccountJson(serviceJsonRaw) : null;
+  } else if (serviceJsonRaw && typeof serviceJsonRaw === "object") {
+    hasServiceJson = true;
+    serviceJson = serviceJsonRaw as ServiceAccountJson;
+  }
+
+  const projectId =
+    env.FIREBASE_PROJECT_ID?.trim() ||
+    serviceJson?.project_id ||
+    serviceJson?.projectId ||
+    null;
+  const clientEmail =
+    env.FIREBASE_CLIENT_EMAIL?.trim() ||
+    serviceJson?.client_email ||
+    serviceJson?.clientEmail ||
+    null;
+  const rawPrivateKey =
+    env.FIREBASE_PRIVATE_KEY?.trim() ||
+    serviceJson?.private_key ||
+    serviceJson?.privateKey ||
+    null;
+  const privateKey = rawPrivateKey ? rawPrivateKey.replace(/\\n/g, "\n") : null;
+
+  const hasProjectId = Boolean(projectId);
+  const hasClientEmail = Boolean(clientEmail);
+  const hasPrivateKey = Boolean(privateKey);
+
+  cachedFirebaseCredentials = {
+    projectId,
+    clientEmail,
+    privateKey,
+    serviceJson,
+    missing: {
+      projectId: !hasProjectId,
+      clientEmail: !hasClientEmail,
+      privateKey: !hasPrivateKey,
+      serviceJson: !hasServiceJson,
+    },
+    debug: {
+      hasServiceJson,
+      hasProjectId,
+      hasClientEmail,
+      hasPrivateKey,
+    },
+  };
+
+  if (isDevEnv(env) && !didLogFirebaseDebug) {
+    didLogFirebaseDebug = true;
+    console.log("firebase-credentials-debug", cachedFirebaseCredentials.debug);
+  }
+
+  return cachedFirebaseCredentials;
+}
+
+function getFirebaseProjectId(env: Env) {
+  return resolveFirebaseCredentials(env)?.projectId ?? null;
 }
 
 function getServiceAccount(env: Env | undefined): ServiceAccount | null {
-  if (!env) return null;
-  if (cachedServiceAccount) return cachedServiceAccount;
-  const clientEmail = env.FIREBASE_CLIENT_EMAIL?.trim();
-  const privateKey = env.FIREBASE_PRIVATE_KEY?.trim();
-  const projectId = env.FIREBASE_PROJECT_ID?.trim();
-  if (clientEmail && privateKey) {
-    cachedServiceAccount = {
-      client_email: clientEmail,
-      private_key: privateKey.replace(/\\n/g, "\n"),
-      project_id: projectId || undefined,
-    };
-    return cachedServiceAccount;
-  }
-
-  const raw = env.FIREBASE_SERVICE_ACCOUNT_JSON ?? env.FIREBASE_SERVICE_ACCOUNT;
-  const parsed = parseServiceAccount(raw);
-  if (!parsed) return null;
-  cachedServiceAccount = {
-    ...parsed,
-    private_key: parsed.private_key.replace(/\\n/g, "\n"),
-    project_id: parsed.project_id || projectId || undefined,
+  const credentials = resolveFirebaseCredentials(env);
+  if (!credentials?.clientEmail || !credentials.privateKey) return null;
+  return {
+    client_email: credentials.clientEmail,
+    private_key: credentials.privateKey,
+    project_id: credentials.projectId || undefined,
   };
-  return cachedServiceAccount;
 }
 
 function getFirebaseAuthDomain(env: Env) {
@@ -216,19 +298,14 @@ type FirestoreErrorPayload = {
 };
 
 function getFirebaseMissingFlags(env: Env) {
-  const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON ?? env.FIREBASE_SERVICE_ACCOUNT;
-  const hasServiceJson =
-    typeof serviceJsonRaw === "string" ? serviceJsonRaw.trim().length > 0 : Boolean(serviceJsonRaw);
-  const serviceAccount = getServiceAccount(env);
-  const hasClientEmail = Boolean(env.FIREBASE_CLIENT_EMAIL?.trim()) || Boolean(serviceAccount?.client_email);
-  const hasPrivateKey = Boolean(env.FIREBASE_PRIVATE_KEY?.trim()) || Boolean(serviceAccount?.private_key);
-  const hasProjectId = Boolean(getFirebaseProjectId(env) || serviceAccount?.project_id);
-  return {
-    projectId: !hasProjectId,
-    clientEmail: !hasClientEmail,
-    privateKey: !hasPrivateKey,
-    serviceJson: !hasServiceJson,
-  };
+  return (
+    resolveFirebaseCredentials(env)?.missing ?? {
+      projectId: true,
+      clientEmail: true,
+      privateKey: true,
+      serviceJson: true,
+    }
+  );
 }
 
 function buildFirestoreError(
