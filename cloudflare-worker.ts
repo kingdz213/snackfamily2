@@ -160,36 +160,28 @@ type ResolvedFirebaseCreds = {
   };
 };
 
-let cachedFirebaseCredentials: ResolvedFirebaseCreds | null = null;
-let cachedAdminApp: { creds: ResolvedFirebaseCreds } | null = null;
-
-function isDevEnv(env: Env | undefined) {
-  const value = (env?.NODE_ENV ?? env?.ENVIRONMENT ?? "").toLowerCase();
-  return value === "development" || value === "dev";
-}
-
 function normalizeFirebasePrivateKey(raw: string) {
   let normalized = raw.replace(/\\n/g, "\n").trim();
-  if (!normalized.includes("BEGIN PRIVATE KEY")) {
+  const hasBegin = normalized.includes("BEGIN PRIVATE KEY");
+  const hasEnd = normalized.includes("END PRIVATE KEY");
+  if (!hasBegin) {
     normalized = `-----BEGIN PRIVATE KEY-----\n${normalized}`;
   }
-  if (!normalized.includes("END PRIVATE KEY")) {
+  if (!hasEnd) {
     normalized = `${normalized}\n-----END PRIVATE KEY-----`;
   }
   return normalized;
 }
 
-function resolveFirebaseCreds(env: Env): ResolvedFirebaseCreds {
-  if (cachedFirebaseCredentials) return cachedFirebaseCredentials;
-
+function resolveFirebaseCredentials(env: Env): ResolvedFirebaseCreds {
   const serviceJsonRaw = env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim();
   let serviceJson: ServiceAccountJson | null = null;
   let serviceJsonProvided = false;
   if (serviceJsonRaw) {
+    serviceJsonProvided = true;
     if (serviceJsonRaw.startsWith("{")) {
       try {
         serviceJson = JSON.parse(serviceJsonRaw) as ServiceAccountJson;
-        serviceJsonProvided = true;
       } catch {
         serviceJson = null;
       }
@@ -197,7 +189,6 @@ function resolveFirebaseCreds(env: Env): ResolvedFirebaseCreds {
       try {
         const decoded = atob(serviceJsonRaw);
         serviceJson = JSON.parse(decoded) as ServiceAccountJson;
-        serviceJsonProvided = true;
       } catch {
         serviceJson = null;
       }
@@ -236,7 +227,7 @@ function resolveFirebaseCreds(env: Env): ResolvedFirebaseCreds {
 
   if (usedSplit) {
     source = "env_split";
-  } else if (serviceJsonHasAny) {
+  } else if (serviceJsonProvided || serviceJsonHasAny) {
     source = "service_json";
   }
 
@@ -244,7 +235,7 @@ function resolveFirebaseCreds(env: Env): ResolvedFirebaseCreds {
   const hasClientEmail = Boolean(clientEmail);
   const hasPrivateKey = Boolean(privateKey);
 
-  cachedFirebaseCredentials = {
+  return {
     projectId,
     clientEmail,
     privateKey,
@@ -256,26 +247,14 @@ function resolveFirebaseCreds(env: Env): ResolvedFirebaseCreds {
       serviceJson: !serviceJsonProvided,
     },
   };
-
-  if (isDevEnv(env)) {
-    console.log("firebase-credentials-debug", {
-      source,
-      hasServiceJson: serviceJsonProvided,
-      hasProjectId,
-      hasClientEmail,
-      hasPrivateKey,
-    });
-  }
-
-  return cachedFirebaseCredentials;
 }
 
 function getFirebaseProjectId(env: Env) {
-  return resolveFirebaseCreds(env)?.projectId ?? null;
+  return resolveFirebaseCredentials(env)?.projectId ?? null;
 }
 
 function getServiceAccount(env: Env): ServiceAccount | null {
-  const credentials = resolveFirebaseCreds(env);
+  const credentials = resolveFirebaseCredentials(env);
   if (!credentials?.clientEmail || !credentials.privateKey) return null;
   return {
     client_email: credentials.clientEmail,
@@ -314,7 +293,7 @@ type FirestoreErrorPayload = {
 
 function getFirebaseMissingFlags(env: Env) {
   return (
-    resolveFirebaseCreds(env)?.missing ?? {
+    resolveFirebaseCredentials(env)?.missing ?? {
       projectId: true,
       clientEmail: true,
       privateKey: true,
@@ -339,10 +318,7 @@ function buildFirestoreError(
 function getAdminApp(
   env: Env
 ): { ok: true; app: { creds: ResolvedFirebaseCreds } } | { ok: false; error: FirestoreErrorPayload } {
-  const credentials = resolveFirebaseCreds(env);
-  if (cachedAdminApp) {
-    return { ok: true, app: cachedAdminApp };
-  }
+  const credentials = resolveFirebaseCredentials(env);
   if (credentials.missing.projectId) {
     return {
       ok: false,
@@ -363,8 +339,7 @@ function getAdminApp(
       }),
     };
   }
-  cachedAdminApp = { creds: credentials };
-  return { ok: true, app: cachedAdminApp };
+  return { ok: true, app: { creds: credentials } };
 }
 
 function requireFirestoreCredentials(env: Env, cors: Record<string, string>) {
@@ -2056,7 +2031,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      const credentials = resolveFirebaseCreds(env);
+      const credentials = resolveFirebaseCredentials(env);
       const hasProjectId = Boolean(credentials?.projectId);
       const hasServiceAccount = Boolean(credentials?.clientEmail && credentials?.privateKey);
       return json(
@@ -2105,15 +2080,20 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     }
 
     if (request.method === "GET" && url.pathname === "/__/debug/firebase") {
-      const credentials = resolveFirebaseCreds(env);
-      const missingFlags = credentials.missing;
-      const ok =
-        !missingFlags.projectId && !missingFlags.clientEmail && !missingFlags.privateKey;
+      const credentials = resolveFirebaseCredentials(env);
+      const hasServiceJson = !credentials.missing.serviceJson;
+      const hasProjectId = Boolean(credentials.projectId);
+      const hasClientEmail = Boolean(credentials.clientEmail);
+      const hasPrivateKey = Boolean(credentials.privateKey);
+      const ok = hasProjectId && hasClientEmail && hasPrivateKey;
       return json(
         {
           ok,
           source: credentials.source,
-          missing: missingFlags,
+          hasProjectId,
+          hasClientEmail,
+          hasPrivateKey,
+          hasServiceJson,
         },
         200,
         cors
@@ -2136,7 +2116,7 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (!auth.ok) {
         return json({ error: auth.error, message: auth.message }, 401, cors);
       }
-      const credentials = resolveFirebaseCreds(env);
+      const credentials = resolveFirebaseCredentials(env);
       const hasServiceJson = !credentials.missing.serviceJson;
       const hasClientEmail = Boolean(credentials?.clientEmail);
       const hasPrivateKey = Boolean(credentials?.privateKey);
