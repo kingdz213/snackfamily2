@@ -130,6 +130,76 @@ function isEnvAvailable(env: Env | undefined | null): env is Env {
   return Boolean(env);
 }
 
+const KNOWN_ENV_KEYS = [
+  "ORDERS_KV",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "DEFAULT_ORIGIN",
+  "ADMIN_PIN",
+  "ADMIN_SIGNING_SECRET",
+  "FIREBASE_API_KEY",
+  "FIREBASE_PROJECT_ID",
+  "FIREBASE_SERVICE_ACCOUNT_JSON",
+  "FIREBASE_SERVICE_ACCOUNT_JSON_BASE64",
+  "FIREBASE_SERVICE_ACCOUNT_BASE64",
+  "FIREBASE_SERVICE_ACCOUNT",
+  "FIREBASE_PRIVATE_KEY",
+  "FIREBASE_CLIENT_EMAIL",
+  "FIREBASE_AUTH_DOMAIN",
+  "FIREBASE_MESSAGING_SENDER_ID",
+  "FIREBASE_APP_ID",
+  "NODE_ENV",
+  "ENVIRONMENT",
+];
+
+type EnvKeysSummary = {
+  keys: string[];
+  presence: Record<string, boolean>;
+};
+
+function isEnvValuePresent(value: unknown) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+}
+
+function listEnvKeys(env: Env): EnvKeysSummary {
+  const keys = Object.keys(env).sort();
+  const presence: Record<string, boolean> = {};
+  KNOWN_ENV_KEYS.forEach((key) => {
+    presence[key] = isEnvValuePresent((env as Record<string, unknown>)[key]);
+  });
+  return { keys, presence };
+}
+
+type FirebasePresence = {
+  FIREBASE_PROJECT_ID: boolean;
+  FIREBASE_SERVICE_ACCOUNT_JSON: boolean;
+  FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: boolean;
+  FIREBASE_CLIENT_EMAIL: boolean;
+  FIREBASE_PRIVATE_KEY: boolean;
+};
+
+function getFirebasePresence(env: Env): FirebasePresence {
+  return {
+    FIREBASE_PROJECT_ID: isEnvValuePresent(env.FIREBASE_PROJECT_ID),
+    FIREBASE_SERVICE_ACCOUNT_JSON: isEnvValuePresent(env.FIREBASE_SERVICE_ACCOUNT_JSON),
+    FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: isEnvValuePresent(env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64),
+    FIREBASE_CLIENT_EMAIL: isEnvValuePresent(env.FIREBASE_CLIENT_EMAIL),
+    FIREBASE_PRIVATE_KEY: isEnvValuePresent(env.FIREBASE_PRIVATE_KEY),
+  };
+}
+
+function isServiceJsonVisible(env: Env) {
+  return Boolean(
+    (env.FIREBASE_SERVICE_ACCOUNT_JSON && env.FIREBASE_SERVICE_ACCOUNT_JSON.trim()) ||
+      (env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 && env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64.trim()) ||
+      (env.FIREBASE_SERVICE_ACCOUNT_BASE64 && env.FIREBASE_SERVICE_ACCOUNT_BASE64.trim()) ||
+      (typeof env.FIREBASE_SERVICE_ACCOUNT === "string" && env.FIREBASE_SERVICE_ACCOUNT.trim()) ||
+      (env.FIREBASE_SERVICE_ACCOUNT && typeof env.FIREBASE_SERVICE_ACCOUNT === "object")
+  );
+}
+
 function requireOrdersKv(env: Env, cors?: Record<string, string>, requestInfo?: RequestInfo) {
   if (!env.ORDERS_KV) {
     return json(
@@ -174,6 +244,7 @@ type ResolvedFirebaseCreds = {
   projectId?: string;
   clientEmail?: string;
   privateKey?: string;
+  serviceJsonParsed: boolean;
   source: {
     usedServiceJson: boolean;
     usedBase64: boolean;
@@ -305,6 +376,7 @@ function resolveFirebaseCredentials(env: Env): ResolvedFirebaseCreds {
     projectId,
     clientEmail,
     privateKey,
+    serviceJsonParsed: Boolean(serviceJson),
     source: {
       usedServiceJson,
       usedBase64,
@@ -2113,15 +2185,13 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
     );
   }
   const origin = env.DEFAULT_ORIGIN ?? FALLBACK_ORIGIN;
-  console.log("RUNTIME_ENV_CHECK", {
-    hasProjectId: Boolean(env.FIREBASE_PROJECT_ID && String(env.FIREBASE_PROJECT_ID).trim()),
-    hasClientEmail: Boolean(env.FIREBASE_CLIENT_EMAIL && String(env.FIREBASE_CLIENT_EMAIL).trim()),
-    hasPrivateKey: Boolean(env.FIREBASE_PRIVATE_KEY && String(env.FIREBASE_PRIVATE_KEY).trim()),
-    hasServiceJson: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON && String(env.FIREBASE_SERVICE_ACCOUNT_JSON).trim()),
-    hasServiceJsonB64: Boolean(
-      (env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 && String(env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64).trim()) ||
-      (env.FIREBASE_SERVICE_ACCOUNT_BASE64 && String(env.FIREBASE_SERVICE_ACCOUNT_BASE64).trim())
-    ),
+  const envSummary = listEnvKeys(env);
+  const firebasePresence = getFirebasePresence(env);
+  console.log("WORKER_ENV_DIAGNOSTIC", {
+    workerBuildId: WORKER_BUILD_ID,
+    requestHost: requestInfo.host,
+    firebasePresence,
+    envKeysCount: envSummary.keys.length,
   });
 
     if (request.method === "OPTIONS") {
@@ -2135,13 +2205,12 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       const hasProjectId = Boolean(credentials?.projectId);
       const hasServiceAccount = Boolean(credentials?.clientEmail && credentials?.privateKey);
       const firebaseEnvPresence = {
-        hasProjectId: Boolean(env.FIREBASE_PROJECT_ID && String(env.FIREBASE_PROJECT_ID).trim()),
-        hasClientEmail: Boolean(env.FIREBASE_CLIENT_EMAIL && String(env.FIREBASE_CLIENT_EMAIL).trim()),
-        hasPrivateKey: Boolean(env.FIREBASE_PRIVATE_KEY && String(env.FIREBASE_PRIVATE_KEY).trim()),
-        hasServiceJson: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON && String(env.FIREBASE_SERVICE_ACCOUNT_JSON).trim()),
+        hasProjectId: isEnvValuePresent(env.FIREBASE_PROJECT_ID),
+        hasClientEmail: isEnvValuePresent(env.FIREBASE_CLIENT_EMAIL),
+        hasPrivateKey: isEnvValuePresent(env.FIREBASE_PRIVATE_KEY),
+        hasServiceJson: isEnvValuePresent(env.FIREBASE_SERVICE_ACCOUNT_JSON),
         hasServiceJsonB64: Boolean(
-          (env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 && String(env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64).trim()) ||
-            (env.FIREBASE_SERVICE_ACCOUNT_BASE64 && String(env.FIREBASE_SERVICE_ACCOUNT_BASE64).trim())
+          isEnvValuePresent(env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64) || isEnvValuePresent(env.FIREBASE_SERVICE_ACCOUNT_BASE64)
         ),
         resolvedProjectId: credentials?.projectId ?? null,
         source: credentials.source,
@@ -2157,9 +2226,13 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
           hasFirebaseServiceAccount: hasServiceAccount,
           origin,
           workerBuild: WORKER_BUILD_ID,
+          workerBuildId: WORKER_BUILD_ID,
           requestHost: requestInfo.host,
+          requestUrl: requestInfo.url,
           requestOriginHeader,
           normalizedOrigin: requestOrigin,
+          envKeys: envSummary.keys,
+          firebasePresence,
           firebaseEnvPresence,
         },
         200,
@@ -2201,18 +2274,20 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       const credentials = resolveFirebaseCredentials(env);
       const ok =
         !credentials.missing.projectId && !credentials.missing.clientEmail && !credentials.missing.privateKey;
+      const diagnosis = (() => {
+        const noVarsVisible = Object.values(firebasePresence).every((value) => !value);
+        if (noVarsVisible) return "NO_FIREBASE_VARS_VISIBLE";
+        if (isServiceJsonVisible(env) && !credentials.serviceJsonParsed) return "SERVICE_JSON_VISIBLE_BUT_INVALID";
+        if (credentials.missing.clientEmail || credentials.missing.privateKey) return "PARTIAL_CREDS";
+        return "OK";
+      })();
       return jsonResponse(
         {
           ok,
           missing: credentials.missing,
           source: credentials.source,
-          envKeysPresent: {
-            FIREBASE_PROJECT_ID: Boolean(env.FIREBASE_PROJECT_ID),
-            FIREBASE_SERVICE_ACCOUNT_JSON: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON),
-            FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64),
-            FIREBASE_PRIVATE_KEY: Boolean(env.FIREBASE_PRIVATE_KEY),
-            FIREBASE_CLIENT_EMAIL: Boolean(env.FIREBASE_CLIENT_EMAIL),
-          },
+          envKeys: envSummary.keys,
+          firebasePresence,
           workerBuild: WORKER_BUILD_ID,
           requestHost: requestInfo.host,
           firebaseCredentialsResolved: {
@@ -2220,6 +2295,12 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
             clientEmail: credentials.clientEmail ?? null,
             missing: credentials.missing,
             source: credentials.source,
+            diagnosis,
+          },
+          resolvedFirebaseCreds: {
+            source: credentials.source,
+            missing: credentials.missing,
+            diagnosis,
           },
         },
         200,
