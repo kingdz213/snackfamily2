@@ -5,6 +5,7 @@
 interface Env {
   ORDERS_KV?: KVNamespace;
   STRIPE_SECRET_KEY?: string;
+  STRIPE_API_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   DEFAULT_ORIGIN?: string;
   ADMIN_PIN?: string;
@@ -133,6 +134,7 @@ function isEnvAvailable(env: Env | undefined | null): env is Env {
 const KNOWN_ENV_KEYS = [
   "ORDERS_KV",
   "STRIPE_SECRET_KEY",
+  "STRIPE_API_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "DEFAULT_ORIGIN",
   "ADMIN_PIN",
@@ -218,8 +220,15 @@ function requireOrdersKv(env: Env, cors?: Record<string, string>, requestInfo?: 
   return null;
 }
 
+function getStripeSecret(env: Env) {
+  const primary = env.STRIPE_SECRET_KEY?.trim();
+  if (primary) return primary;
+  const fallback = env.STRIPE_API_KEY?.trim();
+  return fallback || null;
+}
+
 function hasStripeSecret(env: Env) {
-  return Boolean(env.STRIPE_SECRET_KEY);
+  return Boolean(getStripeSecret(env));
 }
 
 function hasWebhookSecret(env: Env) {
@@ -1771,6 +1780,38 @@ function validateItems(items: any): { items: NormalizedItem[] } | { error: strin
   return { items: normalized };
 }
 
+function validateItemsCents(items: any): { items: NormalizedItem[] } | { error: string; message: string } {
+  if (!Array.isArray(items) || items.length === 0) {
+    return { error: "ITEMS_INVALID", message: "items must be a non-empty array" };
+  }
+
+  const normalized: NormalizedItem[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const name = String(it?.name ?? "").trim();
+    const quantity = Number(it?.quantity ?? 1);
+    const price = Number(it?.price);
+
+    if (!name) return { error: "ITEM_NAME_MISSING", message: `items[${i}].name missing` };
+    if (!Number.isFinite(quantity) || !Number.isInteger(quantity) || quantity <= 0) {
+      return { error: "ITEM_QTY_INVALID", message: `items[${i}].quantity must be integer > 0` };
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      return { error: "ITEM_PRICE_INVALID", message: `items[${i}].price must be integer cents > 0` };
+    }
+    if (!Number.isInteger(price)) {
+      if (price < 100) {
+        return { error: "INVALID_PRICE_UNITS", message: "Prices must be cents integers" };
+      }
+      return { error: "ITEM_PRICE_INVALID", message: `items[${i}].price must be integer cents > 0` };
+    }
+
+    normalized.push({ name, quantity, cents: price });
+  }
+
+  return { items: normalized };
+}
+
 function subtotalCents(items: NormalizedItem[]) {
   return items.reduce((sum, it) => sum + it.cents * it.quantity, 0);
 }
@@ -2677,159 +2718,191 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       }
 
       if (request.method === "POST" && url.pathname === "/create-checkout-session") {
-        if (!hasStripeSecret(env)) {
-          return jsonResponse({ error: "SERVER_MISCONFIGURED", details: "Missing STRIPE_SECRET_KEY" }, 500, cors);
-        }
-        const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
-        if (firestoreGuard) return firestoreGuard;
-
-        const body: any = await request.json().catch(() => null);
-        if (!body) return jsonResponse({ error: "INVALID_JSON" }, 400, cors);
-
-        const storeStatus = resolveStoreStatus(await getOrInitStoreSettings(env));
-        if (!storeStatus.isOpen) {
-          return jsonResponse(
-            { error: "STORE_CLOSED", message: `Snack fermé actuellement. ${storeStatus.detail}` },
-            403,
-            cors
-          );
-        }
-
-        const validation = validateItems(body.items);
-        if ("error" in validation) return jsonResponse(validation, 400, cors);
-
-        const desiredDeliveryAtRaw = typeof body.desiredDeliveryAt === "string" ? body.desiredDeliveryAt : null;
-        const desiredDeliverySlotLabelRaw =
-          typeof body.desiredDeliverySlotLabel === "string" ? body.desiredDeliverySlotLabel.trim() : null;
-        if (desiredDeliveryAtRaw && Number.isNaN(Date.parse(desiredDeliveryAtRaw))) {
-          return jsonResponse({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
-        }
-
-        const firebaseIdToken =
-          (typeof body.firebaseIdToken === "string" && body.firebaseIdToken.trim()) || extractBearerToken(request);
-        let userUid: string | undefined;
-        if (firebaseIdToken) {
-          const apiKey = getFirebaseApiKey(env);
-          if (!apiKey) {
-            return jsonResponse({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
+        const requestId = crypto.randomUUID();
+        try {
+          const stripeSecret = getStripeSecret(env);
+          if (!stripeSecret) {
+            return jsonResponse({ error: "MISSING_STRIPE_SECRET", message: "Stripe secret missing" }, 500, cors);
           }
-          const uid = await lookupFirebaseUid(firebaseIdToken, apiKey);
-          if (!uid) {
-            return jsonResponse({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+          const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
+          if (firestoreGuard) return firestoreGuard;
+
+          const body: any = await request.json().catch(() => null);
+          if (!body) return jsonResponse({ error: "INVALID_JSON" }, 400, cors);
+
+          const storeStatus = resolveStoreStatus(await getOrInitStoreSettings(env));
+          if (!storeStatus.isOpen) {
+            return jsonResponse(
+              { error: "STORE_CLOSED", message: `Snack fermé actuellement. ${storeStatus.detail}` },
+              403,
+              cors
+            );
           }
-          userUid = uid;
-        }
 
-        // Minimum 20€ hors livraison
-        const sub = subtotalCents(validation.items);
-        if (sub < MIN_ORDER_CENTS) {
-          return jsonResponse(
-            { error: "MIN_ORDER_NOT_MET", message: "Il faut commander un minimum de 20€ (hors livraison)." },
-            400,
-            cors
-          );
-        }
+          const validation = validateItemsCents(body.items);
+          if ("error" in validation) return jsonResponse(validation, 400, cors);
 
-        // Livraison obligatoire: adresse + coords
-        const deliveryAddress = String(body.deliveryAddress ?? "").trim();
-        const deliveryLat = Number(body.deliveryLat);
-        const deliveryLng = Number(body.deliveryLng);
-
-        if (!deliveryAddress) {
-          return jsonResponse({ error: "DELIVERY_ADDRESS_REQUIRED", message: "Adresse de livraison obligatoire." }, 400, cors);
-        }
-        if (!Number.isFinite(deliveryLat) || !Number.isFinite(deliveryLng)) {
-          return jsonResponse(
-            { error: "DELIVERY_POSITION_REQUIRED", message: "Position obligatoire (géolocalisation)." },
-            400,
-            cors
-          );
-        }
-
-        // Zone 10km
-        const km = distanceKm(SHOP_LAT, SHOP_LNG, deliveryLat, deliveryLng);
-        if (km > MAX_DELIVERY_KM) {
-          return jsonResponse(
-            { error: "DELIVERY_OUT_OF_RANGE", message: `Livraison uniquement dans un rayon de ${MAX_DELIVERY_KM} km.` },
-            400,
-            cors
-          );
-        }
-
-        const bodyOrigin = normalizeOrigin(body.origin ?? "");
-        const checkoutOrigin = isAllowedOrigin(requestOrigin)
-          ? requestOrigin
-          : isAllowedOrigin(bodyOrigin)
-          ? bodyOrigin
-          : origin;
-        const orderId = generateOrderId();
-        const adminSecret = getAdminSigningSecret(env);
-        const adminExp = Date.now() + 48 * 60 * 60 * 1000;
-        const adminHubUrl = adminSecret
-          ? `${checkoutOrigin}/admin/order?orderId=${encodeURIComponent(orderId)}&exp=${encodeURIComponent(
-              String(adminExp)
-            )}&sig=${encodeURIComponent(await signAdmin(adminSecret, orderId, adminExp, "ADMIN_HUB"))}`
-          : undefined;
-        const publicOrderUrl = buildPublicOrderUrl(checkoutOrigin, orderId);
-        const order: OrderRecord = {
-          id: orderId,
-          createdAt: nowIso(),
-          statusUpdatedAt: nowIso(),
-          items: validation.items.map((it) => ({ name: it.name, quantity: it.quantity, price: it.cents })),
-          subtotal: sub,
-          deliveryFee: DELIVERY_FEE_CENTS,
-          total: sub + DELIVERY_FEE_CENTS,
-          deliveryAddress,
-          deliveryLat,
-          deliveryLng,
-          paymentMethod: "STRIPE",
-          status: "PENDING_PAYMENT",
-          adminHubUrl,
-          origin: checkoutOrigin,
-          desiredDeliveryAt: desiredDeliveryAtRaw || undefined,
-          desiredDeliverySlotLabel: desiredDeliverySlotLabelRaw || undefined,
-          notes,
-          userUid,
-        };
-
-        await saveOrder(env, order);
-        if (userUid) {
-          await appendUserOrder(env, userUid, orderId);
-          try {
-            await upsertOrderInFirestore(env, order);
-          } catch {
-            // ignore firestore failure
+          const desiredDeliveryAtRaw = typeof body.desiredDeliveryAt === "string" ? body.desiredDeliveryAt : null;
+          const desiredDeliverySlotLabelRaw =
+            typeof body.desiredDeliverySlotLabel === "string" ? body.desiredDeliverySlotLabel.trim() : null;
+          if (desiredDeliveryAtRaw && Number.isNaN(Date.parse(desiredDeliveryAtRaw))) {
+            return jsonResponse({ error: "INVALID_SCHEDULE", message: "desiredDeliveryAt invalide." }, 400, cors);
           }
+          const notes = sanitizeNotes(body.notes);
+
+          const firebaseIdToken =
+            (typeof body.firebaseIdToken === "string" && body.firebaseIdToken.trim()) || extractBearerToken(request);
+          let userUid: string | undefined;
+          if (firebaseIdToken) {
+            const apiKey = getFirebaseApiKey(env);
+            if (!apiKey) {
+              return jsonResponse({ error: "SERVER_MISCONFIGURED", message: "FIREBASE_API_KEY manquant." }, 500, cors);
+            }
+            const uid = await lookupFirebaseUid(firebaseIdToken, apiKey);
+            if (!uid) {
+              return jsonResponse({ error: "UNAUTHORIZED", message: "Token Firebase invalide." }, 401, cors);
+            }
+            userUid = uid;
+          }
+
+          // Minimum 20€ hors livraison
+          const sub = subtotalCents(validation.items);
+          if (sub < MIN_ORDER_CENTS) {
+            return jsonResponse(
+              { error: "MIN_ORDER_NOT_MET", message: "Il faut commander un minimum de 20€ (hors livraison)." },
+              400,
+              cors
+            );
+          }
+
+          // Livraison obligatoire: adresse + coords
+          const deliveryAddress = String(body.deliveryAddress ?? "").trim();
+          const deliveryLat = Number(body.deliveryLat);
+          const deliveryLng = Number(body.deliveryLng);
+
+          if (!deliveryAddress) {
+            return jsonResponse(
+              { error: "DELIVERY_ADDRESS_REQUIRED", message: "Adresse de livraison obligatoire." },
+              400,
+              cors
+            );
+          }
+          if (!Number.isFinite(deliveryLat) || !Number.isFinite(deliveryLng)) {
+            return jsonResponse(
+              { error: "DELIVERY_POSITION_REQUIRED", message: "Position obligatoire (géolocalisation)." },
+              400,
+              cors
+            );
+          }
+
+          // Zone 10km
+          const km = distanceKm(SHOP_LAT, SHOP_LNG, deliveryLat, deliveryLng);
+          if (km > MAX_DELIVERY_KM) {
+            return jsonResponse(
+              { error: "DELIVERY_OUT_OF_RANGE", message: `Livraison uniquement dans un rayon de ${MAX_DELIVERY_KM} km.` },
+              400,
+              cors
+            );
+          }
+
+          const bodyOrigin = normalizeOrigin(body.origin ?? "");
+          const checkoutOrigin = isAllowedOrigin(requestOrigin)
+            ? requestOrigin
+            : isAllowedOrigin(bodyOrigin)
+            ? bodyOrigin
+            : origin;
+          const orderId = generateOrderId();
+          const adminSecret = getAdminSigningSecret(env);
+          const adminExp = Date.now() + 48 * 60 * 60 * 1000;
+          const adminHubUrl = adminSecret
+            ? `${checkoutOrigin}/admin/order?orderId=${encodeURIComponent(orderId)}&exp=${encodeURIComponent(
+                String(adminExp)
+              )}&sig=${encodeURIComponent(await signAdmin(adminSecret, orderId, adminExp, "ADMIN_HUB"))}`
+            : undefined;
+          const publicOrderUrl = buildPublicOrderUrl(checkoutOrigin, orderId);
+          const order: OrderRecord = {
+            id: orderId,
+            createdAt: nowIso(),
+            statusUpdatedAt: nowIso(),
+            items: validation.items.map((it) => ({ name: it.name, quantity: it.quantity, price: it.cents })),
+            subtotal: sub,
+            deliveryFee: DELIVERY_FEE_CENTS,
+            total: sub + DELIVERY_FEE_CENTS,
+            deliveryAddress,
+            deliveryLat,
+            deliveryLng,
+            paymentMethod: "STRIPE",
+            status: "PENDING_PAYMENT",
+            adminHubUrl,
+            origin: checkoutOrigin,
+            desiredDeliveryAt: desiredDeliveryAtRaw || undefined,
+            desiredDeliverySlotLabel: desiredDeliverySlotLabelRaw || undefined,
+            notes,
+            userUid,
+          };
+
+          await saveOrder(env, order);
+          if (userUid) {
+            await appendUserOrder(env, userUid, orderId);
+            try {
+              await upsertOrderInFirestore(env, order);
+            } catch {
+              // ignore firestore failure
+            }
+          }
+
+          const result = await createCheckoutSession({
+            items: validation.items,
+            origin: checkoutOrigin,
+            stripeSecretKey: stripeSecret,
+            orderId,
+            deliveryAddress,
+            deliveryLat,
+            deliveryLng,
+            distance: km,
+          });
+
+          if (!result.ok) {
+            return jsonResponse({ error: "STRIPE_API_ERROR", status: result.status, details: result.stripe }, 502, cors);
+          }
+
+          if (!result.session?.url) {
+            return jsonResponse({ error: "STRIPE_NO_URL", details: result.session }, 502, cors);
+          }
+
+          order.stripeCheckoutSessionId = result.session.id;
+          await saveOrder(env, order);
+          await env.ORDERS_KV!.put(`order:session:${result.session.id}`, orderId);
+
+          return jsonResponse(
+            { url: result.session.url, sessionId: result.session.id, orderId, publicOrderUrl, adminHubUrl },
+            200,
+            cors
+          );
+        } catch (error: unknown) {
+          const serialized = serializeError(error);
+          const errorObj = error as { type?: string; code?: string; statusCode?: number; message?: string } | null;
+          const type = errorObj?.type;
+          const code = errorObj?.code;
+          const statusCode = errorObj?.statusCode;
+          const isStripeError = Boolean(type && String(type).toLowerCase().includes("stripe"));
+          console.error("CHECKOUT_SESSION_ERROR", { requestId, error: serialized });
+
+          if (isStripeError) {
+            const message = errorObj?.message || serialized.message || "Stripe error";
+            return jsonResponse(
+              { error: "STRIPE_ERROR", message, details: { type, code, statusCode } },
+              Number.isInteger(statusCode) ? Number(statusCode) : 502,
+              cors
+            );
+          }
+
+          return jsonResponse(
+            { error: "WORKER_ERROR", message: "Internal worker error", requestId },
+            500,
+            cors
+          );
         }
-
-        const result = await createCheckoutSession({
-          items: validation.items,
-          origin: checkoutOrigin,
-          stripeSecretKey: String(env.STRIPE_SECRET_KEY),
-          orderId,
-          deliveryAddress,
-          deliveryLat,
-          deliveryLng,
-          distance: km,
-        });
-
-        if (!result.ok) {
-          return jsonResponse({ error: "STRIPE_API_ERROR", status: result.status, details: result.stripe }, 502, cors);
-        }
-
-        if (!result.session?.url) {
-          return jsonResponse({ error: "STRIPE_NO_URL", details: result.session }, 502, cors);
-        }
-
-        order.stripeCheckoutSessionId = result.session.id;
-        await saveOrder(env, order);
-        await env.ORDERS_KV!.put(`order:session:${result.session.id}`, orderId);
-
-        return jsonResponse(
-          { url: result.session.url, sessionId: result.session.id, orderId, publicOrderUrl, adminHubUrl },
-          200,
-          cors
-        );
       }
 
       if (request.method === "POST" && url.pathname === "/stripe-webhook") {
