@@ -85,6 +85,25 @@
   }
 }
 
+.sticky-cart-bar {
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.sticky-cart-slide-up {
+  animation: sticky-cart-slide-up 220ms ease-out;
+}
+
+@keyframes sticky-cart-slide-up {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 .drawer-scroll {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;

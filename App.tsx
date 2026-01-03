@@ -11,6 +11,7 @@ import { OrderStatusPage } from './components/OrderStatusPage';
 import { Footer } from './components/Footer';
 import { OrderingCTA } from './components/OrderingCTA';
 import { OrderUI } from './components/OrderUI';
+import { StickyCartBar } from './components/StickyCartBar';
 import { AdminOrderHubPage } from './components/AdminOrderHubPage';
 import { AdminDashboardPage } from './components/AdminDashboardPage';
 import { AdminOrderDetailPage } from './components/AdminOrderDetailPage';
@@ -358,10 +359,14 @@ function App() {
   }, []);
 
   // Rendu conditionnel des pages
+  const cartCount = cartItems.reduce((acc, item) => acc + item.quantity, 0);
+  const cartSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const showStickyCart = currentPage === 'menu' && cartCount > 0;
+
   const renderPage = () => {
     switch (currentPage) {
       case 'home': return <Home navigateTo={navigateTo} />;
-      case 'menu': return <MenuPage openOrderModal={openOrderModal} />;
+      case 'menu': return <MenuPage openOrderModal={openOrderModal} stickyCartVisible={showStickyCart} />;
       case 'infos': return <InfoPage />;
       case 'contact': return <ContactPage />;
       case 'commander': return <OrderPage openOrderModal={openOrderModal} />;
@@ -383,7 +388,7 @@ function App() {
       <Header
         currentPage={currentPage}
         navigateTo={navigateTo}
-        cartCount={cartItems.reduce((acc, item) => acc + item.quantity, 0)}
+        cartCount={cartCount}
         toggleCart={toggleCart}
       />
 
@@ -414,6 +419,14 @@ function App() {
       </main>
 
       <Footer navigateTo={navigateTo} />
+
+      {showStickyCart && (
+        <StickyCartBar
+          totalItems={cartCount}
+          totalPrice={cartSubtotal}
+          onOpenCart={toggleCart}
+        />
+      )}
 
       {/* Bouton flottant Commander (visible sauf sur Checkout/Success/Cancel/Commander) */}
       {currentPage !== 'success' &&
