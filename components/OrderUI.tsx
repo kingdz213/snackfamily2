@@ -78,6 +78,15 @@ const formatSlotLabel = (date: Date) =>
     minute: '2-digit',
   });
 
+const toCents = (valueEuro: number) => {
+  const raw = valueEuro * 100;
+  const cents = Math.round(raw);
+  if (import.meta.env.DEV && !Number.isInteger(raw)) {
+    console.warn('[checkout] prix non entier détecté, arrondi en centimes', { valueEuro, cents });
+  }
+  return cents;
+};
+
 function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   const R = 6371;
   const toRad = (v: number) => (v * Math.PI) / 180;
@@ -787,7 +796,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
 
       const items = cartItems.map((it) => ({
         name: buildLineItemName(it),
-        price: Math.round(Number(it.price) * 100),
+        price: toCents(Number(it.price)),
         quantity: Math.max(1, Math.trunc(it.quantity)),
       }));
 
@@ -827,7 +836,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     try {
       const items = cartItems.map((it) => ({
         name: buildLineItemName(it),
-        price: Math.round(Number(it.price) * 100),
+        price: toCents(Number(it.price)),
         quantity: Math.max(1, Math.trunc(it.quantity)),
       }));
 
