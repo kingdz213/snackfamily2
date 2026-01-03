@@ -120,6 +120,10 @@ function App() {
   const [pendingIntent, setPendingIntent] = useState<AuthIntent | null>(null);
   const pendingActionRef = useRef<null | (() => void)>(null);
   const [showFirebaseEnvDebug, setShowFirebaseEnvDebug] = useState(false);
+  const showFirebaseBanner = Boolean(
+    firebaseInitError &&
+      (import.meta.env.DEV || ['admin', 'adminOrderDetail', 'adminOrderHub'].includes(currentPage))
+  );
 
   // Scroll en haut à chaque changement de page
   useEffect(() => {
@@ -392,7 +396,7 @@ function App() {
         toggleCart={toggleCart}
       />
 
-      {firebaseInitError && (
+      {showFirebaseBanner && (
         <div className="bg-amber-100 text-amber-900 text-sm font-semibold px-4 py-2 text-center border-b border-amber-200">
           <div>{firebaseInitError}</div>
           {import.meta.env.DEV && (

@@ -5,6 +5,7 @@ import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { Page } from '../types';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
 import { getStoredPushToken, requestPushPermissionAndRegister } from '@/src/lib/push';
+import { db } from '@/src/firebase';
 
 interface MyOrdersPageProps {
   navigateTo: (page: Page) => void;
@@ -140,6 +141,23 @@ export const MyOrdersPage: React.FC<MyOrdersPageProps> = ({ navigateTo }) => {
       window.setTimeout(() => setPushMessage(null), 2200);
     }
   };
+
+  if (!db) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center bg-snack-light px-4 py-16">
+        <div className="max-w-md w-full bg-white rounded-2xl border border-gray-200 p-6 text-center shadow-lg space-y-4">
+          <h1 className="text-2xl font-display font-bold text-snack-black">Mes commandes</h1>
+          <p className="text-sm text-gray-600">Fonction indisponible pour le moment.</p>
+          <button
+            onClick={() => navigateTo('home')}
+            className="cta-premium w-full rounded-lg bg-snack-black px-4 py-3 text-sm font-bold uppercase tracking-wide text-snack-gold hover:bg-snack-gold hover:text-snack-black transition-colors"
+          >
+            Retour à l'accueil
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!loading && !user) {
     return (
