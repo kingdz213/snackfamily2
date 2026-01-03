@@ -8,9 +8,10 @@ import { resolveWorkerBaseUrl } from '../lib/stripe';
 
 interface MenuPageProps {
   openOrderModal: (item: MenuItem, category: MenuCategory) => void;
+  stickyCartVisible: boolean;
 }
 
-export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
+export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal, stickyCartVisible }) => {
   const [categories, setCategories] = useState<MenuCategory[]>(MENU_CATEGORIES);
   const [activeCategory, setActiveCategory] = useState(MENU_CATEGORIES[0].id);
   const [searchQuery, setSearchQuery] = useState('');
@@ -55,7 +56,10 @@ export const MenuPage: React.FC<MenuPageProps> = ({ openOrderModal }) => {
   }).filter(category => category.items.length > 0);
 
   return (
-    <div className="bg-gray-50 min-h-screen pb-20">
+    <div
+      className="bg-gray-50 min-h-screen pb-20"
+      style={stickyCartVisible ? { paddingBottom: 'calc(72px + env(safe-area-inset-bottom))' } : undefined}
+    >
       {/* Page Header */}
       <div className="bg-snack-black text-white py-12">
         <div className="container mx-auto px-4 text-center">
