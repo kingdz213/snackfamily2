@@ -41,7 +41,7 @@ export const Header: React.FC<HeaderProps> = ({ currentPage, navigateTo, cartCou
   }, [cartCount, reduceMotion]);
 
   return (
-    <header className="fixed top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg min-h-[96px] sm:min-h-[104px]">
+    <header className="sticky top-0 left-0 w-full z-50 bg-snack-black border-b border-white/10 shadow-lg min-h-[96px] sm:min-h-[104px]">
       <div className="container mx-auto px-4 py-4 h-full">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center justify-between gap-4 sm:gap-6 w-full sm:w-auto">

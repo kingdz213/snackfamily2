@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { db, firebaseInitError } from '@/src/firebase';
+import { db } from '@/src/firebase';
 import { Page } from '../types';
 import { LoadingSpinner } from '@/src/components/LoadingSpinner';
 import { OrderTimeline } from './OrderTimeline';
@@ -61,7 +61,7 @@ export const MyOrderDetailPage: React.FC<MyOrderDetailPageProps> = ({ navigateTo
     }
     if (!db) {
       setOrder(null);
-      setError(firebaseInitError ?? 'Vérifiez vos variables VITE_FIREBASE_*.');
+      setError('Fonction indisponible pour le moment.');
       setIsLoading(false);
       return;
     }
@@ -95,7 +95,24 @@ export const MyOrderDetailPage: React.FC<MyOrderDetailPageProps> = ({ navigateTo
     );
 
     return () => unsubscribe();
-  }, [orderId, user]);
+  }, [db, orderId, user]);
+
+  if (!db) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center bg-snack-light px-4 py-16">
+        <div className="max-w-md w-full bg-white rounded-2xl border border-gray-200 p-6 text-center shadow-lg space-y-4">
+          <h1 className="text-2xl font-display font-bold text-snack-black">Mes commandes</h1>
+          <p className="text-sm text-gray-600">Fonction indisponible pour le moment.</p>
+          <button
+            onClick={() => navigateTo('home')}
+            className="cta-premium w-full rounded-lg bg-snack-black px-4 py-3 text-sm font-bold uppercase tracking-wide text-snack-gold hover:bg-snack-gold hover:text-snack-black transition-colors"
+          >
+            Retour à l'accueil
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!loading && !user) {
     return (

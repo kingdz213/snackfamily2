@@ -17,6 +17,7 @@ import { DELIVERY_STEP_MINUTES, DELIVERY_WINDOWS } from '@/src/config/delivery';
 import { isValidPhoneBasic, normalizePhoneDigits } from '@/src/lib/phone';
 import { applyAvailabilityToMenu, fetchMenuAvailability } from '@/src/lib/menuAvailability';
 import { resolveWorkerBaseUrl } from '../lib/stripe';
+import { auth } from '@/src/firebase';
 
 interface OrderUIProps {
   isOrderModalOpen: boolean;
@@ -115,6 +116,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
   screenW,
 }) => {
   const { getIdToken, profile, user } = useAuth();
+  const authAvailable = Boolean(auth);
   const [quantity, setQuantity] = useState(1);
   const [selectedSauce, setSelectedSauce] = useState<string>('Sans sauce');
   const [selectedSupplements, setSelectedSupplements] = useState<string[]>([]);
@@ -782,7 +784,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setCheckoutError(null);
     setCheckoutInfo(null);
 
-    if (!user) {
+    if (!user && authAvailable) {
       setCheckoutError('Connexion obligatoire pour valider la commande.');
       return;
     }
@@ -824,7 +826,7 @@ export const OrderUI: React.FC<OrderUIProps> = ({
     setCheckoutError(null);
     setCheckoutInfo(null);
 
-    if (!user) {
+    if (!user && authAvailable) {
       setCheckoutError('Connexion obligatoire pour valider la commande.');
       return;
     }
