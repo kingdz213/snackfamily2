@@ -120,9 +120,11 @@ function App() {
   const [pendingIntent, setPendingIntent] = useState<AuthIntent | null>(null);
   const pendingActionRef = useRef<null | (() => void)>(null);
   const [showFirebaseEnvDebug, setShowFirebaseEnvDebug] = useState(false);
+  const debugFirebaseEnabled =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('debugFirebase') === '1';
   const showFirebaseBanner = Boolean(
-    firebaseInitError &&
-      (import.meta.env.DEV || ['admin', 'adminOrderDetail', 'adminOrderHub'].includes(currentPage))
+    firebaseInitError && (import.meta.env.DEV || debugFirebaseEnabled)
   );
 
   // Scroll en haut à chaque changement de page

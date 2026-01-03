@@ -26,7 +26,7 @@ interface Env {
 }
 
 const FALLBACK_ORIGIN = "https://snackfamily2.eu";
-const STORE_SETTINGS_PATH = "settings/store";
+const STORE_SETTINGS_KEY = "store_settings_v1";
 const MENU_AVAILABILITY_PATH = "settings/menuAvailability";
 const BRUSSELS_TIME_ZONE = "Europe/Brussels";
 const WORKER_BUILD_ID = "build-2026-01-02-21-00";
@@ -1440,6 +1440,7 @@ function normalizeStoreSettings(input: Partial<StoreSettings> | null): StoreSett
           closed: Boolean((exception as StoreException).closed),
         }))
         .filter((exception) => DATE_RE.test(exception.date))
+        .sort((a, b) => a.date.localeCompare(b.date))
     : [];
   const updatedAt = typeof input.updatedAt === "string" && input.updatedAt ? input.updatedAt : nowIso();
   return {
@@ -1459,67 +1460,30 @@ async function writeStoreSettings(env: Env, settings: StoreSettings) {
 
 async function writeStoreSettingsDetailed(
   env: Env,
-  settings: StoreSettings,
-  requestHost?: string
-): Promise<{ ok: true; settings: StoreSettings } | { ok: false; error: FirestoreErrorPayload }> {
-  const updated = { ...settings, updatedAt: nowIso() };
-  const encoded = toFirestoreValue(updated);
-  const fields = encoded.mapValue?.fields ?? {};
-  const result = await firestoreRequestDetailed(env, STORE_SETTINGS_PATH, {
-    method: "PATCH",
-    body: JSON.stringify({ fields }),
-  }, requestHost);
-  if (!result.ok) {
-    return { ok: false, error: result.error };
+  settings: StoreSettings
+): Promise<{ ok: true; settings: StoreSettings } | { ok: false; error: { error: string; message: string } }> {
+  if (!env.ORDERS_KV) {
+    return { ok: false, error: { error: "KV_NOT_CONFIGURED", message: "ORDERS_KV non configuré." } };
   }
-  if (!result.response.ok) {
-    const cloned = result.response.clone();
-    let message = `Firestore ${result.response.status}`;
-    let code: string | undefined;
-    try {
-      const payload: any = await cloned.json();
-      if (payload?.error) {
-        code = payload.error.status
-          ? String(payload.error.status)
-          : payload.error.code
-          ? String(payload.error.code)
-          : undefined;
-        message = payload.error.message ? String(payload.error.message) : JSON.stringify(payload.error);
-      } else if (payload) {
-        message = JSON.stringify(payload);
-      }
-    } catch {
-      const text = await cloned.text().catch(() => "");
-      if (text) message = text;
-    }
-    return {
-      ok: false,
-      error: buildFirestoreError(env, {
-        code,
-        message,
-        hint: "Vérifiez les permissions du compte de service Firestore.",
-        requestHost,
-      }),
-    };
-  }
+  const updated = normalizeStoreSettings({ ...settings, updatedAt: nowIso() });
+  await env.ORDERS_KV.put(STORE_SETTINGS_KEY, JSON.stringify(updated));
   return { ok: true, settings: updated };
 }
 
 async function getOrInitStoreSettings(env: Env): Promise<StoreSettings> {
-  const response = await firestoreRequest(env, STORE_SETTINGS_PATH, { method: "GET" });
-  if (!response) {
+  if (!env.ORDERS_KV) {
     return { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() };
   }
-  if (response.status === 404) {
-    const created = await writeStoreSettings(env, { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() });
-    return created ?? { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() };
-  }
-  if (!response.ok) {
+  const raw = await env.ORDERS_KV.get(STORE_SETTINGS_KEY);
+  if (!raw) {
     return { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() };
   }
-  const doc: any = await response.json().catch(() => null);
-  const parsed = fromFirestoreValue({ mapValue: { fields: doc?.fields ?? {} } });
-  return normalizeStoreSettings(parsed ?? null);
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoreSettings>;
+    return normalizeStoreSettings(parsed ?? null);
+  } catch {
+    return { ...DEFAULT_STORE_SETTINGS, updatedAt: nowIso() };
+  }
 }
 
 function isDateClosed(settings: StoreSettings, isoDate: string) {
@@ -2624,8 +2588,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (!auth.ok) {
         return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
       }
-      const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
-      if (firestoreGuard) return firestoreGuard;
+      const kvGuard = requireOrdersKv(env, cors, requestInfo);
+      if (kvGuard) return kvGuard;
       const settings = await getOrInitStoreSettings(env);
       return jsonResponse(settings, 200, cors);
     }
@@ -2659,8 +2623,8 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
       if (!auth.ok) {
         return jsonResponse({ error: auth.error, message: auth.message }, 401, cors);
       }
-      const firestoreGuard = requireFirestoreCredentials(env, cors, requestInfo);
-      if (firestoreGuard) return firestoreGuard;
+      const kvGuard = requireOrdersKv(env, cors, requestInfo);
+      if (kvGuard) return kvGuard;
       try {
         let body: any = null;
         try {
@@ -2680,29 +2644,16 @@ async function handleRequest(request: Request, env: Env | undefined, ctx: Execut
             cors
           );
         }
-        const saved = await writeStoreSettingsDetailed(env, validation.settings, requestInfo.host);
+        const saved = await writeStoreSettingsDetailed(env, validation.settings);
         if (!saved.ok) {
-          console.error("Firestore store settings write failed", saved);
-          return jsonResponse(
-            saved.error,
-            500,
-            cors
-          );
+          console.error("KV store settings write failed", saved);
+          return jsonResponse(saved.error, 500, cors);
         }
         return jsonResponse(saved.settings, 200, cors);
       } catch (err) {
-        console.error("Firestore store settings error", err);
+        console.error("KV store settings error", err);
         const details = err instanceof Error ? `${err.message}${err.stack ? `\n${err.stack}` : ""}` : String(err);
-        return jsonResponse(
-          buildFirestoreError(env, {
-            code: "FIRESTORE_EXCEPTION",
-            message: "Erreur Firestore",
-            hint: details,
-            requestHost: requestInfo.host,
-          }),
-          500,
-          cors
-        );
+        return jsonResponse({ error: "STORE_SETTINGS_SAVE_FAILED", message: details }, 500, cors);
       }
     }
 
