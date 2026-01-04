@@ -23,7 +23,6 @@ import { CartItem, MenuItem, MenuCategory, Page } from './types';
 import { subscribeToForegroundMessages } from './lib/notifications';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { MENU_CATEGORIES } from './data/menuData';
-import { firebaseInitError, getFirebaseEnvPresence } from '@/src/firebase';
 
 const pageToPath: Record<Page, string> = {
   home: '/',
@@ -119,13 +118,6 @@ function App() {
   const [authMessage, setAuthMessage] = useState('Connexion obligatoire pour commander.');
   const [pendingIntent, setPendingIntent] = useState<AuthIntent | null>(null);
   const pendingActionRef = useRef<null | (() => void)>(null);
-  const [showFirebaseEnvDebug, setShowFirebaseEnvDebug] = useState(false);
-  const debugFirebaseEnabled =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('debugFirebase') === '1';
-  const showFirebaseBanner = Boolean(
-    firebaseInitError && (import.meta.env.DEV || debugFirebaseEnabled)
-  );
 
   // Scroll en haut à chaque changement de page
   useEffect(() => {
@@ -403,28 +395,6 @@ function App() {
         cartCount={cartCount}
         toggleCart={toggleCart}
       />
-
-      {showFirebaseBanner && (
-        <div className="bg-amber-100 text-amber-900 text-sm font-semibold px-4 py-2 text-center border-b border-amber-200">
-          <div>{firebaseInitError}</div>
-          {import.meta.env.DEV && (
-            <div className="mt-2 flex flex-col items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setShowFirebaseEnvDebug((prev) => !prev)}
-                className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-200 transition-colors"
-              >
-                Debug env Firebase
-              </button>
-              {showFirebaseEnvDebug && (
-                <pre className="max-w-3xl overflow-auto rounded-lg bg-amber-50 px-3 py-2 text-left text-xs text-amber-900">
-                  {JSON.stringify(getFirebaseEnvPresence(), null, 2)}
-                </pre>
-              )}
-            </div>
-          )}
-        </div>
-      )}
 
       <main className={`flex-grow pt-24 ${isHome ? 'bg-snack-black' : 'bg-snack-light'}`}>
         {renderPage()}
