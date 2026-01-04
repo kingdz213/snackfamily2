@@ -389,8 +389,14 @@ function App() {
     }
   };
 
+  const isHome = currentPage === 'home';
+
   return (
-    <div className="min-h-screen bg-snack-light flex flex-col font-sans text-snack-black">
+    <div
+      className={`min-h-screen flex flex-col font-sans text-snack-black ${
+        isHome ? 'bg-snack-black' : 'bg-snack-light'
+      }`}
+    >
       <Header
         currentPage={currentPage}
         navigateTo={navigateTo}
@@ -420,9 +426,7 @@ function App() {
         </div>
       )}
 
-      <main
-        className={`flex-grow ${currentPage === 'home' ? 'bg-snack-black' : 'bg-snack-light'}`}
-      >
+      <main className={`flex-grow pt-24 ${isHome ? 'bg-snack-black' : 'bg-snack-light'}`}>
         {renderPage()}
       </main>
 

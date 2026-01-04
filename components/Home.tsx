@@ -41,7 +41,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
   return (
     <div className="w-full min-h-full bg-snack-black">
       {/* HERO SECTION - Centered & Updated Background */}
-      <section className="relative min-h-screen w-full overflow-hidden bg-snack-black flex items-center justify-center">
+      <section className="relative min-h-[100svh] w-full overflow-hidden bg-snack-black flex items-center justify-center">
         <div className="absolute inset-0 z-0">
           {/* Hero Background: Updated with user specific image */}
           <img 
