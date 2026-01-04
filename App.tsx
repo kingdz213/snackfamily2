@@ -420,7 +420,9 @@ function App() {
         </div>
       )}
 
-      <main className="flex-grow">
+      <main
+        className={`flex-grow ${currentPage === 'home' ? 'bg-snack-black' : 'bg-snack-light'}`}
+      >
         {renderPage()}
       </main>
 

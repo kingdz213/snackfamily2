@@ -39,7 +39,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
   };
 
   return (
-    <div className="w-full">
+    <div className="w-full min-h-full bg-snack-black">
       {/* HERO SECTION - Centered & Updated Background */}
       <section className="relative min-h-screen w-full overflow-hidden bg-snack-black flex items-center justify-center">
         <div className="absolute inset-0 z-0">
@@ -53,6 +53,10 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
           <Embers className="z-20" count={14} maxOpacity={0.28} speed={16} />
           <div className="absolute inset-0 bg-black/60 z-10"></div>
         </div>
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-b from-transparent to-snack-black"
+        />
 
         {/* Content Container - Removed pt-20 for perfect vertical centering */}
         <div className="relative z-30 container mx-auto px-4 flex flex-col items-center text-center pt-10 sm:pt-12">
