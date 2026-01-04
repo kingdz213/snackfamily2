@@ -41,7 +41,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
   return (
     <div className="bg-snack-black text-white">
       {/* HERO SECTION - Centered & Updated Background */}
-      <section className="relative min-h-[calc(100svh-96px)] w-full overflow-hidden bg-snack-black flex items-center justify-center">
+      <section className="relative min-h-[calc(100svh-96px)] w-full overflow-hidden bg-snack-black flex items-start justify-center pt-6 sm:pt-12">
         <div className="absolute inset-0 z-0">
           {/* Hero Background: Updated with user specific image */}
           <img 
@@ -59,7 +59,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
         />
 
         {/* Content Container - Removed pt-20 for perfect vertical centering */}
-        <div className="relative z-30 container mx-auto px-4 flex flex-col items-center text-center pt-10 sm:pt-12">
+        <div className="relative z-30 container mx-auto px-4 flex flex-col items-center text-center">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
