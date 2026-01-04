@@ -39,9 +39,9 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
   };
 
   return (
-    <div className="w-full min-h-full bg-snack-black">
+    <div className="bg-snack-black text-white">
       {/* HERO SECTION - Centered & Updated Background */}
-      <section className="relative min-h-[100svh] w-full overflow-hidden bg-snack-black flex items-center justify-center">
+      <section className="relative min-h-[calc(100svh-96px)] w-full overflow-hidden bg-snack-black flex items-center justify-center">
         <div className="absolute inset-0 z-0">
           {/* Hero Background: Updated with user specific image */}
           <img 
@@ -114,7 +114,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
       </section>
 
       {/* SPECIALTIES SECTION */}
-      <section className="py-24 bg-gray-50">
+      <section className="py-24 bg-snack-black">
         <div className="container mx-auto px-4">
             <motion.div 
               className="text-center mb-16"
@@ -124,8 +124,8 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
               variants={titleVariants}
             >
                 <span className="text-snack-gold font-display font-bold text-sm uppercase tracking-[0.2em] block mb-2">Qualité & Tradition</span>
-                <h2 className="text-4xl md:text-6xl font-display font-bold text-snack-black uppercase">Nos Spécialités</h2>
-                <div className="w-24 h-1.5 bg-snack-black mx-auto mt-6 rounded-full"></div>
+                <h2 className="text-4xl md:text-6xl font-display font-bold text-white uppercase">Nos Spécialités</h2>
+                <div className="w-24 h-1.5 bg-snack-gold mx-auto mt-6 rounded-full"></div>
             </motion.div>
 
             <motion.div 
