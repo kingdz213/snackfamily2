@@ -55,7 +55,7 @@ export const Home: React.FC<HomeProps> = ({ navigateTo }) => {
         </div>
 
         {/* Content Container - Removed pt-20 for perfect vertical centering */}
-        <div className="relative z-30 container mx-auto px-4 flex flex-col items-center text-center">
+        <div className="relative z-30 container mx-auto px-4 flex flex-col items-center text-center pt-10 sm:pt-12">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}

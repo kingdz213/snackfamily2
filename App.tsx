@@ -420,7 +420,7 @@ function App() {
         </div>
       )}
 
-      <main className="flex-grow pt-24">
+      <main className="flex-grow">
         {renderPage()}
       </main>
 
