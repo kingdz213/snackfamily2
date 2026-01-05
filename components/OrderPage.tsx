@@ -35,7 +35,7 @@ export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
     <div className="bg-gray-100 min-h-screen h-full flex flex-col">
       
       {/* Mobile Category Select */}
-      <div className="md:hidden p-4 sticky top-24 z-40 bg-white/95 backdrop-blur border-b shadow-sm">
+      <div className="md:hidden p-4 sticky top-[96px] sm:top-[104px] z-40 bg-white/90 backdrop-blur border-b border-black/10">
           <select 
               value={activeCategory} 
               onChange={(e) => setActiveCategory(e.target.value)}
@@ -48,7 +48,7 @@ export const OrderPage: React.FC<OrderPageProps> = ({ openOrderModal }) => {
       </div>
 
       {/* Desktop Category Filter Bar */}
-      <div className="hidden md:flex flex-wrap justify-center gap-2 p-6 sticky top-24 z-40 bg-white/95 backdrop-blur border-b shadow-sm">
+      <div className="hidden md:flex flex-wrap justify-center gap-2 p-6 sticky top-[96px] sm:top-[104px] z-40 bg-white/90 backdrop-blur border-b border-black/10">
             {categories.map(cat => (
                 <button
                   key={cat.id}
